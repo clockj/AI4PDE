@@ -45,7 +45,10 @@ Full analysis, literature survey and caveats: `report/report_20260729.md`.
 
 ## Next
 
-1. Tune the SPS interval band — +1.3 final measured, no model change.
-2. Variance head for TKE — up to +5.0 final; the largest remaining block.
-3. Self-normalize by window mean speed — insurance for the unseen test Re of 2968.
-4. Submit the U-Net to Codabench. Nothing here is leaderboard-validated yet.
+Current plan: `plan/plan_20260729.md` — target 83.83 → ≥ 85.5.
+
+1. **WP1** relative-L2 loss + longer training + denser windows (~1 day, +0.5–1.0)
+2. **WP5** first Codabench submission (~1 h) — nothing here is leaderboard-validated yet
+3. **WP2** two-head model: shared trunk, separate mean and variance readouts (~2–3 days, +2–4)
+4. **WP3** SPS interval band (~1 day, +1.3 measured)
+5. **WP4** PIV noise-level estimate (~2 h, informational)
