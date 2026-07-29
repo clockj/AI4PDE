@@ -43,6 +43,13 @@ report/     report_<YYYYMMDD>.md
 
 Full analysis, literature survey and caveats: `report/report_20260729.md`.
 
+## Submission — ready to upload
+
+`submit/submission.zip` (7.75 MB) is built and verified end-to-end: **84.72** through the
+official `scoring.py`, from a clean extract, with the eval image's missing packages blocked.
+Upload it at <https://www.codabench.org/competitions/17363/>. See `submit/README.md` for the
+contract checklist and what to expect from the leaderboard number.
+
 ## Next
 
 Current plan: `plan/plan_20260729.md` — target 83.83 → ≥ 85.5.

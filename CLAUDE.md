@@ -193,9 +193,11 @@ leans on an input that vanishes at test time — another reason to use `p` as an
 trajectories it never saw vs FNO's 83.06 on trajectories it trained on, at 13× the speed. Build
 on this, not on FNO. Code: `Track_1/unet/` (`model.py` = shared backbone + data pipeline,
 `train.py` = MSE training). It is a plain deterministic regressor — no diffusion, no sampling.
-Generalization gaps are tiny (U-Net +0.57, DeepONet +0.10) against an FNO difficulty control of
-+0.03, so **overfitting is not the bottleneck** and more data/regularization at familiar Re buys
-almost nothing. Run-to-run noise is ~±0.1 final (error metrics are exact; `time_score` jitters).
+Generalization gaps at 40 epochs are tiny (U-Net +0.57, DeepONet +0.10) against an FNO difficulty
+control of +0.03. But training to convergence (150 epochs, train MSE 0.0417 → 0.0242) gains only
+**+0.24 on unseen** while gaining +0.86 on seen — the gap **doubles to +1.26**. Longer training is
+mostly memorization; never extend the schedule or capacity without a matching held-out check.
+Run-to-run noise is ~±0.1 final (error metrics are exact; `time_score` jitters).
 
 **Diffusion is a settled negative result here.** PDE-Refiner (Lippe et al., NeurIPS 2023) on the
 identical U-Net and budget scores 82.53 vs its MSE control's 83.83 — worse on rel-L2 *and* on
@@ -336,8 +338,10 @@ FNO spectral weights; load with `load_baseline.unpack_fp16`, not `Model.load_che
 ### Evaluation containers — nothing is installed at eval time
 
 * T1: `pytorch/pytorch:2.2.2-cuda12.1-cudnn8-runtime`. **No `scipy`, `h5py`, `einops`,
-  `matplotlib`, `pandas`.** `einops` ships in the kit's `_vendor/`. Never `import h5py` from
-  `submission.py`.
+  `matplotlib`, `pandas`** (`smoke_test_kit.py:63`). It **does** ship `requests`,
+  `setuptools`/`pkg_resources` and `torch.utils.cpp_extension` (`smoke_test_kit.py:62`).
+  `einops` ships in the kit's `_vendor/`. Never `import h5py` from `submission.py` — this
+  is why `Track_1/unet/model.py` imports h5py lazily inside `load_trajectories()`.
 * T2: `w3nhao/realpde-track2:v1` (PyTorch 2.2.2, CUDA 12.1, Python 3.10); `einops` **is** present.
   Model runs in an isolated subprocess; only the hidden ground truth is unreadable.
 * Vendor any other pure-Python dependency inside the zip. `smoke_test_kit.py` (T1) verifies
@@ -382,8 +386,8 @@ Two pins that are not optional:
 * **`numpy==1.26.4`** — torch 2.2.2 is not numpy-2 compatible.
 * **`setuptools==69.5.1`** — CNO's `CNO_libs/custom_ops.py` imports `pkg_resources`, which was
   removed in setuptools 81; and `dnnlib/util.py` imports `requests`. Without both, CNO fails to
-  import. Neither is present in the T1 eval container either, so **CNO cannot be submitted to
-  Track 1 without vendoring them** — another reason to prefer FNO.
+  import *locally*. (Both **are** present in the T1 eval container, so this is a local-env pin
+  only — an earlier note here claiming CNO could not be submitted was wrong.)
 
 Other envs on this machine (`bubble_tracking` torch 2.7.1+cu118, `stemseg` 2.4.1+cu118) are
 unrelated to this project; do not use them here.

@@ -17,10 +17,13 @@ from __future__ import annotations
 import glob
 import os
 
-import h5py
 import numpy as np
 import torch
 import torch.nn as nn
+
+# NOTE: h5py is imported lazily inside load_trajectories(). It is NOT present in the Track 1
+# evaluation container (see smoke_test_kit.py MISSING_IN_EVAL_IMAGE), and this module is
+# vendored into the submission zip, so a module-level import would crash the submission.
 
 T_IN = T_OUT = 20
 H, W, C = 32, 64, 2
@@ -42,6 +45,8 @@ K_REFINE = 3
 
 def load_trajectories(data_dir: str, exclude: list[str]) -> list[np.ndarray]:
     """Return one (T, H, W, 2) normalized float32 array per trajectory. Real data only."""
+    import h5py  # local: absent from the evaluation container, training-only dependency
+
     out = []
     for path in sorted(glob.glob(os.path.join(data_dir, "*.h5"))):
         if os.path.basename(path)[:-3] in exclude:

@@ -22,12 +22,17 @@ def main() -> None:
     ap.add_argument("--batch", type=int, default=32)
     ap.add_argument("--stride", type=int, default=5)
     ap.add_argument("--out", default="unet_mse.pth")
+    ap.add_argument("--all-data", action="store_true",
+                    help="train on ALL trajectories including the held-out ones. Use for the "
+                         "submission checkpoint only -- it makes local evaluation meaningless, "
+                         "so keep the held-out model for every reported comparison.")
     args = ap.parse_args()
 
     dev = "cuda"
-    trajs = load_trajectories(args.data, exclude=VAL_TRAJ)
+    trajs = load_trajectories(args.data, exclude=[] if args.all_data else VAL_TRAJ)
     X, Y = make_windows(trajs, args.stride)
-    print(f"train: {len(trajs)} trajectories -> {len(X)} windows (real data only)")
+    held = "NONE (all-data submission model)" if args.all_data else f"{len(VAL_TRAJ)} held out"
+    print(f"train: {len(trajs)} trajectories -> {len(X)} windows (real data only), {held}")
     X, Y = torch.from_numpy(X), torch.from_numpy(Y)
 
     model = UNet().to(dev)
