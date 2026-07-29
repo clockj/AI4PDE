@@ -1,0 +1,44 @@
+# RealPDE development environment.
+#
+# Pinned to match the competition evaluation containers, so anything that runs
+# here runs there:
+#   Track 1: pytorch/pytorch:2.2.2-cuda12.1-cudnn8-runtime
+#   Track 2: w3nhao/realpde-track2:v1  (PyTorch 2.2.2, CUDA 12.1, Python 3.10)
+#
+#   conda env create -f environment.yml
+#   conda activate realpde
+#
+# Note: h5py / scipy / matplotlib / pandas are for LOCAL training and analysis
+# only. The Track 1 container has none of them — never import them from
+# submission.py. See CLAUDE.md "Evaluation containers".
+
+name: realpde
+
+channels:
+  - defaults
+
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+      # torch 2.2.2 + CUDA 12.1 + cuDNN 8.9, exactly the evaluators' build.
+      # cu121 wheels cover sm_89 (RTX 40-series).
+      - --index-url https://download.pytorch.org/whl/cu121
+      - torch==2.2.2
+
+      - --index-url https://pypi.org/simple
+      # torch 2.2.2 is NOT numpy-2 compatible: numpy must stay <2.
+      - numpy==1.26.4
+      - scipy==1.13.1
+      - h5py==3.11.0
+      - matplotlib==3.9.2
+      - pandas==2.2.3
+      - einops==0.8.0
+      - tqdm==4.67.1
+      - pyyaml==6.0.2
+      # The CNO baseline needs both of these to import at all:
+      #   rpde_baselines/.../dnnlib/util.py    -> requests
+      #   CNO_libs/.../custom_ops.py           -> pkg_resources
+      # pkg_resources was REMOVED in setuptools 81, so it must be pinned below that.
+      - requests==2.32.3
+      - setuptools==69.5.1
