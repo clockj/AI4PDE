@@ -191,9 +191,11 @@ leans on an input that vanishes at test time — another reason to use `p` as an
 
 **A 1.93M MSE U-Net trained for 12 minutes on real data alone beats the 50M FNO** — 83.83 on
 trajectories it never saw vs FNO's 83.06 on trajectories it trained on, at 13× the speed. Build
-on this, not on FNO. Generalization gaps are tiny (U-Net +0.57, DeepONet +0.10) against an FNO
-difficulty control of +0.03, so **overfitting is not the bottleneck** and more data/regularization
-at familiar Re buys almost nothing.
+on this, not on FNO. Code: `Track_1/unet/` (`model.py` = shared backbone + data pipeline,
+`train.py` = MSE training). It is a plain deterministic regressor — no diffusion, no sampling.
+Generalization gaps are tiny (U-Net +0.57, DeepONet +0.10) against an FNO difficulty control of
++0.03, so **overfitting is not the bottleneck** and more data/regularization at familiar Re buys
+almost nothing. Run-to-run noise is ~±0.1 final (error metrics are exact; `time_score` jitters).
 
 **Diffusion is a settled negative result here.** PDE-Refiner (Lippe et al., NeurIPS 2023) on the
 identical U-Net and budget scores 82.53 vs its MSE control's 83.83 — worse on rel-L2 *and* on

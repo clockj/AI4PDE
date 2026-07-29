@@ -20,7 +20,8 @@ import torch
 HERE = os.path.dirname(os.path.abspath(__file__))
 KIT = "/home/clockj/RealPDE/realpde_t1_starting_kit_v7/realpde_t1_starting_kit_v7"
 CKPT = "/home/clockj/RealPDE/baseline_checkpoints/sim_real_ft"
-for p in (KIT, os.path.join(HERE, "deeponet"), os.path.join(HERE, "diffusion")):
+for p in (KIT, os.path.join(HERE, "deeponet"), os.path.join(HERE, "unet"),
+          os.path.join(HERE, "diffusion")):
     sys.path.insert(0, p)
 
 spec = importlib.util.spec_from_file_location("sc", os.path.join(KIT, "scoring.py"))
@@ -87,7 +88,8 @@ def run_deeponet(X, B=16):
 
 
 def run_unet(ckpt, X, B=16):
-    from pde_refiner import MEAN, STD, UNet, from_ch, refiner_predict, to_ch
+    from model import MEAN, STD, UNet, from_ch, mse_predict, to_ch
+    from pde_refiner import refiner_predict
     blob = torch.load(ckpt, map_location="cuda")
     mode = blob.get("mode", "mse")
     m = UNet().cuda()
@@ -100,11 +102,7 @@ def run_unet(ckpt, X, B=16):
             xb = torch.from_numpy(np.ascontiguousarray(X[i:i + B, ..., :2])).cuda()
             prev = to_ch((xb - mean) / std)
             torch.cuda.synchronize(); t0 = time.perf_counter()
-            if mode == "refiner":
-                y = refiner_predict(m, prev)
-            else:
-                k0 = torch.zeros(len(prev), dtype=torch.long, device="cuda")
-                y = m(prev, torch.zeros_like(prev), k0)
+            y = refiner_predict(m, prev) if mode == "refiner" else mse_predict(m, prev)
             torch.cuda.synchronize(); t += time.perf_counter() - t0
             outs.append((from_ch(y) * std + mean).float().cpu().numpy())
     uv = np.concatenate(outs)
@@ -123,7 +121,7 @@ def main() -> None:
         ("FNO sim_real_ft", lambda X: run_official("fno", "sim_real_fno_fp16.pth", X), "train"),
         ("CNO sim_real_ft", lambda X: run_official("cno", "sim_real_cno.pth", X), "train"),
         ("DeepONet", lambda X: run_deeponet(X), "ours"),
-        ("U-Net (mse)", lambda X: run_unet(os.path.join(HERE, "diffusion/unet_mse.pth"), X), "ours"),
+        ("U-Net (mse)", lambda X: run_unet(os.path.join(HERE, "unet/unet_mse.pth"), X), "ours"),
         ("PDE-Refiner", lambda X: run_unet(os.path.join(HERE, "diffusion/unet_refiner.pth"), X), "ours"),
     ]
 
