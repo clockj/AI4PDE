@@ -156,8 +156,69 @@ normalized space; the evaluator denormalizes, bounds included.
 | mean + fluctuation rescaled to **oracle** per-pixel variance | .166 → 92.3 | .007 → 99.6 | .124 → 94.2 | 61.3 | **87.39** |
 | perfect prediction (oracle) | 0 → 100 | 0 → 100 | 0 → 100 | 70.8 | **92.07** |
 
+### Official baselines on the same 336 windows (measured, `realpde` env, RTX 4060)
+
+| checkpoint | rel-L2 | TKE | MVPE | rel | tke | mvpe | time | sps | **final** | +tuned band |
+|---|---|---|---|---|---|---|---|---|---|---|
+| **FNO** sim_real_ft | .071 | .569 | .062 | 96.6 | 77.9 | 97.0 | 88.8 | 55.1 | **83.06** | **84.46** |
+| CNO sim_real_ft | .088 | .672 | .081 | 95.8 | 74.8 | 96.1 | 77.9 | 54.6 | 79.83 | 81.16 |
+| Transolver sim_real_ft | .135 | .812 | .126 | 93.7 | 71.1 | 94.1 | 62.2 | 53.0 | 74.82 | 76.05 |
+| FNO sim_pretrain | .760 | .985 | 1.009 | 72.5 | 67.0 | 66.5 | 88.9 | 50.1 | 69.00 | 69.50 |
+| CNO sim_pretrain | .706 | 1.628 | .871 | 73.9 | 55.1 | 69.7 | 77.9 | 50.2 | 65.35 | 65.84 |
+| Transolver sim_pretrain | .606 | .946 | .795 | 76.8 | 67.9 | 71.6 | 62.4 | 50.6 | 65.85 | 66.39 |
+| **DeepONet** (ours, real-only, 0.85M) | .132 | .933 | .167 | 93.8 | 68.2 | 92.3 | **97.0** | 53.4 | 80.94 | 82.02 |
+
+**FNO dominates on both axes** — best accuracy *and* 5×/23× faster than CNO/Transolver.
+Likely why: the flow is quasi-periodic vortex shedding, which a global spectral convolution with
+few modes captures directly, and there are only ~3.4k real training windows, so a strong
+inductive bias beats data-hungry attention. CNO and Transolver are strictly dominated; do not
+spend time on them.
+
+**Sim-only pretraining scores 69.0 — far *below* trivial persistence (79.7).** All of the
+baselines' real-world skill comes from the real fine-tuning stage, not from sim. Treat sim as a
+weak prior, not a substitute for real data. Hypothesis for why zero-shot transfer is so bad
+(untested): sim has an informative `p` channel while real is `p = 0`, so a sim-pretrained model
+leans on an input that vanishes at test time — another reason to use `p` as an auxiliary
+*output* only, and zero the `p` input during sim pretraining.
+
+### Our own models (held-out trajectories — see `Track_1/report/report_20260729.md`)
+
+| model | rel-L2 | TKE | MVPE | rel | tke | mvpe | time | sps | **final** | +band | ms/win |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| **U-Net (mse), 1.93M** | .082 | .665 | .076 | 96.1 | 75.1 | 96.4 | 96.7 | 55.0 | **83.83** | **85.15** | 0.87 |
+| PDE-Refiner, 1.93M | .099 | .771 | .080 | 95.3 | 72.2 | 96.1 | 95.2 | 53.8 | 82.53 | 83.81 | 1.84 |
+| DeepONet, 0.85M | .132 | .933 | .167 | 93.8 | 68.2 | 92.3 | 97.8 | 53.4 | 81.09 | 82.02 | 0.68 |
+
+**A 1.93M MSE U-Net trained for 12 minutes on real data alone beats the 50M FNO** — 83.83 on
+trajectories it never saw vs FNO's 83.06 on trajectories it trained on, at 13× the speed. Build
+on this, not on FNO. Generalization gaps are tiny (U-Net +0.57, DeepONet +0.10) against an FNO
+difficulty control of +0.03, so **overfitting is not the bottleneck** and more data/regularization
+at familiar Re buys almost nothing.
+
+**Diffusion is a settled negative result here.** PDE-Refiner (Lippe et al., NeurIPS 2023) on the
+identical U-Net and budget scores 82.53 vs its MSE control's 83.83 — worse on rel-L2 *and* on
+TKE, the metric it was chosen to fix, at 4× the compute. Likely cause: real PIV high-frequency
+content is largely measurement noise, so refining toward it fits sensor noise. Full ACDM-style
+autoregressive diffusion is worse still on arithmetic alone (tens of steps × 20 frames ⇒
+`time_score` ≈ 26). Do not revisit without a new reason.
+
+**DeepONet reaches 81.09 almost purely on speed** (0.68 ms/win → `time_score` 97.0). Its field
+accuracy is barely above free persistence and its MVPE is worse. On a fixed output grid a
+DeepONet is a rank-*p* linear decoder over a condition-independent basis: fine for the low-rank
+mean field, unable to place per-condition small-scale structure, hence TKE 0.933. The lesson is
+about the metric, not the architecture — **a model barely better than repeat-the-last-frame sits
+2 points off the best baseline by being fast.** FNO at that latency would score ≈ 84.7, more
+than the whole rel-L2 + MVPE headroom combined. Full write-up: `Track_1/report/report_20260729.md`.
+
+> **The fine-tuned numbers are optimistic; the DeepONet one is not.** The validation windows come
+> from `train_real`, which the `sim_real_ft` checkpoints were fine-tuned on, so 83.06 is closer
+> to training performance than to leaderboard performance. DeepONet is the only model here
+> evaluated on trajectories it never saw, and the persistence/heuristic floors are untrained. So
+> FNO's +2.1 over DeepONet is an **upper bound** on its real advantage. Build a genuinely
+> held-out (Re, AoA) split before trusting any model comparison.
+
 Reproduce with the scripts in the session scratchpad (`mkval.py`, `probe.py`, `alpha.py`,
-`tke_head.py`) — port them into `eval/` when building the repo.
+`tke_head.py`, `eval_baselines.py`) — port them into `eval/` when building the repo.
 
 **Read the table before designing anything.** Rel-L2 and MVPE are ~93/94 for free and cap at
 100: together worth ≤ 2.7 final points. TKE (66.7) and SPS (55) hold ~4.7 of the ~12.4 points of
