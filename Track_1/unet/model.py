@@ -166,13 +166,29 @@ class UNetTwoHead(nn.Module):
         self.head_logstd = nn.Conv2d(w1, C, 1) if var_head else None
         self.pool = nn.AvgPool2d(2)
 
-    def forward(self, prev: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor | None]:
+        if self.head_logstd is not None:
+            # Start the head predicting a uniform, roughly correct std (targets sit near 0.3 in
+            # normalized units) instead of whatever a default init gives. Without this the TKE
+            # loss starts ~1e2 and can drive logstd into the clamp, where the gradient is
+            # exactly zero and the head never recovers -- which is what happened the first time
+            # the variance losses were kept out of the trunk.
+            nn.init.zeros_(self.head_logstd.weight)
+            nn.init.constant_(self.head_logstd.bias, float(np.log(0.3)))
+
+    def forward(self, prev: torch.Tensor,
+                detach_var: bool = False) -> tuple[torch.Tensor, torch.Tensor | None]:
         h1 = self.inc(prev)
         h2 = self.down1(self.pool(h1))
         h3 = self.down2(self.pool(h2))
         u2 = self.up1(torch.cat([nn.functional.interpolate(h3, scale_factor=2), h2], 1))
         u1 = self.up2(torch.cat([nn.functional.interpolate(u2, scale_factor=2), h1], 1))
-        logstd = None if self.head_logstd is None else self.head_logstd(u1)
+        if self.head_logstd is None:
+            logstd = None
+        else:
+            # detach_var still CONDITIONS the variance on the mean-flow latent -- it only stops
+            # the variance losses from reshaping that latent, which measurably costs the field
+            # head (run F: raw TKE 0.670 vs WP1's 0.599).
+            logstd = self.head_logstd(u1.detach() if detach_var else u1)
         return self.head_field(u1), logstd
 
 

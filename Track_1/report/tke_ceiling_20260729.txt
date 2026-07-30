@@ -15,5 +15,7 @@ seen     oracle            0.000     100.00
      the 20-frame version of this number is the floor no predictor can beat.
 
 PIV white-noise fraction (unseen): u 0.160  v 0.109
+  rel-L2 floor from that noise alone (unseen): 0.031 -> rel_l2_score <= 98.5
 PIV white-noise fraction (seen): u 0.157  v 0.120
+  rel-L2 floor from that noise alone (seen): 0.031 -> rel_l2_score <= 98.5
   -> fraction of the scored variance that is measurement noise, not flow.

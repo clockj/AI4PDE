@@ -36,6 +36,10 @@ def main() -> None:
                     help="fluctuation rescaling used INSIDE the field loss (var-head only)")
     ap.add_argument("--lam-v", type=float, default=1.0, help="weight on the log-std loss")
     ap.add_argument("--lam-t", type=float, default=0.5, help="weight on the TKE loss")
+    ap.add_argument("--detach-var", action="store_true",
+                    help="stop the variance losses from back-propagating into the shared "
+                         "trunk. The head still READS the mean-flow latent, so the physical "
+                         "conditioning is kept; only the reshaping of the trunk is blocked.")
     ap.add_argument("--aug-scale", type=float, default=0.0,
                     help="random freestream amplitude scaling, log-uniform in "
                          "[1/(1+s), 1+s]. 0 disables.")
@@ -98,7 +102,7 @@ def main() -> None:
                 scale = args.aug_noise * std_t(y).mean((2, 3), keepdim=True)
                 x = x + scale * torch.randn_like(x)
 
-            raw, logstd = model(to_ch(x))
+            raw, logstd = model(to_ch(x), detach_var=args.detach_var)
             raw = from_ch(raw)
 
             if args.var_head:

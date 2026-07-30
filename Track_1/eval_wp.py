@@ -51,34 +51,51 @@ def run(ckpt: str, X: np.ndarray, alpha: float, batch: int = 16):
     m.eval()
 
     mean, std = torch.from_numpy(MEAN).cuda(), torch.from_numpy(STD).cuda()
-    preds, sigmas, t = [], [], 0.0
+
+    def forward(prev):
+        s = None
+        if two:
+            raw, logstd = m(prev)
+            y = from_ch(raw)
+            if logstd is not None:
+                s = logstd.clamp(-8.0, 2.0).exp().permute(0, 2, 3, 1).unsqueeze(1)
+                y = compose(y, s, alpha)
+        else:
+            y = from_ch(mse_predict(m, prev))
+        return y, s
+
+    preds, sigmas, batches = [], [], []
     with torch.no_grad():
         for i in range(0, len(X), batch):
             xb = torch.from_numpy(np.ascontiguousarray(X[i:i + batch, ..., :2])).cuda()
             prev = to_ch((xb - mean) / std)
+            batches.append(prev)
+            y, s = forward(prev)
+            preds.append((y * std + mean).float().cpu().numpy())
+            if s is not None:
+                sigmas.append((s * std).float().cpu().numpy())  # physical units
+
+        # Time separately, after a warm-up, taking the median of three passes. Timing inside
+        # the prediction loop above swings +-0.3 final between otherwise identical runs, which
+        # is larger than every effect being measured here.
+        for prev in batches[:3]:
+            forward(prev)
+        torch.cuda.synchronize()
+        reps = []
+        for _ in range(3):
             torch.cuda.synchronize()
             t0 = time.perf_counter()
-            s = None
-            if two:
-                raw, logstd = m(prev)
-                y = from_ch(raw)
-                if logstd is not None:
-                    s = logstd.clamp(-8.0, 2.0).exp().permute(0, 2, 3, 1).unsqueeze(1)
-                    y = compose(y, s, alpha)
-            else:
-                y = from_ch(mse_predict(m, prev))
+            for prev in batches:
+                forward(prev)
             torch.cuda.synchronize()
-            t += time.perf_counter() - t0
-            preds.append((y * std + mean).float().cpu().numpy())
-            if two and s is not None:
-                sigmas.append((s * std).float().cpu().numpy())  # physical units
+            reps.append(time.perf_counter() - t0)
 
     uv = np.concatenate(preds)
     P = np.concatenate([uv, np.zeros_like(uv[..., :1])], -1).astype(np.float32)
     S = np.concatenate(sigmas).astype(np.float32) if sigmas else None
-    del m
+    del m, batches
     torch.cuda.empty_cache()
-    return P, S, t / len(X)
+    return P, S, float(np.median(reps)) / len(X)
 
 
 # --------------------------------------------------------------------------- scoring
@@ -117,6 +134,15 @@ def err_map(P, Y):
     return np.sqrt(np.mean((P - Y) ** 2, axis=0, keepdims=True)).astype(np.float32)
 
 
+def amp(P):
+    """Per-window magnitude relative to the set mean: (N, 1, 1, 1, 1).
+
+    Uses only the prediction, so it is computable at submission time.
+    """
+    r = np.sqrt(np.mean(P[..., :2] ** 2, axis=(1, 2, 3, 4)))
+    return (r / r.mean()).astype(np.float32).reshape(-1, 1, 1, 1, 1)
+
+
 def sigma_field(S):
     """(N,1,H,W,2) physical std -> (N,1,H,W,3) half-width field (p channel is unscored)."""
     return np.concatenate([S, np.zeros_like(S[..., :1])], -1)
@@ -131,15 +157,13 @@ def optimal_half(s):
     it saturates near sigma/2 for badly-predicted elements instead of growing with s. That is
     why the naive h proportional to s does no better than a constant.
     """
+    # h* depends on s only through a 1-D map, so tabulate it once and interpolate. Solving per
+    # element would be ~10^10 erf evaluations on the per-window fields.
     hs = torch.linspace(1e-4, 0.08, 400).view(-1, 1)
-    decay = torch.exp(-2.0 * hs / sc.SIGMA_GLOBAL)
-    flat = torch.from_numpy(np.ascontiguousarray(s)).reshape(-1).clamp(min=1e-6)
-    out = torch.empty_like(flat)
-    for i in range(0, len(flat), 1 << 20):  # chunked: the full grid would be tens of GB
-        chunk = flat[i:i + (1 << 20)]
-        g = decay * torch.erf(hs / (chunk * 1.4142135))
-        out[i:i + len(chunk)] = hs.view(-1)[g.argmax(0)]
-    return out.reshape(s.shape).numpy().astype(np.float32)
+    knots = torch.logspace(-5, 0, 2000).view(1, -1)
+    g = torch.exp(-2.0 * hs / sc.SIGMA_GLOBAL) * torch.erf(hs / (knots * 1.4142135))
+    table = hs.view(-1)[g.argmax(0)].numpy()
+    return np.interp(np.clip(s, 1e-5, 1.0), knots.view(-1).numpy(), table).astype(np.float32)
 
 
 # --------------------------------------------------------------------------- diagnostics
@@ -177,8 +201,10 @@ def main() -> None:
             print(f"(skipped {ckpt}: missing)")
             continue
         name = os.path.basename(path)
-        two = torch.load(path, map_location="cpu").get("mode") == "twohead"
-        alphas = args.alphas if two else [0.0]
+        blob = torch.load(path, map_location="cpu")
+        two = blob.get("mode") == "twohead"
+        # Without a variance head `compose` is the identity, so sweeping alpha only burns time.
+        alphas = args.alphas if (two and blob.get("var_head")) else [0.0]
 
         print(f"\n{'='*104}\n{name}\n{'='*104}")
         hdr = (f"{'alpha':>5s} {'set':7s} {'relL2':>6s} {'TKE':>6s} {'MVPE':>6s} | "
@@ -218,9 +244,16 @@ def main() -> None:
         print(f"  {'default +-5%':22s} {'-':>10s} {base['sps']:6.2f} {base['final']:7.2f}")
 
         emap = err_map(Ps, Ys)
+        # The static map pools over windows, but the sets span Re 3750-26700 and error scales
+        # with velocity, so one map is badly wrong at both ends. Rescale it per window by that
+        # window's own predicted magnitude.
+        emap_s, emap_u = emap * amp(Ps), emap * amp(Pu)
         variants = [("constant half-width", None, const_grid, None),
                     ("c * per-element RMSE", emap, scale_grid, None),
-                    ("c * optimal h(RMSE)", optimal_half(emap), scale_grid, None)]
+                    ("c * optimal h(RMSE)", optimal_half(emap), scale_grid, None),
+                    ("c * RMSE * |window|", emap_s, scale_grid, emap_u),
+                    ("c * optimal h(RMSE*|w|)", optimal_half(emap_s), scale_grid,
+                     optimal_half(emap_u))]
         if Su is not None:
             variants.append(("c * sigma_hat", sigma_field(Ss), scale_grid, sigma_field(Su)))
             variants.append(("c * optimal h(sigma)", optimal_half(sigma_field(Ss)), scale_grid,
@@ -231,6 +264,12 @@ def main() -> None:
             w = w_unseen if w_unseen is not None else w_seen
             v = subscores(Pu, Yu, tu, half=c * w if w is not None else c)
             print(f"  {label:22s} {c:10.4f} {v['sps']:6.2f} {v['final']:7.2f}")
+
+        # Hard upper bound on SPS for THIS prediction: pick each half-width with hindsight, so
+        # every element is inside by construction and pays only its own error width. Nothing
+        # legal can beat this, so it says whether band engineering is still worth any effort.
+        vo = subscores(Pu, Yu, tu, half=np.abs(Yu - Pu))
+        print(f"  {'ORACLE band (hindsight)':22s} {'-':>10s} {vo['sps']:6.2f} {vo['final']:7.2f}")
 
         # Does the model have a systematic per-element bias that transfers between
         # trajectories? If it does, subtracting it is free accuracy on every subscore.

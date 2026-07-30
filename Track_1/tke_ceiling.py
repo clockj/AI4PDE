@@ -94,6 +94,13 @@ def main() -> None:
         cov1 = np.mean(d[:, :-1] * d[:, 1:], axis=1)
         frac = 1.0 - cov1.sum((0, 1, 2)) / var.sum((0, 1, 2))
         say(f"PIV white-noise fraction ({tag}): u {frac[0]:.3f}  v {frac[1]:.3f}")
+
+        # Same estimate per element, turned into a floor on the FIELD metric: no predictor can
+        # reproduce white measurement noise, so its norm is a lower bound on rel-L2.
+        nvar = np.clip(var - cov1, 0.0, None)
+        floor = float(np.sqrt(Y.shape[1] * nvar.sum() / (Y ** 2).sum()))
+        say(f"  rel-L2 floor from that noise alone ({tag}): {floor:.3f} "
+            f"-> rel_l2_score <= {sc.score_error(floor):.1f}")
     say("  -> fraction of the scored variance that is measurement noise, not flow.")
 
     path = os.path.join(HERE, "report", "tke_ceiling_20260729.txt")

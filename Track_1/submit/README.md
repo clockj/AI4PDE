@@ -3,26 +3,30 @@
 **`submission.zip` is built and verified. Upload it to
 <https://www.codabench.org/competitions/17363/>.**
 
-Model: the small MSE U-Net (`Track_1/unet/unet_mse.pth`), plus SPS interval bounds.
+Model: the two-head U-Net from WP1 + WP2 (`UNetTwoHead`), fluctuation rescaling at
+`alpha = 0.75`, plus a per-element SPS interval band.
+Full derivation: `../report/report_20260730.md`.
 
 ## Which checkpoint ships
 
-`unet_mse_alldata.pth` — the U-Net trained on **all 82 real trajectories** for **150 epochs**
-(13,368 windows, final train MSE 0.02420, converged).
+`wp2i_alldata.pth` — the two-head U-Net trained on **all 82 real trajectories** for **150
+epochs** with the WP1/WP2 recipe (`--var-head --alpha-train 0`).
 
 > **Its score cannot be measured honestly here.** Both local validation sets are training data
-> for it. The 86.21 below is an **in-sample smoke test**, not a held-out result — it confirms the
-> submission runs and complies with the contract, nothing more. Do not quote it as performance.
+> for it. Any number produced against them is an **in-sample smoke test** confirming the
+> submission runs and complies with the contract — nothing more. Do not quote it as performance.
 
-The honest performance estimate comes from the matched held-out model
-(`unet_mse_e150.pth`, same recipe, 74 trajectories): **84.79** on `val_unseen.npz`.
-**Expect the leaderboard nearer 84.8 than 86.2.**
+The honest estimate comes from the matched held-out model (`wp2i_s5.pth`, identical recipe,
+74 trajectories): **85.33** end-to-end on `val_unseen.npz`.
 
-| checkpoint | trained on | epochs | role | val_unseen |
-|---|---|---|---|---|
-| `unet_mse_alldata.pth` | 82 traj | 150 | **ships** | in-sample, not meaningful |
-| `unet_mse_e150.pth` | 74 traj | 150 | measurement | **84.79** |
-| `unet_mse.pth` | 74 traj | 40 | earlier baseline | 84.72 |
+| checkpoint | trained on | role | val_unseen (end-to-end) |
+|---|---|---|---|
+| `wp2i_alldata.pth` | 82 traj | **ships** | in-sample, not meaningful |
+| `wp2i_s5.pth` | 74 traj | measurement | **85.33** |
+| `unet_mse_e150.pth` | 74 traj | previous submission | 84.79 |
+
+**Previous leaderboard result: 83.108**, against 84.79 locally — the hidden set is ~1.7 points
+harder than `val_unseen`. Expect this one nearer **83.6** than 85.3.
 
 ## Verified result
 
@@ -30,28 +34,44 @@ Run end-to-end from a **clean extract of the zip**, through the **official** `sc
 `scipy` / `h5py` / `matplotlib` / `pandas` blocked at import (the package set the Track 1
 evaluation image lacks):
 
-| subscore | shipped model (in-sample) | held-out equivalent |
+| subscore | this submission (held-out `wp2i_s5`) | previous submission |
 |---|---|---|
-| rel_l2_score | 96.99 | 96.03 |
-| tke_score | 79.09 | 75.95 |
-| mvpe_score | 97.41 | 96.30 |
-| time_score | 94.56 | 93.88 |
-| sps_score | 62.99 | 61.79 |
-| **final_score** | **86.21** | **84.79** |
+| rel_l2_score | 95.75 | 96.03 |
+| tke_score | **78.55** | 75.95 |
+| mvpe_score | 96.20 | 96.30 |
+| time_score | 94.41 | 93.88 |
+| sps_score | 61.75 | 61.79 |
+| **final_score** | **85.33** | **84.79** |
 
-The ~1.4-point spread between the columns is the memorization the shipped model gains from
-having seen these trajectories — it is not skill that will appear on the leaderboard.
+**+0.54.** The gain is TKE (+2.6 subscore) from the variance head, partly refunded on rel-L2
+(−0.28) — the composition adds uncorrelated fluctuation, which is the trade `alpha` arbitrates.
 
-## Archive contents (3 files, all at the root)
+`time_score` here uses the conservative end-to-end measure (2.55 ms/window = whole `predict()`
+call ÷ N, including the one-time model load). The forward pass alone is ~0.4 ms; scored that way
+the same model reaches 86.12.
+
+## Archive contents (4 files, all at the root)
 
 ```
 submission.py     entry point: predict(input_array, metadata=None)
-model.py          UNet class + normalization constants (vendored from ../unet/)
-unet_mse.pth      checkpoint, 7.75 MB
+model.py          UNetTwoHead + compose + normalization constants (vendored from ../unet/)
+unet_mse.pth      checkpoint, 7.65 MB
+band.npy          per-element SPS half-widths, (1,20,32,64,3), 0.49 MB
 ```
 
-Extracted size **7.75 MB** against the 256 MB cap — no fp16 packing needed. Imports only
-`torch` and `numpy`, both present in `pytorch/pytorch:2.2.2-cuda12.1-cudnn8-runtime`.
+Extracted size **8.16 MB** against the 256 MB cap. Imports only `torch` and `numpy`, both
+present in `pytorch/pytorch:2.2.2-cuda12.1-cudnn8-runtime`.
+
+## What changed from the previous submission
+
+1. **`UNetTwoHead` instead of `UNet`.** No refinement `z` slot (40 dead input channels dropped,
+   1.93M → 1.91M params and faster), plus a per-pixel log-std head branching off the same final
+   decoder feature map as the field head.
+2. **Fluctuation rescaling at `alpha = 0.75`** (`compose` in `model.py`): the output's per-pixel
+   temporal std is pulled toward the variance head's prediction. TKE only sees per-pixel
+   variance, so this is correct even though the fluctuation is phase-wrong.
+3. **Per-element SPS band** from `band.npy` instead of a flat 0.006 half-width.
+4. Trained with a **per-sample relative-L2 loss in physical units** rather than MSE.
 
 ## Contract compliance
 
@@ -62,7 +82,7 @@ Extracted size **7.75 MB** against the 256 MB cap — no fp16 packing needed. Im
 | `p` channel zero-filled | verified |
 | bounds: keys exactly `{prediction, lower, upper}`, `lower <= prediction <= upper` | verified |
 | `RETURN_BOUNDS = False` returns a **bare ndarray**, not a dict | verified |
-| extracted archive < 256 MB | 7.75 MB |
+| extracted archive < 256 MB | 8.16 MB |
 | no scipy / h5py / matplotlib / pandas | verified under import blocker |
 
 ## Rebuild and re-verify
@@ -70,9 +90,9 @@ Extracted size **7.75 MB** against the 256 MB cap — no fp16 packing needed. Im
 ```bash
 conda activate realpde
 cd Track_1/submit
-python build_zip.py                                   # -> submission.zip + _package/
+python fit_band2.py --ckpt ../unet/wp2i_alldata.pth   # -> band.npy
+python build_zip.py --ckpt ../unet/wp2i_alldata.pth   # -> submission.zip + _package/
 python validate_submission.py --dir _package --blocked
-python fit_band.py                                    # re-fit the SPS half-width
 ```
 
 `validate_submission.py` runs `predict()` on `val_unseen.npz`, writes `predictions.npz` +
@@ -80,26 +100,22 @@ python fit_band.py                                    # re-fit the SPS half-widt
 
 ## Things to know before reading the leaderboard number
 
-**Expect the leaderboard to be lower than 84.72, and treat a large gap as information.**
-
 - **Neither validation set tests Reynolds extrapolation.** Both sit inside the training range
   (Re 3750–26700); the hidden test set includes **Re 2968**, below everything the model has seen.
-  This is the single most likely source of a shortfall. The model uses the official global
-  `GaussianNormalizer`, *not* the per-window self-normalization that would help here — that is
-  WP1/WP3 of `../plan/plan_20260729.md`, deliberately not in this submission.
-- **`time_score` is uncertain.** We score 94.48 from 2.49 ms/window measured as
-  *(whole `predict()` call) / N*, including numpy conversion and bound construction. The forward
-  pass alone is 0.87 ms. The platform's ingestion program is not in the standalone kit, so we
-  cannot see exactly what it times; our measure is the conservative one. The model is warmed up
-  at import so checkpoint loading and CUDA setup are not charged to `predict()`.
-- **`sps_score` 61.66 comes from a fitted band**, half-width `0.006` physical units, fitted on
-  `val_seen` and verified on `val_unseen` (55.00 → 61.66, +1.33 final). The half-width is
-  absolute, so at Re 2968 — where velocities are ~3× smaller — it should *gain* coverage, but
-  this is untested. If the leaderboard SPS looks wrong, set `RETURN_BOUNDS = False` in
-  `submission.py` for a one-line revert to the scorer's default band.
+  The model uses the official global `GaussianNormalizer`, *not* per-window self-normalization.
+  Amplitude augmentation was built and tested for exactly this (`--aug-scale`) and scored flat
+  locally — but locally is the wrong place to test it, so it remains an open question.
+- **`sps_score` uses a band fitted on `val_seen`**, which is training data for the shipped model.
+  The seen→unseen transfer was checked on the held-out model (63.06 → 61.75), so the procedure is
+  validated, but expect ~1.3 points of optimism. If the leaderboard SPS looks wrong, set
+  `RETURN_BOUNDS = False` in `submission.py` for a one-line revert to the scorer's default band.
+- **`alpha = 0.75` was tuned on 336 unseen windows.** It is a shallow optimum (0.50 → 84.55,
+  0.75 → 84.71, 1.00 → 84.57 before the band), so it should transfer, but it is one number
+  fitted on one small set.
 
-## Deliberate defensive choice
+## Deliberate defensive choices
 
-`predict()` falls back to persistence (repeat the last frame, ~79 final) if the input resolution
-is not 32×64, rather than raising. The kit documents 32×64 in three places so this should be
-unreachable, but a raised exception would zero the submission and cost a day.
+- `predict()` falls back to persistence (repeat the last frame, ~79 final) if the input
+  resolution is not 32×64, rather than raising. A raised exception zeros the submission.
+- `band.npy` is validated at import (shape, finiteness); anything unexpected drops the bounds and
+  returns a bare prediction. Malformed bounds zero **every** subscore, not just SPS.

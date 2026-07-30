@@ -183,6 +183,9 @@ leans on an input that vanishes at test time — another reason to use `p` as an
 
 ### Our own models (held-out trajectories — see `Track_1/report/report_20260729.md`)
 
+> Superseded by the WP1/WP2 table further down and `Track_1/report/report_20260730.md`. The
+> `time_score` column here was measured inside the prediction loop and is ~1.5 points low.
+
 | model | rel-L2 | TKE | MVPE | rel | tke | mvpe | time | sps | **final** | +band | ms/win |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | **U-Net (mse), 1.93M** | .082 | .665 | .076 | 96.1 | 75.1 | 96.4 | 96.7 | 55.0 | **83.83** | **85.15** | 0.87 |
@@ -228,15 +231,85 @@ Reproduce with the scripts in the session scratchpad (`mkval.py`, `probe.py`, `a
 100: together worth ≤ 2.7 final points. TKE (66.7) and SPS (55) hold ~4.7 of the ~12.4 points of
 total headroom, and time is a *liability*, not a freebie.
 
+### Leaderboard calibration (first submission, Codabench)
+
+`unet_mse_e150` scored **83.108** against **84.79** locally. **The hidden test set is ~1.7 points
+harder than `val_unseen`** — subtract that from every local number before comparing to the board.
+
+### The metric's ceilings are measured, not estimated — see `Track_1/report/report_20260730.md`
+
+Read this before proposing any Track 1 idea; most of the obvious ones are already ruled out.
+
+| subscore | best measured | bound | how the bound was measured |
+|---|---|---|---|
+| `tke_score` | 78.6 | **~81** | split each 20-frame target into two 10-frame halves: two estimates of the *same* variance field disagree by rel-L2 0.937 ⇒ ≈0.47 irreducible at T=20 |
+| `sps_score` | 61.9 | **64.9** | oracle band with widths chosen knowing the actual error |
+| `rel_l2_score` | 95.7 | ≤98.5 | PIV white-noise norm ⇒ rel-L2 floor 0.031 (loose bound) |
+
+`sps_score = 100/(1+exp(-v))` with `v` a weighted mean of terms each ≤ 1, so it **can never
+exceed 73.13**. A *perfect* predictor therefore scores (100+100+100+99+73.1)/5 = **94.4**.
+Realistic local ceiling for this model class is **~87.5**. Do not set targets above that without
+first explaining which bound above is wrong.
+
+PIV white noise is only **16.0% (u) / 10.9% (v)** of the scored variance — below the 30% threshold
+for explicit noise modelling. The TKE floor is *sampling* variability of a turbulent variance over
+20 frames, which is baked into the target and cannot be removed.
+
+### WP1 + WP2 results (2026-07-30) — best is 86.12, +0.40
+
+Best model: `Track_1/unet/wp2i_s5.pth`, applied with `compose(..., alpha=0.75)` and the fitted
+`c × optimal h(RMSE × |window|)` SPS band. **Not yet packaged into `Track_1/submit/`.**
+
+| change | final | delta |
+|---|---|---|
+| shipped `unet_mse_e150` | 85.72 | — |
+| + per-sample relative-L2 loss in **physical** units, drop the 40 dead `z` channels | 85.96 | **+0.24** |
+| + variance head, decoupled, `alpha` 0.75 | 86.12 | **+0.16** |
+| stride 5 → 2 · augmentation · width 96 · batch 16 | 85.86–86.14 | flat |
+| WP2 trained *through* the composition | 85.12 | −0.84 |
+| variance head detached from the trunk | 85.94 | −0.18 |
+
+Traps found, all of which cost real points:
+
+- **Never train through `compose`.** With `alpha=1` the raw fluctuation's magnitude divides back
+  out and is unconstrained; the trunk drifts to raw TKE error 1.533, worse than predicting no
+  fluctuation. `alpha=0` then recovers **79.20**, not the baseline — the plan's "safety valve"
+  argument is wrong. Use `--alpha-train 0` and compose only at inference.
+- **The variance head must be allowed to reshape the shared trunk.** Detached it reads the
+  mean-flow latent and reaches corr 0.679 — *worse than copying the input window's std* (0.756).
+  Shared it reaches **corr 0.907 / rel-L2 0.358**. Sharing the representation is necessary;
+  sharing the gradient is what makes it work.
+- **`sigma_hat` is the wrong quantity for the SPS band** (it predicts flow fluctuation, not model
+  error). A per-element half-width proportional to error is also wrong: the integrand
+  `exp(-2h/sigma)·erf(h/(s√2))` **saturates near `sigma/2`**, so use `optimal_half()`.
+- **Time must be measured outside the prediction loop**, after warm-up, as a median of repeats.
+  Inline timing swings `final` by ±0.3 — larger than most effects being measured.
+- **Width 96 is worse than width 64** (86.01 vs 86.14) and slower. It also thrashes at batch 32 in
+  8 GB: 183 s/epoch vs 23 s/epoch at batch 16.
+
+**The binding constraint is 74 trajectories, not the model.** Train field loss 0.066 ≈ seen
+rel-L2 0.049 against unseen 0.084; six recipes all left unseen rel-L2 pinned at 0.084–0.089.
+The only substantial untested lever is **sim pretraining of the trunk** (distinct from sim-only
+training, which scores 69.0 — below free persistence).
+
 ## Strategy
 
-1. **Predict the variance field, not just the mean field.** TKE is phase-free, so matching the
+> Items 1, 2 and 4 were written before the ceilings were measured and **overstate the available
+> gains by roughly 10×**. The variance head was built and it works (corr 0.907); it is worth
+> **+0.16 final**, not the +4 implied here, because the target's own TKE field carries ≈0.47
+> irreducible sampling noise. Item 4's "per-element widths from a predicted-error head" was built
+> and is worth +0.1 against an oracle ceiling of +0.6. Read
+> `Track_1/report/report_20260730.md` before acting on any of them.
+
+1. **Predict the variance field, not just the mean field.** ~~TKE is phase-free, so matching the
    per-pixel temporal variance of the 20 output frames is sufficient — no need to get eddies in
    the right place. A perfect variance head on top of a *trivial* mean predictor reaches 87.4 of
-   the 92.1 oracle. Concretely: decouple into a mean-field/low-frequency prediction (drives
-   Rel-L2 + MVPE) and a per-pixel fluctuation-amplitude head (drives TKE), then rescale the
-   predicted fluctuation to the predicted std. Input-window std predicts target std with
-   corr 0.845 and median ratio 0.617 — a learned head should do much better than that scalar.
+   the 92.1 oracle.~~ **Done, and the 87.4 figure was an artifact**: that oracle used the target's
+   own per-pixel std, so it measured the value of *knowing* the answer, not of predicting it.
+   The real structure of the fix still holds — decouple a mean-field prediction (drives rel-L2 +
+   MVPE) from a per-pixel fluctuation-amplitude head (drives TKE) and rescale the predicted
+   fluctuation to the predicted std — and it is implemented in `UNetTwoHead` / `compose`. It buys
+   TKE 0.633 → 0.546 and **+0.16 final**. There is ~+0.5 left in TKE, total, for anyone.
 2. **Fight spectral bias.** Any L2-trained neural operator regresses toward the conditional mean,
    which gives TKE ≈ 1.0 — i.e. the same 66.7 as persistence, after all the training cost.
    Add an explicit variance/TKE-matching term and a probe-point (MVPE) term to the loss so the
@@ -247,8 +320,10 @@ total headroom, and time is a *liability*, not a freebie.
    Disk size is not the binding constraint either, since fp16-packed FNO clears the 256 MB cap.
 4. **Tune the SPS band offline.** The default `±5%·|pred|` band scores 55.4. A uniform half-width
    of ~0.005–0.01 physical units scores 59.2 (coverage 0.67–0.80); wider is strictly worse because
-   `exp(−width/σ)` with σ = 0.056 punishes it. Fit the band on validation, then move to
-   per-element widths from a predicted-error head. Cheap, model-independent, ~+1 final point.
+   `exp(−width/σ)` with σ = 0.056 punishes it. **Done: 61.9 with `optimal_half()` on a per-element
+   RMSE map scaled by per-window magnitude, +1.3 final over the default.** This item is now closed
+   — an oracle that picks every width knowing the actual error scores only 64.9, so ≤+0.6 remains
+   and no legal rule captures it. Do not spend more time on band forms.
 5. **Self-normalize before anything else.** Divide each input window by its own mean speed,
    work non-dimensionally, rescale on output. This is what makes Re extrapolation work (test
    Re 2968 is 1.26σ outside the global normalizer) *and* what makes sim pretraining transfer.

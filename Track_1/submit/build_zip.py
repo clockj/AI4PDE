@@ -21,7 +21,7 @@ SIZE_CAP_MB = 256
 
 # Whichever checkpoint is chosen is packaged under the fixed name unet_mse.pth, which is what
 # submission.py loads. Keep the source name in the build log so the zip's provenance is clear.
-DEFAULT_CKPT = os.path.join(TRACK1, "unet", "unet_mse_e150.pth")
+DEFAULT_CKPT = os.path.join(TRACK1, "unet", "wp2i_s5.pth")
 
 
 def main() -> None:
@@ -33,6 +33,7 @@ def main() -> None:
         (os.path.join(HERE, "submission.py"), "submission.py"),
         (os.path.join(TRACK1, "unet", "model.py"), "model.py"),
         (args.ckpt, "unet_mse.pth"),
+        (os.path.join(HERE, "band.npy"), "band.npy"),
     ]
     print(f"packaging checkpoint: {args.ckpt}")
 

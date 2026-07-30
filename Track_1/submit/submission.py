@@ -1,17 +1,19 @@
-"""RealPDE Track 1 submission: small MSE U-Net (real-data only).
+"""RealPDE Track 1 submission: two-head U-Net (real data only), WP1 + WP2.
 
 Zip layout (all at the archive ROOT):
 
     submission.py      <- this file
     model.py           <- from Track_1/unet/
-    unet_mse.pth       <- from Track_1/unet/
+    unet_mse.pth       <- from Track_1/unet/ (see submit/README.md for which run)
+    band.npy           <- from fit_band2.py
 
 Needs only torch + numpy, both present in the evaluation image
 (pytorch/pytorch:2.2.2-cuda12.1-cudnn8-runtime). It imports no scipy / h5py /
 matplotlib / pandas / einops, none of which exist there.
 
-Pipeline: raw physical input -> GaussianNormalizer (train_real stats) -> U-Net ->
-denormalize -> zero-fill the unmeasured pressure channel.
+Pipeline: raw physical input -> GaussianNormalizer (train_real stats) -> UNetTwoHead ->
+rescale the predicted fluctuation to the predicted per-pixel std -> denormalize ->
+zero-fill the unmeasured pressure channel.
 """
 from __future__ import annotations
 
@@ -26,15 +28,20 @@ if _HERE not in sys.path:
 
 import torch  # noqa: E402
 
-from model import MEAN, STD, UNet, from_ch, mse_predict, to_ch  # noqa: E402
+from model import MEAN, STD, UNetTwoHead, compose, from_ch, to_ch  # noqa: E402
 
-# Interval bounds for the Safe Prediction Score. Half-width fitted on val_seen and verified on
-# val_unseen (see fit_band.py): sps 55.00 -> 61.66, i.e. +1.33 final. Set False to submit a bare
-# prediction array instead.
+# Fluctuation rescaling strength. 0 returns the raw field; 1 forces the output's per-pixel
+# temporal std to equal the variance head's prediction. Swept on val_seen/val_unseen: TKE error
+# falls 0.666 -> 0.546 while rel-L2 rises 0.084 -> 0.089, and 0.75 is the optimum of that trade.
+ALPHA = 0.75
+
+# Per-element SPS half-widths, (1, 20, 32, 64, 3), broadcast over the batch. Fitted on val_seen
+# and verified on val_unseen by fit_band2.py: sps 54.81 -> 61.75, i.e. +1.39 final.
+# Set False to submit a bare prediction array with no bounds.
 RETURN_BOUNDS = True
-BAND_HALF_WIDTH = 0.006
 
 _CKPT = os.path.join(_HERE, "unet_mse.pth")
+_BAND_FILE = os.path.join(_HERE, "band.npy")
 _BATCH = 32
 _EXPECTED_HW = (32, 64)
 
@@ -44,12 +51,29 @@ _state = {"model": None, "device": None}
 def _get_model():
     if _state["model"] is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        model = UNet().to(device)
         blob = torch.load(_CKPT, map_location=device)
+        model = UNetTwoHead(blob.get("width", 64), var_head=blob.get("var_head", True))
         model.load_state_dict(blob["model_state_dict"])
-        model.eval()
-        _state["model"], _state["device"] = model, device
+        _state["model"], _state["device"] = model.to(device).eval(), device
     return _state["model"], _state["device"]
+
+
+def _load_band():
+    """Half-width array, or None if it is missing or malformed.
+
+    Malformed bounds make the scorer zero EVERY subscore, not just SPS, so anything unexpected
+    here falls back to returning a bare prediction rather than risking the whole submission.
+    """
+    try:
+        band = np.load(_BAND_FILE).astype(np.float32)
+    except Exception:  # noqa: BLE001
+        return None
+    if band.shape != (1, 20) + _EXPECTED_HW + (3,) or not np.all(np.isfinite(band)):
+        return None
+    return np.abs(band)
+
+
+_BAND = _load_band()
 
 
 def _forward(x: np.ndarray) -> np.ndarray:
@@ -65,8 +89,12 @@ def _forward(x: np.ndarray) -> np.ndarray:
     with torch.no_grad():
         for i in range(0, x.shape[0], _BATCH):
             xb = torch.from_numpy(np.ascontiguousarray(x[i:i + _BATCH, ..., :2])).to(device)
-            y = mse_predict(model, to_ch((xb - mean) / std))
-            out[i:i + _BATCH, ..., :2] = (from_ch(y) * std + mean).float().cpu().numpy()
+            raw, logstd = model(to_ch((xb - mean) / std))
+            y = from_ch(raw)
+            if logstd is not None and ALPHA:
+                sigma = logstd.clamp(-8.0, 2.0).exp().permute(0, 2, 3, 1).unsqueeze(1)
+                y = compose(y, sigma, ALPHA)
+            out[i:i + _BATCH, ..., :2] = (y * std + mean).float().cpu().numpy()
     return out
 
 
@@ -88,12 +116,11 @@ def predict(input_array, metadata=None):
     # In-place: the array is ours and this avoids another full-size copy.
     np.nan_to_num(prediction, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
 
-    if not RETURN_BOUNDS:
+    if not RETURN_BOUNDS or _BAND is None or prediction.shape[1:] != _BAND.shape[1:]:
         return prediction
 
-    h = float(BAND_HALF_WIDTH)
-    lower = (prediction - h).astype(np.float32)
-    upper = (prediction + h).astype(np.float32)
+    lower = (prediction - _BAND).astype(np.float32)
+    upper = (prediction + _BAND).astype(np.float32)
     return {"prediction": prediction, "lower": lower, "upper": upper}
 
 
@@ -103,6 +130,6 @@ def predict(input_array, metadata=None):
 try:
     _m, _dev = _get_model()
     with torch.no_grad():
-        mse_predict(_m, to_ch(torch.zeros(1, 20, 32, 64, 2, device=_dev)))
+        _m(to_ch(torch.zeros(1, 20, 32, 64, 2, device=_dev)))
 except Exception:  # noqa: BLE001 - warm-up is an optimisation, never a requirement
     pass
