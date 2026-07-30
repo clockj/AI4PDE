@@ -1,0 +1,19 @@
+set      estimator     TKE relL2  tke_score
+--------------------------------------------
+unseen   input             0.804      71.34
+unseen   traj              0.577      77.61
+unseen   oracle-lp         0.284      87.57
+unseen   oracle            0.000     100.00
+
+seen     input             0.744      72.88
+seen     traj              0.559      78.15
+seen     oracle-lp         0.276      87.86
+seen     oracle            0.000     100.00
+
+10-frame half-window disagreement (unseen): relL2 0.937
+  -> two independent estimates of the SAME field differ by this much;
+     the 20-frame version of this number is the floor no predictor can beat.
+
+PIV white-noise fraction (unseen): u 0.160  v 0.109
+PIV white-noise fraction (seen): u 0.157  v 0.120
+  -> fraction of the scored variance that is measurement noise, not flow.

@@ -67,6 +67,17 @@ def make_windows(trajs: list[np.ndarray], stride: int) -> tuple[np.ndarray, np.n
     return np.asarray(xs), np.asarray(ys)
 
 
+def window_index(trajs: list[np.ndarray], stride: int) -> np.ndarray:
+    """(traj, start) pairs instead of materialized windows.
+
+    make_windows copies every window, which costs ~9 GB at stride 5 and does not fit at
+    stride 2. Slicing on the fly from the trajectories (~1 GB total) is what makes the
+    denser strides of WP1 possible at all.
+    """
+    return np.asarray([(i, t) for i, d in enumerate(trajs)
+                       for t in range(0, len(d) - T_IN - T_OUT + 1, stride)], dtype=np.int64)
+
+
 def block(cin: int, cout: int) -> nn.Sequential:
     return nn.Sequential(
         nn.Conv2d(cin, cout, 3, padding=1), nn.GroupNorm(8, cout), nn.GELU(),
@@ -121,3 +132,97 @@ def mse_predict(model: UNet, prev: torch.Tensor) -> torch.Tensor:
     """Single forward pass: z = zeros, k = 0."""
     k0 = torch.zeros(len(prev), dtype=torch.long, device=prev.device)
     return model(prev, torch.zeros_like(prev), k0)
+
+
+# ---------------------------------------------------------------------------
+# WP1 + WP2: same trunk, no refinement slot, optional variance head.
+# See Track_1/plan/plan_20260729.md.
+# ---------------------------------------------------------------------------
+
+
+class UNetTwoHead(nn.Module):
+    """Shared trunk, two 1x1-conv readouts.
+
+    Differences from `UNet`:
+      * no `z` slot and no step embedding -- the refinement machinery was dead weight for
+        MSE-style training and doubled the cost of the first conv (WP1.3);
+      * an optional per-pixel log-std head branching off the SAME final decoder feature map
+        as the field head (WP2).
+
+    The heads share everything up to `u1` on purpose: turbulent fluctuation intensity is set
+    by the large-scale flow, so the variance readout must be conditioned on the same latent
+    that encodes the mean field. The split costs ~130 parameters.
+    """
+
+    def __init__(self, width: int = 64, var_head: bool = True):
+        super().__init__()
+        w1, w2, w3 = width, width * 2, width * 4
+        self.inc = block(CH, w1)
+        self.down1 = block(w1, w2)
+        self.down2 = block(w2, w3)
+        self.up1 = block(w3 + w2, w2)
+        self.up2 = block(w2 + w1, w1)
+        self.head_field = nn.Conv2d(w1, CH, 1)
+        self.head_logstd = nn.Conv2d(w1, C, 1) if var_head else None
+        self.pool = nn.AvgPool2d(2)
+
+    def forward(self, prev: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor | None]:
+        h1 = self.inc(prev)
+        h2 = self.down1(self.pool(h1))
+        h3 = self.down2(self.pool(h2))
+        u2 = self.up1(torch.cat([nn.functional.interpolate(h3, scale_factor=2), h2], 1))
+        u1 = self.up2(torch.cat([nn.functional.interpolate(u2, scale_factor=2), h1], 1))
+        logstd = None if self.head_logstd is None else self.head_logstd(u1)
+        return self.head_field(u1), logstd
+
+
+def std_t(y: torch.Tensor) -> torch.Tensor:
+    """Per-pixel temporal std of (B, T, H, W, C), keepdim on T.
+
+    Biased (1/T) to match `scoring.kinetic_energy`, which uses np.mean of the squared
+    deviation. Using the unbiased estimator here would bias TKE high by T/(T-1) = 1.053.
+    """
+    return y.std(1, keepdim=True, unbiased=False)
+
+
+def compose(y: torch.Tensor, sigma: torch.Tensor, alpha: float) -> torch.Tensor:
+    """Rescale the predicted fluctuation to carry the predicted std.
+
+    y     : (B, T, H, W, C) predicted field, normalized units
+    sigma : (B, 1, H, W, C) predicted per-pixel temporal std, same units
+    alpha : 0 returns `y` unchanged; 1 gives the field exactly std `sigma`.
+
+    TKE only sees per-pixel temporal variance, so with alpha = 1 the TKE of the output is
+    0.5*(sigma_u^2 + sigma_v^2) by construction -- correct even if the fluctuation is blurry
+    and phase-wrong. alpha is the safety valve: at 0 this is the identity, so the composition
+    cannot regress the plain-field baseline.
+    """
+    if alpha == 0.0:
+        return y
+    m = y.mean(1, keepdim=True)
+    f = y - m
+    s = std_t(y)
+    target = alpha * sigma + (1.0 - alpha) * s
+    # detach the denominator: the 1/std gradient path is unstable near-quiescent pixels and
+    # carries no useful signal, since the scale is set by `target`.
+    return m + f * (target / (s.detach() + 1e-6))
+
+
+def tke(y: torch.Tensor, scale: torch.Tensor | None = None) -> torch.Tensor:
+    """(B, T, H, W, C) -> (B, H, W). Mirrors scoring.kinetic_energy.
+
+    `scale` is the per-channel std used to normalize `y`; pass it to get TKE in PHYSICAL
+    units, which is what is scored. This is not cosmetic: STD_u / STD_v = 6.1, so normalized
+    TKE over-weights the v fluctuation by 37x relative to the metric.
+    """
+    s = std_t(y)
+    if scale is not None:
+        s = s * scale
+    return 0.5 * (s ** 2).squeeze(1).sum(-1)
+
+
+def rel_l2(p: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+    """Per-sample relative L2, flattening everything but the batch axis."""
+    p = p.reshape(p.shape[0], -1)
+    t = t.reshape(t.shape[0], -1)
+    return (p - t).norm(dim=1) / t.norm(dim=1).clamp(min=1e-8)
