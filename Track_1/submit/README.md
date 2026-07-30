@@ -5,22 +5,42 @@
 
 Model: the small MSE U-Net (`Track_1/unet/unet_mse.pth`), plus SPS interval bounds.
 
+## Which checkpoint ships
+
+`unet_mse_alldata.pth` — the U-Net trained on **all 82 real trajectories** for **150 epochs**
+(13,368 windows, final train MSE 0.02420, converged).
+
+> **Its score cannot be measured honestly here.** Both local validation sets are training data
+> for it. The 86.21 below is an **in-sample smoke test**, not a held-out result — it confirms the
+> submission runs and complies with the contract, nothing more. Do not quote it as performance.
+
+The honest performance estimate comes from the matched held-out model
+(`unet_mse_e150.pth`, same recipe, 74 trajectories): **84.79** on `val_unseen.npz`.
+**Expect the leaderboard nearer 84.8 than 86.2.**
+
+| checkpoint | trained on | epochs | role | val_unseen |
+|---|---|---|---|---|
+| `unet_mse_alldata.pth` | 82 traj | 150 | **ships** | in-sample, not meaningful |
+| `unet_mse_e150.pth` | 74 traj | 150 | measurement | **84.79** |
+| `unet_mse.pth` | 74 traj | 40 | earlier baseline | 84.72 |
+
 ## Verified result
 
 Run end-to-end from a **clean extract of the zip**, through the **official** `scoring.py`, with
 `scipy` / `h5py` / `matplotlib` / `pandas` blocked at import (the package set the Track 1
 evaluation image lacks):
 
-| subscore | value |
-|---|---|
-| rel_l2_score | 96.07 |
-| tke_score | 75.05 |
-| mvpe_score | 96.35 |
-| time_score | 94.48 |
-| sps_score | 61.66 |
-| **final_score** | **84.72** |
+| subscore | shipped model (in-sample) | held-out equivalent |
+|---|---|---|
+| rel_l2_score | 96.99 | 96.03 |
+| tke_score | 79.09 | 75.95 |
+| mvpe_score | 97.41 | 96.30 |
+| time_score | 94.56 | 93.88 |
+| sps_score | 62.99 | 61.79 |
+| **final_score** | **86.21** | **84.79** |
 
-on `val_unseen.npz` — 336 windows from 8 trajectories the model never trained on.
+The ~1.4-point spread between the columns is the memorization the shipped model gains from
+having seen these trajectories — it is not skill that will appear on the leaderboard.
 
 ## Archive contents (3 files, all at the root)
 
