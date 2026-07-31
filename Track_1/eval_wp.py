@@ -27,8 +27,8 @@ spec = importlib.util.spec_from_file_location("sc", os.path.join(KIT, "scoring.p
 sc = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sc)
 
-from model import (MEAN, STD, UNet, UNetTwoHead, compose, from_ch,  # noqa: E402
-                   mse_predict, std_t, to_ch)
+from model import (NORM_STATS, UNet, UNetTwoHead, compose, from_ch,  # noqa: E402
+                   mse_predict, std_t, to_ch, window_scale)
 
 
 # --------------------------------------------------------------------------- inference
@@ -50,7 +50,11 @@ def run(ckpt: str, X: np.ndarray, alpha: float, batch: int = 16):
     m.load_state_dict(blob["model_state_dict"])
     m.eval()
 
-    mean, std = torch.from_numpy(MEAN).cuda(), torch.from_numpy(STD).cuda()
+    # Normalization travels with the checkpoint, so evaluation cannot silently mismatch
+    # training. Older checkpoints predate the key and used the real-data constants.
+    sn = bool(blob.get("self_norm", False))
+    stats = (blob["mean"], blob["std"]) if "mean" in blob else NORM_STATS["self" if sn else "real"]
+    mean, std = torch.from_numpy(stats[0]).cuda(), torch.from_numpy(stats[1]).cuda()
 
     def forward(prev):
         s = None
@@ -68,12 +72,15 @@ def run(ckpt: str, X: np.ndarray, alpha: float, batch: int = 16):
     with torch.no_grad():
         for i in range(0, len(X), batch):
             xb = torch.from_numpy(np.ascontiguousarray(X[i:i + batch, ..., :2])).cuda()
-            prev = to_ch((xb - mean) / std)
+            # `mul` maps a normalized std back to physical units; under self-normalization it
+            # carries the per-window scale as well.
+            w = window_scale(xb) if sn else 1.0
+            prev = to_ch((xb / w - mean) / std if sn else (xb - mean) / std)
             batches.append(prev)
             y, s = forward(prev)
-            preds.append((y * std + mean).float().cpu().numpy())
+            preds.append(((y * std + mean) * w).float().cpu().numpy())
             if s is not None:
-                sigmas.append((s * std).float().cpu().numpy())  # physical units
+                sigmas.append((s * std * w).float().cpu().numpy())  # physical units
 
         # Time separately, after a warm-up, taking the median of three passes. Timing inside
         # the prediction loop above swings +-0.3 final between otherwise identical runs, which
@@ -185,10 +192,14 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt", nargs="+", required=True)
     ap.add_argument("--alphas", type=float, nargs="+", default=[0.0, 0.25, 0.5, 0.75, 1.0])
+    ap.add_argument("--suffix", default="",
+                    help="evaluate val_unseen<suffix>.npz / val_seen<suffix>.npz; '_sim' for "
+                         "the WP-D sim diagnostic")
     args = ap.parse_args()
 
     sets = {}
-    for tag, path in [("unseen", "val_unseen.npz"), ("seen", "val_seen.npz")]:
+    for tag in ("unseen", "seen"):
+        path = f"val_{tag}{args.suffix}.npz"
         d = np.load(os.path.join(HERE, path))
         sets[tag] = (d["x"], d["y"])
 

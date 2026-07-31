@@ -289,7 +289,83 @@ Traps found, all of which cost real points:
 
 **The binding constraint is 74 trajectories, not the model.** Train field loss 0.066 ≈ seen
 rel-L2 0.049 against unseen 0.084; six recipes all left unseen rel-L2 pinned at 0.084–0.089.
-The only substantial untested lever is **sim pretraining of the trunk** (distinct from sim-only
+
+### Round 2 (2026-07-30 evening) — read this before proposing anything
+
+**Local validation does not predict leaderboard ranking.** Two submissions:
+
+| | local unseen | leaderboard | `mvpe` local | `mvpe` leaderboard |
+|---|---|---|---|---|
+| `unet_mse_e150` | 85.73 | **83.108** | 0.077 | 91.784 |
+| `wp2i_alldata` | 86.09 | **83.019** | 0.079 | 90.499 |
+
+Local says +0.36, the board says −0.09. A **0.002** local MVPE difference became **1.28** on the
+board. Both validation sets sit inside the training Re range; the hidden set does not. Every
+local delta measured so far is ≤0.4, i.e. below the transfer noise. **Use local numbers as a
+sanity check, not a ranking signal.** Prefer mechanism over decimals.
+
+Leaderboard decomposition of those two: `tke +1.30`, `mvpe −1.28`, everything else ≈0. The
+variance head transfers; something costs MVPE.
+
+**Attribution (all `val_unseen`, band `c × optimal h(RMSE)`):**
+
+| model | loss | var head | λv/λt | rel-L2 | TKE | MVPE | final |
+|---|---|---|---|---|---|---|---|
+| `wpA0_mse_nohead` — control | MSE | — | — | 0.083 | 0.624 | **0.077** | 85.78 |
+| `wpA_mse_var` | MSE | yes | 1.0/0.5 | 0.092 | 0.539 | 0.088 | 85.73 |
+| **`wpA2_mse_var_lo`** | MSE | yes | **0.3/0.15** | 0.091 | 0.547 | 0.081 | **86.07** |
+| `wpC_selfnorm` | MSE | yes | 0.3/0.15 | 0.091 | 0.553 | 0.082 | 86.00 |
+| `wp2i_s5` | rel-L2 | yes | 1.0/0.5 | 0.089 | 0.546 | 0.079 | 86.09 |
+
+- **The relative-L2 loss was NOT the cause of the MVPE loss** — under MSE it got *worse* (0.088).
+  `wpA0` (MSE, no head, same `UNetTwoHead` trunk) reproduces 0.077 exactly, so dropping the `z`
+  channels is MVPE-neutral. **The cost comes from the variance head sharing the trunk**, under
+  either loss.
+- **`lam_v`/`lam_t` must be rescaled with the loss.** Under MSE the field term converges to
+  ~0.042 while the variance terms give `1.0×0.267 + 0.5×0.196 = 0.365` — the trunk is driven
+  ~10:1 by the variance objective. 0.3/0.15 fixes it (MVPE 0.088 → 0.081, final 85.73 → 86.07).
+- **Self-normalization (`--norm self`) is locally neutral (86.00 vs 86.07).** That is the pass
+  condition, not a failure: both val sets are inside the training Re range, so the thing it fixes
+  is invisible locally. It can only be tested on the board.
+
+### Clean simulation data is HARDER to predict than noisy PIV
+
+`wpD_sim` — same recipe, `u`/`v` only, sim's own normalizer, matched window count (11,132 vs
+12,040), evaluated on held-out **sim** trajectories:
+
+| | real | sim |
+|---|---|---|
+| rel-L2 | 0.091 | **0.120** (+32%) |
+| MVPE | 0.081 | **0.102** (+26%) |
+| TKE | 0.547 | 0.486 |
+
+Mechanism: relative transverse fluctuation `STD_v/MEAN_u` is **0.25 for sim vs 0.103 for real**.
+PIV's finite interrogation-window resolution low-pass filters the measurement, and the 32×64
+sub-sampling filters it further — **the scored data is a smoothed view of the flow, and smooth
+fields are easier to predict.** The CFD resolves eddies the PIV cannot see.
+
+Consequences: **the denoise → predict → renoise route is closed** (noise is only 6% of the error
+energy; renoising doubles that term since the target's realization is unknowable; and the
+noise-free target is not the easier problem the idea assumed). **The TKE floor is not a PIV
+artifact** — sim TKE 0.486 vs real 0.547, same regime.
+
+Sim normalizer constants (fitted on all 100 trajectories, `[u, v]` only, 32×64):
+`MEAN_SIM = [0.858663955, -0.004962022]`, `STD_SIM = [0.443825609, 0.214743194]`. Sim's scale is
+~6× real's — normalizing sim with the real constants puts the input at 7.3σ.
+
+### Physics losses: rejected, measured
+
+`rms(∇·u)/rms(|∇u|)` is **0.42–0.49 on real PIV and 0.28–0.34 even on the CFD**, and unchanged
+when the resolution doubles (so it is not discretization error). A `∇·u → 0` penalty would fight
+the target. Matching `div(target)` instead is also wrong: the scorer never looks at divergence,
+and its correlated part (76%; only 24% is white noise) is dominated by out-of-plane `∂w/∂z`,
+which is **not observable** from the 2D field the network sees. Momentum is worse — it needs the
+unmeasured pressure. Measurements live in `Track_1/divergence.py`.
+
+**Still untested:** a *detached variance head with capacity* (several convs on `u1.detach()`),
+which would make the field head bit-identical to `wpA0` while letting the head work from a frozen
+latent. Run H showed a detached 1×1 head is too weak (corr 0.679, below the trivial input-std
+estimator at 0.756). Also untested: sim **pretraining of the trunk** (distinct from sim-only
 training, which scores 69.0 — below free persistence).
 
 ## Strategy

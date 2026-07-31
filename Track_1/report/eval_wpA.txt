@@ -1,0 +1,39 @@
+
+========================================================================================================
+wpA_mse_var.pth
+========================================================================================================
+alpha set      relL2    TKE   MVPE |   rel   tke  mvpe  time   sps |  FINAL
+---------------------------------------------------------------------------
+ 0.00 unseen   0.092  0.670  0.088 |  95.6  74.9  95.8  97.2  54.5 |  83.60
+ 0.00 seen     0.072  0.550  0.061 |  96.5  78.4  97.0  97.2  55.1 |  84.87
+      delta                        |                               |  +1.27  <- generalization gap
+ 0.25 unseen   0.092  0.621  0.088 |  95.6  76.3  95.8  97.2  54.5 |  83.87
+ 0.25 seen     0.072  0.473  0.061 |  96.5  80.9  97.0  97.2  55.2 |  85.36
+      delta                        |                               |  +1.49  <- generalization gap
+ 0.50 unseen   0.094  0.571  0.088 |  95.5  77.8  95.8  97.2  54.5 |  84.14
+ 0.50 seen     0.073  0.373  0.061 |  96.5  84.3  97.0  97.2  55.2 |  86.03
+      delta                        |                               |  +1.89  <- generalization gap
+ 0.75 unseen   0.096  0.539  0.088 |  95.4  78.8  95.8  97.2  54.4 |  84.31
+ 0.75 seen     0.076  0.261  0.061 |  96.3  88.4  97.0  97.2  55.3 |  86.86
+      delta                        |                               |  +2.55  <- generalization gap
+ 1.00 unseen   0.100  0.554  0.088 |  95.3  78.3  95.8  97.2  54.3 |  84.17
+ 1.00 seen     0.079  0.186  0.061 |  96.2  91.5  97.0  97.2  55.3 |  87.45
+      delta                        |                               |  +3.27  <- generalization gap
+
+variance head on unseen: corr 0.906  relL2 0.359   (input-window std baseline: 0.756 / 0.559)
+
+SPS bands (alpha = 0.75, fitted on seen, reported on unseen)
+  band                          fit    sps   FINAL
+  default +-5%                    -  54.42   84.31
+  constant half-width        0.0070  61.08   85.64
+  c * per-element RMSE       1.4000  60.91   85.61
+  c * optimal h(RMSE)        0.8000  61.52   85.73
+  c * RMSE * |window|        1.6000  60.38   85.50
+  c * optimal h(RMSE*|w|)     0.9000  61.28   85.68
+  c * sigma_hat              2.6000  59.30   85.28
+  c * optimal h(sigma)       1.3000  60.25   85.47
+  ORACLE band (hindsight)          -  64.65   86.35
+
+per-element bias map fitted on seen, applied to unseen (const band 0.0075)
+   relL2    TKE   MVPE |   rel   tke  mvpe   sps |  FINAL
+   0.097  0.545  0.089 |  95.4  78.6  95.7  61.0 |  85.59

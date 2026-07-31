@@ -34,6 +34,19 @@ CH = T_IN * C  # 40 channels once time is folded in
 MEAN = np.array([0.154960856, -0.000513992854], dtype=np.float32)
 STD = np.array([0.0968056545, 0.015960684], dtype=np.float32)
 
+# WP-C statistics: the same quantities after each window is divided by its own mean streamwise
+# speed. Measured over 30 train_real trajectories. Used instead of MEAN/STD when self-normalizing.
+MEAN_SN = np.array([1.0, 0.0], dtype=np.float32)
+STD_SN = np.array([0.526024, 0.102182], dtype=np.float32)
+
+# The same statistics fitted on train_sim (all 100 trajectories, 2.05e8 samples, [u, v] only).
+# Sim is non-dimensional so its scale is ~6x real's; normalizing sim with the real constants
+# would put the input at u ~ 7.3 sigma and make the WP-D comparison meaningless.
+MEAN_SIM = np.array([0.858663955, -0.004962022], dtype=np.float32)
+STD_SIM = np.array([0.443825609, 0.214743194], dtype=np.float32)
+
+NORM_STATS = {"real": (MEAN, STD), "sim": (MEAN_SIM, STD_SIM), "self": (MEAN_SN, STD_SN)}
+
 # Trajectories held out of training; see Track_1/make_val.py (val_unseen.npz).
 VAL_TRAJ = ["3750_0", "6300_10", "8850_20", "11400_20",
             "13950_10", "16500_5", "21600_15", "26700_0"]
@@ -43,8 +56,14 @@ VAL_TRAJ = ["3750_0", "6300_10", "8850_20", "11400_20",
 K_REFINE = 3
 
 
-def load_trajectories(data_dir: str, exclude: list[str]) -> list[np.ndarray]:
-    """Return one (T, H, W, 2) normalized float32 array per trajectory. Real data only."""
+def load_trajectories(data_dir: str, exclude: list[str],
+                      normalize: bool = True) -> list[np.ndarray]:
+    """Return one (T, H, W, 2) float32 array per trajectory.
+
+    `normalize=False` returns raw physical units, which self-normalization needs: the
+    per-window scale is only recoverable before the global normalizer folds every flow
+    condition onto one distribution.
+    """
     import h5py  # local: absent from the evaluation container, training-only dependency
 
     out = []
@@ -54,7 +73,8 @@ def load_trajectories(data_dir: str, exclude: list[str]) -> list[np.ndarray]:
         with h5py.File(path, "r") as f:
             u = f["u"][:, ::SUB, ::SUB].astype(np.float32)
             v = f["v"][:, ::SUB, ::SUB].astype(np.float32)
-        out.append((np.stack([u, v], -1) - MEAN) / STD)
+        d = np.stack([u, v], -1)
+        out.append((d - MEAN) / STD if normalize else d)
     return out
 
 
@@ -235,6 +255,35 @@ def tke(y: torch.Tensor, scale: torch.Tensor | None = None) -> torch.Tensor:
     if scale is not None:
         s = s * scale
     return 0.5 * (s ** 2).squeeze(1).sum(-1)
+
+
+def window_scale(x: torch.Tensor) -> torch.Tensor:
+    """Per-window freestream scale from raw PHYSICAL input: (B, 1, 1, 1, 1).
+
+    The mean streamwise velocity over the whole input window approximates U_inf, which for this
+    airfoil is Re*nu/c -- so dividing by it removes the Reynolds number from the input almost
+    exactly. Clamped because a window whose mean u is ~0 would otherwise blow up; no real window
+    is anywhere near that (measured mean_u spans 0.04-0.30 m/s).
+    """
+    return x[..., 0].mean(dim=(1, 2, 3)).clamp(min=1e-3).reshape(-1, 1, 1, 1, 1)
+
+
+def self_norm(x: torch.Tensor, s: torch.Tensor, mean: torch.Tensor,
+              std: torch.Tensor) -> torch.Tensor:
+    """Raw physical (B,T,H,W,C) -> non-dimensional, standardized. See plan_20260730.md WP-C.
+
+    Re 2968 in the hidden test set is below the whole training range, so under the global
+    GaussianNormalizer its velocities land where the network has seen nothing. Dividing by the
+    window's own scale first removes that axis: only the non-dimensional wake shape has to
+    generalize, and that varies far less with Re than the absolute velocity does.
+    """
+    return (x / s - mean) / std
+
+
+def self_denorm(y: torch.Tensor, s: torch.Tensor, mean: torch.Tensor,
+                std: torch.Tensor) -> torch.Tensor:
+    """Inverse of `self_norm`."""
+    return (y * std + mean) * s
 
 
 def rel_l2(p: torch.Tensor, t: torch.Tensor) -> torch.Tensor:

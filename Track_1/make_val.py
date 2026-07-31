@@ -11,6 +11,7 @@ any gap our models show is genuine generalization error.
 """
 from __future__ import annotations
 
+import argparse
 import os
 
 import h5py
@@ -20,7 +21,7 @@ T_IN = T_OUT = 20
 INTERVAL = 20
 SUB = 2
 HORIZON = T_IN + T_OUT
-DATA = "/home/clockj/RealPDE/train_real/train_real"
+DATA = "/home/clockj/RealPDE/train_real/train_real"  # overridden by --data
 
 UNSEEN = ["3750_0", "6300_10", "8850_20", "11400_20",
           "13950_10", "16500_5", "21600_15", "26700_0"]
@@ -45,5 +46,12 @@ def build(names: list[str], out: str) -> None:
 
 
 if __name__ == "__main__":
-    build(UNSEEN, "val_unseen.npz")
-    build(SEEN, "val_seen.npz")
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--data", default=DATA)
+    ap.add_argument("--suffix", default="",
+                    help="written as val_unseen<suffix>.npz / val_seen<suffix>.npz; use "
+                         "'_sim' for the WP-D sim diagnostic")
+    a = ap.parse_args()
+    DATA = a.data
+    build(UNSEEN, f"val_unseen{a.suffix}.npz")
+    build(SEEN, f"val_seen{a.suffix}.npz")

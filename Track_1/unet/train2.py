@@ -18,8 +18,9 @@ import time
 import numpy as np
 import torch
 
-from model import (MEAN, STD, T_IN, T_OUT, UNetTwoHead, VAL_TRAJ, compose, from_ch,
-                   load_trajectories, rel_l2, std_t, tke, to_ch, window_index)
+from model import (NORM_STATS, T_IN, T_OUT, UNetTwoHead, VAL_TRAJ, compose, from_ch,
+                   load_trajectories, rel_l2, self_norm, std_t, tke, to_ch, window_index,
+                   window_scale)
 
 
 def main() -> None:
@@ -32,6 +33,11 @@ def main() -> None:
     ap.add_argument("--lr", type=float, default=2e-4)
     ap.add_argument("--out", required=True)
     ap.add_argument("--var-head", action="store_true", help="WP2: add the log-std head")
+    ap.add_argument("--loss", choices=["rel", "mse"], default="rel",
+                    help="field loss. 'rel' = per-sample relative L2 in physical units (WP1.1); "
+                         "'mse' = plain MSE in normalized units, as the original train.py. The "
+                         "leaderboard says 'rel' costs 1.28 mvpe_score, so 'mse' is the default "
+                         "choice for submissions -- see plan_20260730.md WP-A.")
     ap.add_argument("--alpha-train", type=float, default=1.0,
                     help="fluctuation rescaling used INSIDE the field loss (var-head only)")
     ap.add_argument("--lam-v", type=float, default=1.0, help="weight on the log-std loss")
@@ -46,13 +52,23 @@ def main() -> None:
     ap.add_argument("--aug-noise", type=float, default=0.0,
                     help="Gaussian noise added to the INPUT window, in units of the target's "
                          "own per-window fluctuation std. 0 disables.")
+    ap.add_argument("--norm", choices=["real", "sim", "self"], default="real",
+                    help="'real'/'sim' = fixed global GaussianNormalizer statistics for that "
+                         "dataset. 'self' = WP-C, divide each window by its own mean streamwise "
+                         "speed and work non-dimensionally, so an unseen Reynolds number is not "
+                         "an unseen input. Use --norm sim for train_sim: its scale is ~6x real's "
+                         "and the real constants would put the input at 7.3 sigma.")
     ap.add_argument("--all-data", action="store_true",
                     help="train on ALL trajectories including the held-out ones. Submission "
                          "checkpoints only -- it makes local evaluation meaningless.")
     args = ap.parse_args()
 
     dev = "cuda"
-    trajs = load_trajectories(args.data, exclude=[] if args.all_data else VAL_TRAJ)
+    # Self-normalization needs raw physical trajectories: the per-window scale is only
+    # recoverable before the global normalizer folds every condition onto one distribution.
+    self_norm_mode = args.norm == "self"
+    trajs = load_trajectories(args.data, exclude=[] if args.all_data else VAL_TRAJ,
+                              normalize=False)
     idx = window_index(trajs, args.stride)
     held = "NONE (all-data)" if args.all_data else f"{len(VAL_TRAJ)} held out"
     print(f"train: {len(trajs)} trajectories -> {len(idx)} windows, {held}", flush=True)
@@ -63,8 +79,9 @@ def main() -> None:
     trajs_t = [torch.from_numpy(d) for d in trajs]
     idx_t = torch.from_numpy(idx)
 
-    std_v = torch.from_numpy(STD).to(dev)
-    mean_v = torch.from_numpy(MEAN).to(dev)
+    stats = NORM_STATS[args.norm]
+    mean_v = torch.from_numpy(stats[0]).to(dev)
+    std_v = torch.from_numpy(stats[1]).to(dev)
 
     model = UNetTwoHead(args.width, var_head=args.var_head).to(dev)
     print(f"params: {sum(p.numel() for p in model.parameters())/1e6:.2f}M", flush=True)
@@ -87,6 +104,13 @@ def main() -> None:
             sel = idx_t[perm[i:i + args.batch]]
             x, y = fetch(sel)
             b = len(sel)
+
+            # `mul` converts a normalized difference or std to physical units; `off` completes
+            # the affine map for absolute fields. Under self-normalization both carry the
+            # per-window scale, so every physical-unit loss below works unchanged.
+            s = window_scale(x) if self_norm_mode else torch.ones(1, device=dev)
+            x, y = self_norm(x, s, mean_v, std_v), self_norm(y, s, mean_v, std_v)
+            mul, off = std_v * s, mean_v * s
 
             if args.aug_scale > 0.0:
                 # Rescale the freestream. In physical units this is u -> a*u, which is a
@@ -112,13 +136,16 @@ def main() -> None:
             else:
                 sigma, pred = None, raw
 
-            # Field loss in PHYSICAL units, per sample -- exactly the scored quantity.
-            # Doing this in normalized units would be a different objective: the normalized
-            # denominator is dominated by the constant MEAN/STD offset, which erases the
-            # low-Re up-weighting that is the whole point of WP1.1.
-            num = ((pred - y) * std_v).reshape(b, -1).norm(dim=1)
-            den = (y * std_v + mean_v).reshape(b, -1).norm(dim=1).clamp(min=1e-8)
-            l_field = (num / den).mean()
+            if args.loss == "rel":
+                # Per-sample relative L2 in PHYSICAL units -- exactly the scored quantity.
+                # Doing this in normalized units would be a different objective: the normalized
+                # denominator is dominated by the constant MEAN/STD offset, which erases the
+                # low-Re up-weighting that is the whole point of WP1.1.
+                num = ((pred - y) * mul).reshape(b, -1).norm(dim=1)
+                den = (y * mul + off).reshape(b, -1).norm(dim=1).clamp(min=1e-8)
+                l_field = (num / den).mean()
+            else:
+                l_field = torch.mean((pred - y) ** 2)
 
             loss = l_field
             l_var = l_tke = torch.zeros((), device=dev)
@@ -130,8 +157,8 @@ def main() -> None:
                 # calling tke(compose(...)) keeps the gradient on the variance head alone --
                 # routing it through the field head would only push the raw fluctuation's
                 # scale, which the rescaling then discards.
-                ke_pred = 0.5 * ((sigma * std_v) ** 2).squeeze(1).sum(-1)
-                l_tke = rel_l2(ke_pred, tke(y, std_v)).mean()
+                ke_pred = 0.5 * ((sigma * mul) ** 2).squeeze(1).sum(-1)
+                l_tke = rel_l2(ke_pred, tke(y, mul)).mean()
                 loss = loss + args.lam_v * l_var + args.lam_t * l_tke
 
             opt.zero_grad(set_to_none=True)
@@ -148,7 +175,8 @@ def main() -> None:
 
     torch.save({"model_state_dict": model.state_dict(), "mode": "twohead",
                 "width": args.width, "var_head": args.var_head,
-                "config": vars(args)}, args.out)
+                "self_norm": self_norm_mode, "norm": args.norm,
+                "mean": stats[0], "std": stats[1], "config": vars(args)}, args.out)
     print(f"saved {args.out}", flush=True)
 
 
