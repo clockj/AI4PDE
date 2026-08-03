@@ -148,6 +148,40 @@ def divergence(f: torch.Tensor) -> torch.Tensor:
     return du + dv
 
 
+def vorticity(f: torch.Tensor) -> torch.Tensor:
+    """dv/dx - du/dy, central differences. f is (B, T, H, W, 2).
+
+    For a vortex-shedding wake this, not the divergence, is the coherent structure: the whole
+    signal is a train of alternating vortices. Divergence matching buys +0.58 on FNO
+    (report_20260802.md section 3); this asks whether the rotational half of the velocity
+    gradient is worth at least as much.
+    """
+    u, v = f[..., 0], f[..., 1]
+    dvdx = torch.zeros_like(v)
+    dudy = torch.zeros_like(u)
+    dvdx[..., 1:-1] = 0.5 * (v[..., 2:] - v[..., :-2])
+    dudy[:, :, 1:-1, :] = 0.5 * (u[:, :, 2:, :] - u[:, :, :-2, :])
+    return dvdx - dudy
+
+
+def velocity_gradient(f: torch.Tensor) -> torch.Tensor:
+    """All four components of grad(u) stacked: (B, T, H, W, 4).
+
+    Divergence and vorticity are two invariant combinations of this tensor; the remaining
+    degrees of freedom are the strain rates. Matching the whole tensor subsumes both of the
+    individual terms and is the natural generalization to test against them.
+    """
+    u, v = f[..., 0], f[..., 1]
+    out = []
+    for a in (u, v):
+        dx = torch.zeros_like(a)
+        dy = torch.zeros_like(a)
+        dx[..., 1:-1] = 0.5 * (a[..., 2:] - a[..., :-2])
+        dy[:, :, 1:-1, :] = 0.5 * (a[:, :, 2:, :] - a[:, :, :-2, :])
+        out += [dx, dy]
+    return torch.stack(out, -1)
+
+
 def radial_spectrum(f: torch.Tensor, idx: torch.Tensor, nb: int) -> torch.Tensor:
     """Radially binned energy of the FLUCTUATION field: (B, nb).
 

@@ -112,6 +112,16 @@ def main() -> None:
                          "measures rms(div u)/rms(|grad u|) at 0.42-0.49 on real PIV and "
                          "0.28-0.34 on the CFD, so a div->0 penalty would fight the data; the "
                          "only defensible form is matching what the target actually has.")
+    ap.add_argument("--lam-vort", type=float, default=0.0,
+                    help="physics: match the target's VORTICITY field. For a vortex-shedding "
+                         "wake this, not the divergence, is the coherent structure -- the whole "
+                         "signal is a train of alternating vortices. Divergence matching is "
+                         "worth +0.58 on FNO; this asks whether the rotational half of the "
+                         "velocity gradient is worth at least as much.")
+    ap.add_argument("--lam-grad", type=float, default=0.0,
+                    help="physics: match all four components of grad(u). Divergence and "
+                         "vorticity are two invariant combinations of that tensor, so this "
+                         "subsumes both --lam-div and --lam-vort and adds the strain rates.")
     ap.add_argument("--lam-spec", type=float, default=0.0,
                     help="physics: match the radially-averaged energy spectrum of the "
                          "fluctuation. Targets the measured amplitude deficit at high k "
@@ -149,7 +159,8 @@ def main() -> None:
               f"({hist_t.numel()*4/1e6:.0f} MB)", flush=True)
 
     n_ctx = max(args.ctx - T_IN, 0)  # extra frames prepended before the protocol window
-    from models_alt import build, divergence, radial_index, radial_spectrum
+    from models_alt import (build, divergence, radial_index, radial_spectrum,
+                            velocity_gradient, vorticity)
     rad_idx, rad_nb = radial_index(H, W, dev)
     model = build(args.arch, args.width, args.var_head,
                   (HIST_CH if args.hist else 0) + n_ctx * C,
@@ -288,6 +299,19 @@ def main() -> None:
                 # dominated by unobservable out-of-plane dw/dz.
                 l_div = rel_l2(divergence(pred * mul), divergence(y * mul)).mean()
                 loss = loss + args.lam_div * l_div
+            if args.lam_vort > 0.0:
+                # The rotational half of the velocity gradient. For a shedding wake this is
+                # the coherent structure; --lam-div constrains only the dilatational half.
+                l_vort = rel_l2(vorticity(pred * mul), vorticity(y * mul)).mean()
+                l_div = l_div + l_vort          # reported together in the `div` column
+                loss = loss + args.lam_vort * l_vort
+            if args.lam_grad > 0.0:
+                # All four components. Divergence and vorticity are two invariants of this
+                # tensor, so this subsumes both and adds the strain rates.
+                l_grad = rel_l2(velocity_gradient(pred * mul),
+                                velocity_gradient(y * mul)).mean()
+                l_div = l_div + l_grad
+                loss = loss + args.lam_grad * l_grad
             if args.lam_spec > 0.0:
                 sp_p = radial_spectrum(pred * mul, rad_idx, rad_nb)
                 sp_y = radial_spectrum(y * mul, rad_idx, rad_nb)
