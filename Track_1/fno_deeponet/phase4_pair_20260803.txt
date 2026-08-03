@@ -1,0 +1,7 @@
+configuration                                 ms/win     a   relL2     TKE    MVPE   sps |  FINAL
+fdiv1 + sigma                                  0.198  0.75  0.0848  0.5202  0.0751  62.0 |  86.41
+fdiv1 + sigma + calib                          0.198  0.75  0.0851  0.5105  0.0751  62.0 |  86.46
+ENSEMBLE x2 + sigma                            0.302  0.75  0.0825  0.5213  0.0731  62.2 |  86.41
+ENSEMBLE x2 + sigma + calib                    0.302  0.75  0.0827  0.5115  0.0731  62.2 |  86.46
+ENSEMBLE x3 + sigma                            0.408  0.75  0.0816  0.5213  0.0723  62.3 |  86.38
+ENSEMBLE x3 + sigma + calib                    0.408  0.75  0.0818  0.5114  0.0723  62.3 |  86.43

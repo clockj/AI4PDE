@@ -18,9 +18,15 @@ import time
 import numpy as np
 import torch
 
-from model import (NORM_STATS, T_IN, T_OUT, UNetTwoHead, VAL_TRAJ, compose, from_ch,
-                   load_trajectories, rel_l2, self_norm, std_t, tke, to_ch, window_index,
-                   window_scale)
+from model import (C, H, HIST_CH, NORM_STATS, T_IN, T_OUT, UNetTwoHead, VAL_TRAJ, W, compose,
+                   from_ch, history_stats, load_trajectories, norm_history, rel_l2, self_norm,
+                   std_t, tke, to_ch, window_index, window_scale)
+
+# The scorer's wake probes on the 32x64 grid, derived in scoring.mvpe_rel_l2_per_sample from
+# d=16, center=(10, 32), n_probe=9, sub_s=2. Hard-coded because the geometry is fixed for the
+# season and re-deriving it per batch would only invite a mismatch with the scorer.
+PROBE_Y = [8, 10, 12, 14, 16, 18, 20, 22, 24]
+PROBE_X = [13, 21, 29, 37]
 
 
 def main() -> None:
@@ -40,8 +46,27 @@ def main() -> None:
                          "choice for submissions -- see plan_20260730.md WP-A.")
     ap.add_argument("--alpha-train", type=float, default=1.0,
                     help="fluctuation rescaling used INSIDE the field loss (var-head only)")
+    ap.add_argument("--lam-f", type=float, default=1.0,
+                    help="weight on the FIELD loss. 0 trains a variance-only network, to be "
+                         "paired at inference with a separately trained field model. That is "
+                         "the fully decoupled option: the field head is then bit-identical to "
+                         "the no-head control by construction, so the shared trunk cannot cost "
+                         "MVPE (report_20260730.md section 9 measured that cost at 0.004 "
+                         "locally and ~1.3 on the hidden set).")
     ap.add_argument("--lam-v", type=float, default=1.0, help="weight on the log-std loss")
     ap.add_argument("--lam-t", type=float, default=0.5, help="weight on the TKE loss")
+    ap.add_argument("--w-mean", type=float, default=1.0,
+                    help="weight on the TIME-MEAN half of the field loss. Time-mean and "
+                         "fluctuation are orthogonal under the time inner product, so the field "
+                         "loss splits exactly into the two and 1.0 reproduces it unchanged. "
+                         "diag_spectral.py measures 68%% of the squared error sitting in the "
+                         "fluctuation while only ~31%% of the fluctuation energy is coherently "
+                         "predictable, so most of that budget buys nothing; the time-mean drives "
+                         "MVPE outright. >1 reallocates gradient to the learnable half.")
+    ap.add_argument("--lam-p", type=float, default=0.0,
+                    help="weight on an explicit MVPE term: the scorer's own wake-probe "
+                         "quantity (4 columns x 9 rows, time-averaged u,v, per-column relative "
+                         "L2). 36 points carry a fifth of the final score.")
     ap.add_argument("--detach-var", action="store_true",
                     help="stop the variance losses from back-propagating into the shared "
                          "trunk. The head still READS the mean-flow latent, so the physical "
@@ -58,6 +83,40 @@ def main() -> None:
                          "speed and work non-dimensionally, so an unseen Reynolds number is not "
                          "an unseen input. Use --norm sim for train_sim: its scale is ~6x real's "
                          "and the real constants would put the input at 7.3 sigma.")
+    ap.add_argument("--ctx", type=int, default=T_IN,
+                    help="number of input frames. The default 20 is the protocol's window, but "
+                         "diag_analog.py measures the shedding period at 60-75 frames, so 20 "
+                         "frames is under a third of a cycle -- too little to fix the phase or "
+                         "the frequency. Larger values prepend earlier frames of the same "
+                         "trajectory as extra channels; those frames are INPUTS of previous "
+                         "windows, so this reads no target.")
+    ap.add_argument("--hist", action="store_true",
+                    help="condition on the causal trajectory history: 4 extra input channels "
+                         "carrying the per-pixel mean and std of every frame up to and "
+                         "including this window. Legal transductive inference -- predict() "
+                         "receives all test windows and they tile each trajectory, so those "
+                         "frames are inputs. See model.history_stats.")
+    ap.add_argument("--swa", type=int, default=0,
+                    help="average the weights of the last N epochs (Izmailov et al. 2018) and "
+                         "save that as the checkpoint. A 3-seed prediction ensemble is worth "
+                         "+2.0 subscore on real but costs 3x latency; weight averaging chases "
+                         "the same variance reduction at 1x. Safe here because the network uses "
+                         "GroupNorm, which carries no running statistics to recompute.")
+    ap.add_argument("--arch", choices=["unet", "fno", "deeponet"], default="unet")
+    ap.add_argument("--modes-y", type=int, default=12, help="FNO: retained ky modes")
+    ap.add_argument("--modes-x", type=int, default=16, help="FNO: retained kx modes")
+    ap.add_argument("--n-layers", type=int, default=4, help="FNO: spectral blocks")
+    ap.add_argument("--p", type=int, default=256, help="DeepONet: basis rank")
+    ap.add_argument("--lam-div", type=float, default=0.0,
+                    help="physics: match the TARGET's divergence field, not zero. divergence.py "
+                         "measures rms(div u)/rms(|grad u|) at 0.42-0.49 on real PIV and "
+                         "0.28-0.34 on the CFD, so a div->0 penalty would fight the data; the "
+                         "only defensible form is matching what the target actually has.")
+    ap.add_argument("--lam-spec", type=float, default=0.0,
+                    help="physics: match the radially-averaged energy spectrum of the "
+                         "fluctuation. Targets the measured amplitude deficit at high k "
+                         "(gain 0.54 at k=32, report_20260731.md section 1.1) without "
+                         "requiring phase agreement, which is unreachable there.")
     ap.add_argument("--all-data", action="store_true",
                     help="train on ALL trajectories including the held-out ones. Submission "
                          "checkpoints only -- it makes local evaluation meaningless.")
@@ -83,27 +142,56 @@ def main() -> None:
     mean_v = torch.from_numpy(stats[0]).to(dev)
     std_v = torch.from_numpy(stats[1]).to(dev)
 
-    model = UNetTwoHead(args.width, var_head=args.var_head).to(dev)
+    hist_t = None
+    if args.hist:
+        hist_t = torch.from_numpy(history_stats(trajs, idx))
+        print(f"history channels: {tuple(hist_t.shape)} "
+              f"({hist_t.numel()*4/1e6:.0f} MB)", flush=True)
+
+    n_ctx = max(args.ctx - T_IN, 0)  # extra frames prepended before the protocol window
+    from models_alt import build, divergence, radial_index, radial_spectrum
+    rad_idx, rad_nb = radial_index(H, W, dev)
+    model = build(args.arch, args.width, args.var_head,
+                  (HIST_CH if args.hist else 0) + n_ctx * C,
+                  args.modes_y, args.modes_x, args.n_layers, args.p).to(dev)
     print(f"params: {sum(p.numel() for p in model.parameters())/1e6:.2f}M", flush=True)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-5)
     steps = args.epochs * ((len(idx) + args.batch - 1) // args.batch)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=args.lr, total_steps=steps)
 
-    def fetch(sel: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def fetch(sel: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
         xs = torch.stack([trajs_t[i][t:t + T_IN] for i, t in sel.tolist()])
         ys = torch.stack([trajs_t[i][t + T_IN:t + T_IN + T_OUT] for i, t in sel.tolist()])
-        return xs.to(dev, non_blocking=True), ys.to(dev, non_blocking=True)
+        cs = None
+        if n_ctx:
+            # Frames immediately before the window. Near the start of a trajectory there are
+            # fewer than n_ctx of them, so pad at the FRONT by repeating the earliest frame --
+            # the same convention the official windowing uses for short tails.
+            out = []
+            for i, t in sel.tolist():
+                seg = trajs_t[i][max(t - n_ctx, 0):t]
+                if len(seg) < n_ctx:
+                    # At t = 0 there is no prior frame at all; fall back to the window's own
+                    # first frame, which is what eval_wp.val_context does.
+                    first = seg[:1] if len(seg) else trajs_t[i][t:t + 1]
+                    seg = torch.cat([first.expand(n_ctx - len(seg), -1, -1, -1), seg])
+                out.append(seg)
+            cs = torch.stack(out).to(dev, non_blocking=True)
+        return xs.to(dev, non_blocking=True), ys.to(dev, non_blocking=True), cs
 
+    swa_state, swa_n = None, 0
     t0 = time.time()
     for ep in range(args.epochs):
         model.train()
         perm = torch.randperm(len(idx_t))
-        acc = np.zeros(4)
+        acc = np.zeros(7)
         n = 0
         for i in range(0, len(idx_t), args.batch):
-            sel = idx_t[perm[i:i + args.batch]]
-            x, y = fetch(sel)
+            pos = perm[i:i + args.batch]
+            sel = idx_t[pos]
+            x, y, ctx = fetch(sel)
             b = len(sel)
+            hist = hist_t[pos].to(dev, non_blocking=True) if args.hist else None
 
             # `mul` converts a normalized difference or std to physical units; `off` completes
             # the affine map for absolute fields. Under self-normalization both carry the
@@ -111,6 +199,10 @@ def main() -> None:
             s = window_scale(x) if self_norm_mode else torch.ones(1, device=dev)
             x, y = self_norm(x, s, mean_v, std_v), self_norm(y, s, mean_v, std_v)
             mul, off = std_v * s, mean_v * s
+            if hist is not None:
+                hist = norm_history(hist, s, mean_v, std_v)
+            if ctx is not None:
+                ctx = self_norm(ctx, s, mean_v, std_v)
 
             if args.aug_scale > 0.0:
                 # Rescale the freestream. In physical units this is u -> a*u, which is a
@@ -122,11 +214,25 @@ def main() -> None:
                 shift = (a - 1.0) * (mean_v / std_v)
                 x = a * x + shift
                 y = a * y + shift
+                if ctx is not None:
+                    ctx = a * ctx + shift
+                if hist is not None:
+                    # mean channels are absolute fields and take the full affine map; std
+                    # channels are a scale, so they only pick up the factor.
+                    a4 = a.reshape(b, 1, 1, 1)
+                    sh4 = shift.reshape(b, -1).view(b, -1, 1, 1)
+                    hist = torch.cat([a4 * hist[:, :2] + sh4, a4 * hist[:, 2:]], dim=1)
             if args.aug_noise > 0.0:
                 scale = args.aug_noise * std_t(y).mean((2, 3), keepdim=True)
                 x = x + scale * torch.randn_like(x)
 
-            raw, logstd = model(to_ch(x), detach_var=args.detach_var)
+            parts = [to_ch(x)]
+            if ctx is not None:
+                parts.append(ctx.permute(0, 1, 4, 2, 3).reshape(b, n_ctx * C, H, W))
+            if hist is not None:
+                parts.append(hist)
+            raw, logstd = model(torch.cat(parts, 1) if len(parts) > 1 else parts[0],
+                                detach_var=args.detach_var)
             raw = from_ch(raw)
 
             if args.var_head:
@@ -136,18 +242,59 @@ def main() -> None:
             else:
                 sigma, pred = None, raw
 
+            # Split the residual into its orthogonal time-mean and fluctuation parts so the
+            # two can be weighted separately. d = dm + df with dm constant in time, hence
+            # sum_t d^2 = T*dm^2 + sum_t df^2 exactly, and w_mean = 1 is the original loss.
+            d = pred - y
+            dm = d.mean(1, keepdim=True)
+            df = d - dm
+
             if args.loss == "rel":
                 # Per-sample relative L2 in PHYSICAL units -- exactly the scored quantity.
                 # Doing this in normalized units would be a different objective: the normalized
                 # denominator is dominated by the constant MEAN/STD offset, which erases the
                 # low-Re up-weighting that is the whole point of WP1.1.
-                num = ((pred - y) * mul).reshape(b, -1).norm(dim=1)
+                sq_m = ((dm * mul) ** 2).reshape(b, -1).sum(1) * T_OUT
+                sq_f = ((df * mul) ** 2).reshape(b, -1).sum(1)
+                num = (args.w_mean * sq_m + sq_f).clamp(min=0).sqrt()
                 den = (y * mul + off).reshape(b, -1).norm(dim=1).clamp(min=1e-8)
                 l_field = (num / den).mean()
             else:
-                l_field = torch.mean((pred - y) ** 2)
+                l_field = args.w_mean * torch.mean(dm ** 2) + torch.mean(df ** 2)
 
-            loss = l_field
+            loss = args.lam_f * l_field
+            l_probe = torch.zeros((), device=dev)
+            if args.lam_p > 0.0:
+                # scoring.mvpe_rel_l2_per_sample, verbatim: probe_y = 8..24 step 2,
+                # probe_x = 13/21/29/37, time-averaged u,v, relative L2 per COLUMN (each
+                # column carries its own denominator, which up-weights the far wake where
+                # velocities are small), then averaged over the four columns.
+                mp = (pred.mean(1) * mul.squeeze(1) + off.squeeze(1)) if self_norm_mode else \
+                     (pred.mean(1) * mul + off)
+                mt = (y.mean(1) * mul.squeeze(1) + off.squeeze(1)) if self_norm_mode else \
+                     (y.mean(1) * mul + off)
+                cols = []
+                for px in PROBE_X:
+                    pp = mp[:, PROBE_Y, px, :2].reshape(b, -1)
+                    tt = mt[:, PROBE_Y, px, :2].reshape(b, -1)
+                    cols.append((pp - tt).norm(dim=1) / tt.norm(dim=1).clamp(min=1e-8))
+                l_probe = torch.stack(cols).mean()
+                loss = loss + args.lam_p * l_probe
+
+            l_div = l_spec = torch.zeros((), device=dev)
+            if args.lam_div > 0.0:
+                # Match the target's OWN divergence. Driving div -> 0 would fight the data:
+                # divergence.py measures rms(div u)/rms(|grad u|) at 0.42-0.49 on real PIV,
+                # dominated by unobservable out-of-plane dw/dz.
+                l_div = rel_l2(divergence(pred * mul), divergence(y * mul)).mean()
+                loss = loss + args.lam_div * l_div
+            if args.lam_spec > 0.0:
+                sp_p = radial_spectrum(pred * mul, rad_idx, rad_nb)
+                sp_y = radial_spectrum(y * mul, rad_idx, rad_nb)
+                # log-space: the spectrum spans orders of magnitude and the deficit to be
+                # fixed is at high k, where the linear-scale energy is negligible.
+                l_spec = torch.mean((torch.log(sp_p + 1e-12) - torch.log(sp_y + 1e-12)) ** 2)
+                loss = loss + args.lam_spec * l_spec
             l_var = l_tke = torch.zeros((), device=dev)
             if args.var_head:
                 s_true = std_t(y)
@@ -165,16 +312,37 @@ def main() -> None:
             loss.backward()
             opt.step()
             sched.step()
-            acc += np.array([loss.item(), l_field.item(), l_var.item(), l_tke.item()]) * b
+            acc += np.array([loss.item(), l_field.item(), l_var.item(), l_tke.item(),
+                             l_probe.item(), l_div.item(), l_spec.item()]) * b
             n += b
+
+        if args.swa and ep >= args.epochs - args.swa:
+            # Running mean of the weights over the tail of the schedule. OneCycleLR has
+            # annealed the LR to near zero by then, so these iterates sit in one basin and
+            # averaging them is the cheap half of an ensemble.
+            sd = model.state_dict()
+            if swa_state is None:
+                swa_state = {k: v.detach().clone().float() for k, v in sd.items()}
+                swa_n = 1
+            else:
+                swa_n += 1
+                for k, v in sd.items():
+                    swa_state[k] += (v.detach().float() - swa_state[k]) / swa_n
 
         if ep % 5 == 0 or ep == args.epochs - 1:
             a = acc / n
             print(f"  epoch {ep:3d}  loss {a[0]:.5f}  field {a[1]:.5f}  "
-                  f"var {a[2]:.5f}  tke {a[3]:.5f}  ({time.time()-t0:.0f}s)", flush=True)
+                  f"var {a[2]:.5f}  tke {a[3]:.5f}  probe {a[4]:.5f}  "
+                  f"div {a[5]:.5f}  spec {a[6]:.5f}  ({time.time()-t0:.0f}s)", flush=True)
+
+    if swa_state is not None:
+        print(f"SWA: averaged the last {swa_n} epochs", flush=True)
+        model.load_state_dict({k: v.to(dev) for k, v in swa_state.items()})
 
     torch.save({"model_state_dict": model.state_dict(), "mode": "twohead",
-                "width": args.width, "var_head": args.var_head,
+                "width": args.width, "var_head": args.var_head, "hist": args.hist,
+                "ctx": args.ctx, "arch": args.arch, "modes_y": args.modes_y,
+                "modes_x": args.modes_x, "n_layers": args.n_layers, "p": args.p,
                 "self_norm": self_norm_mode, "norm": args.norm,
                 "mean": stats[0], "std": stats[1], "config": vars(args)}, args.out)
     print(f"saved {args.out}", flush=True)

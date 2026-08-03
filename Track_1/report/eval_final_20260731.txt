@@ -1,0 +1,90 @@
+==================== --field unet/wpA2_mse_var_lo.pth --sigma unet/wpA2_mse_var_lo.pth
+field wpA2_mse_var_lo.pth  +  sigma wpA2_mse_var_lo.pth
+latency: field 0.231 ms + sigma 0.000 ms = 0.231 ms/window   time_score 98.25
+sigma rel-L2 on unseen: 0.3593
+
+alpha set      relL2    TKE   MVPE |   rel   tke  mvpe  time   sps |  FINAL
+---------------------------------------------------------------------------
+ 0.50 unseen   0.089  0.568  0.081 |  95.7  77.9  96.1  98.3  54.9 |  84.57
+ 0.50 seen     0.066  0.355  0.052 |  96.8  84.9  97.5  98.2  55.6 |  86.60
+ 0.75 unseen   0.091  0.547  0.081 |  95.6  78.5  96.1  98.3  54.8 |  84.67
+ 0.75 seen     0.068  0.262  0.052 |  96.7  88.4  97.5  98.2  55.6 |  87.29
+ 1.00 unseen   0.094  0.568  0.081 |  95.5  77.9  96.1  98.3  54.7 |  84.49
+ 1.00 seen     0.071  0.204  0.052 |  96.6  90.7  97.5  98.2  55.6 |  87.72
+
+SPS bands (alpha = 0.75, fitted on seen, reported on unseen)
+  constant half-width         0.0065  sps  61.49  FINAL   86.00
+  c * optimal h(RMSE)         0.8000  sps  61.86  FINAL   86.08
+  c * optimal h(RMSE*|w|)     0.9000  sps  61.75  FINAL   86.06
+==================== --field unet/wpA2_mse_var_lo.pth --sigma unet/wpA2_mse_var_lo.pth --calibrate
+field wpA2_mse_var_lo.pth  +  sigma wpA2_mse_var_lo.pth  [calibrated]
+latency: field 0.231 ms + sigma 0.000 ms = 0.231 ms/window   time_score 98.25
+sigma rel-L2 on unseen: 0.3412
+
+alpha set      relL2    TKE   MVPE |   rel   tke  mvpe  time   sps |  FINAL
+---------------------------------------------------------------------------
+ 0.50 unseen   0.089  0.556  0.081 |  95.7  78.3  96.1  98.3  54.8 |  84.65
+ 0.50 seen     0.066  0.358  0.052 |  96.8  84.8  97.5  98.2  55.6 |  86.58
+ 0.75 unseen   0.091  0.521  0.081 |  95.6  79.3  96.1  98.3  54.8 |  84.82
+ 0.75 seen     0.068  0.266  0.052 |  96.7  88.2  97.5  98.2  55.6 |  87.25
+ 1.00 unseen   0.095  0.521  0.081 |  95.5  79.3  96.1  98.3  54.6 |  84.77
+ 1.00 seen     0.071  0.205  0.052 |  96.5  90.7  97.5  98.2  55.6 |  87.71
+
+SPS bands (alpha = 0.75, fitted on seen, reported on unseen)
+  constant half-width         0.0065  sps  61.49  FINAL   86.16
+  c * optimal h(RMSE)         0.8000  sps  61.88  FINAL   86.24
+  c * optimal h(RMSE*|w|)     0.9000  sps  61.75  FINAL   86.22
+==================== --field unet/wpA0_mse_nohead.pth --sigma unet/wpF2_varonly_nohist.pth --calibrate
+field wpA0_mse_nohead.pth  +  sigma wpF2_varonly_nohist.pth  [calibrated]
+latency: field 0.239 ms + sigma 0.087 ms = 0.326 ms/window   time_score 97.93
+sigma rel-L2 on unseen: 0.3440
+
+alpha set      relL2    TKE   MVPE |   rel   tke  mvpe  time   sps |  FINAL
+---------------------------------------------------------------------------
+ 0.50 unseen   0.086  0.540  0.077 |  95.9  78.7  96.3  97.9  55.1 |  84.78
+ 0.50 seen     0.060  0.381  0.046 |  97.1  84.0  97.8  98.0  55.8 |  86.51
+ 0.75 unseen   0.088  0.512  0.077 |  95.8  79.6  96.3  97.9  55.0 |  84.92
+ 0.75 seen     0.063  0.309  0.046 |  97.0  86.6  97.8  98.0  55.8 |  87.01
+ 1.00 unseen   0.092  0.520  0.077 |  95.6  79.4  96.3  97.9  54.8 |  84.81
+ 1.00 seen     0.066  0.269  0.046 |  96.8  88.1  97.8  98.0  55.7 |  87.27
+
+SPS bands (alpha = 0.75, fitted on seen, reported on unseen)
+  constant half-width         0.0065  sps  61.72  FINAL   86.26
+  c * optimal h(RMSE)         0.8000  sps  62.09  FINAL   86.34
+  c * optimal h(RMSE*|w|)     0.9000  sps  62.02  FINAL   86.32
+==================== --field unet/wpA0_mse_nohead.pth --sigma unet/wpF1_varonly.pth --calibrate
+field wpA0_mse_nohead.pth  +  sigma wpF1_varonly.pth  [calibrated]
+latency: field 0.230 ms + sigma 0.087 ms = 0.317 ms/window   time_score 97.96
+sigma rel-L2 on unseen: 0.3378
+
+alpha set      relL2    TKE   MVPE |   rel   tke  mvpe  time   sps |  FINAL
+---------------------------------------------------------------------------
+ 0.50 unseen   0.086  0.535  0.077 |  95.9  78.9  96.3  98.0  55.1 |  84.82
+ 0.50 seen     0.060  0.382  0.046 |  97.1  84.0  97.8  98.0  55.8 |  86.51
+ 0.75 unseen   0.088  0.506  0.077 |  95.8  79.8  96.3  98.0  55.0 |  84.96
+ 0.75 seen     0.063  0.310  0.046 |  97.0  86.6  97.8  98.0  55.8 |  87.00
+ 1.00 unseen   0.092  0.514  0.077 |  95.6  79.6  96.3  98.0  54.9 |  84.86
+ 1.00 seen     0.066  0.270  0.046 |  96.8  88.1  97.8  98.0  55.7 |  87.26
+
+SPS bands (alpha = 0.75, fitted on seen, reported on unseen)
+  constant half-width         0.0065  sps  61.74  FINAL   86.31
+  c * optimal h(RMSE)         0.8000  sps  62.11  FINAL   86.39
+  c * optimal h(RMSE*|w|)     0.9000  sps  62.06  FINAL   86.38
+==================== --field unet/wpA0_mse_nohead.pth --sigma unet/wpF3_varonly_w64.pth --calibrate
+field wpA0_mse_nohead.pth  +  sigma wpF3_varonly_w64.pth  [calibrated]
+latency: field 0.230 ms + sigma 0.232 ms = 0.462 ms/window   time_score 97.54
+sigma rel-L2 on unseen: 0.3460
+
+alpha set      relL2    TKE   MVPE |   rel   tke  mvpe  time   sps |  FINAL
+---------------------------------------------------------------------------
+ 0.50 unseen   0.086  0.537  0.077 |  95.9  78.8  96.3  97.5  55.1 |  84.72
+ 0.50 seen     0.060  0.348  0.046 |  97.1  85.2  97.8  97.5  55.9 |  86.69
+ 0.75 unseen   0.088  0.511  0.077 |  95.8  79.7  96.3  97.5  55.0 |  84.85
+ 0.75 seen     0.062  0.245  0.046 |  97.0  89.1  97.8  97.5  55.9 |  87.47
+ 1.00 unseen   0.092  0.523  0.077 |  95.6  79.3  96.3  97.5  54.8 |  84.71
+ 1.00 seen     0.065  0.171  0.046 |  96.9  92.1  97.8  97.5  55.9 |  88.04
+
+SPS bands (alpha = 0.75, fitted on seen, reported on unseen)
+  constant half-width         0.0065  sps  61.72  FINAL   86.20
+  c * optimal h(RMSE)         0.8000  sps  62.07  FINAL   86.27
+  c * optimal h(RMSE*|w|)     0.9000  sps  62.00  FINAL   86.25

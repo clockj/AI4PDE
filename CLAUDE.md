@@ -328,6 +328,122 @@ variance head transfers; something costs MVPE.
   condition, not a failure: both val sets are inside the training Re range, so the thing it fixes
   is invisible locally. It can only be tested on the board.
 
+### Round 3 (2026-07-31) — 86.39, and the forecasting ceiling is now measured
+
+Full detail: `Track_1/report/report_20260731.md`. **Best local: 86.39** =
+`wpA0_mse_nohead` (field) + `wpF1_varonly` (sigma) + cross-fit sigma calibration, `alpha=0.75`,
+band `c × optimal h(RMSE)`. Not yet packaged.
+
+**Run-to-run noise is σ = 0.040 final** (three identical-recipe runs, error metrics only; the
+old ±0.1 bundled in `time_score` jitter). rel-L2 σ 0.0002, TKE σ 0.0060, MVPE σ 0.0016.
+
+**The variance head must NOT share the trunk — this reverses run H.** Run H's detached head had
+130 parameters and failed. A *width-32 variance-only network* (`--lam-f 0`) matches the shared
+head's sigma to three decimals (0.3607 vs 0.3608) while leaving MVPE at the no-head control's
+0.0773 instead of 0.0817, and costs only 0.087 ms. Decoupling is worth +0.15 final; the shared
+trunk was pure downside and is the likely cause of the hidden set's −1.28 mvpe.
+
+**Post-hoc sigma calibration is worth +0.16 final, free.** Least squares on
+`[head_sigma, window_std, history_std, 1]` per channel takes sigma rel-L2 0.3593 → 0.3378.
+**Fit it only on trajectories the model never trained on** — fitting on `val_seen` gives the
+head all the weight (0.982) and buys +0.008, because the head is in-sample there.
+
+**Every subscore is now floor-limited. Remaining forecasting envelope is ~+1.1, to ~87.5.**
+
+| subscore | now | measured bound | how bounded |
+|---|---|---|---|
+| `rel_l2` | 95.8 | 97.0–97.4 | mean sampling floor 0.0531 ⊕ PIV noise 0.007–0.031 |
+| `tke` | 79.8 | ~81 | 10-frame half-split ⇒ ≈0.47 irreducible |
+| `mvpe` | 96.3 | **96.75** | perfect-true-mean predictor at the probes = 0.0670 |
+| `time` | 98.0 | ~99 | 0.317 ms/window |
+| `sps` | 62.1 | 64.9 | oracle band, hindsight widths |
+
+Corrections to earlier rounds: **`mvpe_score`'s ceiling is 96.75, not 100** (headroom +0.11, not
++0.76), and **PIV noise is 0.6–13% of fluctuation energy, not 16%/10.9%** — the `rel_l2` floor is
+dominated by the *time-mean sampling term*, not measurement noise.
+
+**Closed with measurements — do not revisit:**
+- *Residual / high-frequency reconstruction, incl. a second FNO.* Prediction–target spectral
+  coherence is 0.79 at the shedding scale but <0.2 above k≈15; energy-weighted Γ² = 0.308 caps
+  any per-wavenumber filter. Best variance-preserving per-k gain: **+0.013**. FNO is also the
+  wrong tool — mode truncation is a low-pass, and 15.5 ms costs −2.2 final. `diag_spectral.py`.
+- *The time-mean as a separate lever.* Already at its sampling floor: 0.0503 measured vs 0.0531
+  irreducible. `diag_mean_floor.py`.
+- *Loss reweighting.* `--w-mean 3` (+1.2σ), `--w-mean 8`, `--lam-p 0.3` (−0.8σ). Adding the
+  scorer's own MVPE functional to the loss does not improve MVPE.
+- *More capacity, anywhere.* Width 96 lost for the field net; width 64 loses for the variance
+  net (sigma 0.3460 vs width 32's 0.3378, 2.7× latency).
+- *In-training history channels* (`--hist` on the field trunk): marginal sigma gain, costs MVPE.
+  Feed history to the *separate* variance net instead, or use the post-hoc calibration.
+
+### Track 1 `predict()` receives every test window at once — and the windows tile
+
+`IN_STEP = OUT_STEP = INTERVAL = 20` (`local_eval.py:48-51`), so **window k's target IS window
+k+1's input**, verified bit-exact (`maxabsdiff 0.0`) on `3750_0.h5`. 328/336 windows on
+`val_unseen`. Returning `input_array[k+1]` scores **93.55 local** (rel-L2 0.0023, TKE 0.0141,
+MVPE 0.0021) — which reconciles the leaderboard's otherwise impossible 93.3, since PIV noise
+caps a physically perfect forecaster near 92 and `sps_score` cannot exceed 73.11.
+**No action taken. Ask the organizers before treating this as available.**
+
+Legitimately, the same batching allows **transductive conditioning**: per-trajectory statistics
+from all ~42 windows, reading no targets. Trajectory boundaries are detectable from the
+per-window mean-speed jump (within ≤0.046, across ≥0.108, 0/335 errors at threshold 0.077) when
+`metadata["sample_id"]` is unavailable.
+
+### Round 4 (2026-08-03) — 86.53, and two earlier conclusions were wrong
+
+Full detail: `Track_1/fno_deeponet/report_20260802.md`. **Best local: 86.53** =
+`fno_div_hi` — a **0.90M-parameter FNO** (width 24, modes (8,12), 4 layers) with a divergence
+loss at λ 1.0, its own variance head, `alpha=0.75`, band `c × optimal h(RMSE·|w|)`.
+0.106 ms/window, 3.6 MB. Not yet packaged.
+
+**1. The "FNO is dominated" verdict was a size artifact — reverse it.**
+
+| | params | ms/win | final |
+|---|---|---|---|
+| official `sim_real_ft` FNO | 50.4M | 15.5 | 83.06 |
+| `fno_s` (ours) | 0.90M | 0.11 | 85.95 |
+| **`fno_div_hi`** | **0.90M** | **0.11** | **86.53** |
+
+The 50M checkpoint was slower *and* worse. FNO is flat across 37× params (85.87–85.94), so use
+the smallest. CNO and Transolver remain disqualified; FNO does not.
+
+**2. Physics losses were rejected too broadly — the divergence term works.**
+`plan_20260730.md` ruled them out because `rms(∇·u)/rms(|∇u|)` is 0.42–0.49 on real PIV. That
+correctly rules out `∇·u → 0` and *only* that. **Matching the divergence the target actually
+has** (`--lam-div`, `rel_l2(div(pred), div(target))` in physical units) is worth:
+
+| architecture | Δ final |
+|---|---|
+| FNO 0.90M | **+0.58** (14σ) |
+| U-Net 1.91M | +0.11 (2.8σ) |
+| DeepONet | +0.08 |
+
+It improves **rel-L2, TKE and MVPE simultaneously** — the only change in four rounds to do so
+(0.0986→0.0862, 0.5360→0.5082, 0.0916→0.0757). λ_div optimum is shallow: 0.3–3.0 all within
+0.05, best at 1.0 for FNO and 0.3 for the U-Net. Likely mechanism: divergence is a
+gradient-domain quantity, so it constrains what a mode-truncated spectral operator does between
+its retained modes — hence the gain ordering FNO ≫ U-Net > DeepONet.
+
+**Closed this round, measured:**
+- *Spectrum matching* (`--lam-spec`, log radial energy): −0.01 / −0.10 / −0.14 on FNO / U-Net /
+  DeepONet. Above k≈15 coherence is <0.2, so added amplitude lands in the wrong phase.
+- *DeepONet*: 81.09 → 84.30 with modern training, then plateaus. MVPE 0.1345 vs FNO's 0.0768;
+  tripling p from 128→512 barely moves it. Rank-*p* fixed-basis limit, as predicted.
+- *Ensembling at this operating point*: ×2 and ×3 give the best field quality in the project
+  (rel-L2 0.0818, MVPE 0.0723) but **score lower** — at e≈0.08 the `100/(1+0.5e)` curve is so
+  flat that accuracy is nearly free to the score while latency is not.
+- *Decoupled pair on FNO*: neutral (−0.07). FNO's own variance head does not damage its field
+  head the way the U-Net's did.
+- *Long context* (`--ctx 80/140`, sim): monotonically worse despite a 60–75 frame shedding
+  period. *SWA*: null (+0.05) — OneCycleLR anneals to ~0 so the averaged iterates are identical.
+- *Analog forecasting* (Lorenz method of analogues, sim): rel-L2 0.259 vs the U-Net's 0.120.
+  1000 frames is far too few for analogues in a system this dimensional.
+
+New code: `unet/models_alt.py` (`FNO2d`, `DeepONetCh`, `divergence`, `radial_spectrum`,
+`build`), `train2.py --arch/--lam-div/--lam-spec/--ctx/--swa/--lam-f`,
+`fno_deeponet/eval_sweep.py`, `fno_deeponet/eval_phase3.py`.
+
 ### Clean simulation data is HARDER to predict than noisy PIV
 
 `wpD_sim` — same recipe, `u`/`v` only, sim's own normalizer, matched window count (11,132 vs

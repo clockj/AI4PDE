@@ -174,10 +174,10 @@ class UNetTwoHead(nn.Module):
     that encodes the mean field. The split costs ~130 parameters.
     """
 
-    def __init__(self, width: int = 64, var_head: bool = True):
+    def __init__(self, width: int = 64, var_head: bool = True, extra_ch: int = 0):
         super().__init__()
         w1, w2, w3 = width, width * 2, width * 4
-        self.inc = block(CH, w1)
+        self.inc = block(CH + extra_ch, w1)
         self.down1 = block(w1, w2)
         self.down2 = block(w2, w3)
         self.up1 = block(w3 + w2, w2)
@@ -210,6 +210,54 @@ class UNetTwoHead(nn.Module):
             # head (run F: raw TKE 0.670 vs WP1's 0.599).
             logstd = self.head_logstd(u1.detach() if detach_var else u1)
         return self.head_field(u1), logstd
+
+
+HIST_CH = 4  # history mean (u, v) + history std (u, v)
+
+
+def history_stats(trajs: list[np.ndarray], idx: np.ndarray) -> np.ndarray:
+    """Causal per-pixel mean and std of every frame up to and including each window.
+
+    trajs : raw (T, H, W, 2) arrays;  idx : the (traj, start) pairs from window_index
+    -> (N, HIST_CH, H, W) float32 in the same physical units as `trajs`
+
+    Track 1's predict() is handed every window of the test set at once in (filename, time_id)
+    order, and windows tile each trajectory contiguously, so for window k the frames of windows
+    0..k-1 are INPUTS that are legally available -- this reads no target. It buys a far longer
+    baseline for the flow's second-order statistics than the 20 frames the window itself
+    carries: measured on val_unseen, combining it with the variance head's own estimate takes
+    the predicted-std rel-L2 from 0.358 to 0.338 (diag_history.py).
+
+    Computed through per-trajectory prefix sums so the cost is O(T) per trajectory rather than
+    O(windows * T); the prefix arrays are freed before moving to the next trajectory.
+    """
+    out = np.empty((len(idx), HIST_CH, H, W), dtype=np.float32)
+    for i, d in enumerate(trajs):
+        rows = np.flatnonzero(idx[:, 0] == i)
+        if not len(rows):
+            continue
+        d64 = d.astype(np.float64)
+        cs1 = np.concatenate([np.zeros((1,) + d.shape[1:]), d64.cumsum(0)])
+        cs2 = np.concatenate([np.zeros((1,) + d.shape[1:]), (d64 ** 2).cumsum(0)])
+        for r in rows:
+            n = int(idx[r, 1]) + T_IN            # frames [0, start + T_IN)
+            m = cs1[n] / n
+            sd = np.sqrt(np.maximum(cs2[n] / n - m ** 2, 0.0))
+            out[r] = np.concatenate([m, sd], -1).transpose(2, 0, 1)
+        del cs1, cs2
+    return out
+
+
+def norm_history(hist: torch.Tensor, s: torch.Tensor, mean: torch.Tensor,
+                 std: torch.Tensor) -> torch.Tensor:
+    """Put raw history stats on the same scale as the normalized input window.
+
+    The mean channels are absolute fields and take the full affine map; the std channels are
+    a scale and take only the division, since a standard deviation has no offset.
+    """
+    mv, sv = mean.view(1, -1, 1, 1), std.view(1, -1, 1, 1)
+    s4 = s.reshape(-1, 1, 1, 1) if s.numel() > 1 else s.view(1, 1, 1, 1)
+    return torch.cat([(hist[:, :2] / s4 - mv) / sv, (hist[:, 2:] / s4) / sv], dim=1)
 
 
 def std_t(y: torch.Tensor) -> torch.Tensor:

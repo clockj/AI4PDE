@@ -27,14 +27,61 @@ spec = importlib.util.spec_from_file_location("sc", os.path.join(KIT, "scoring.p
 sc = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sc)
 
-from model import (NORM_STATS, UNet, UNetTwoHead, compose, from_ch,  # noqa: E402
-                   mse_predict, std_t, to_ch, window_scale)
+from model import (HIST_CH, NORM_STATS, UNet, UNetTwoHead, compose, from_ch,  # noqa: E402
+                   mse_predict, norm_history, std_t, to_ch, window_scale)
+
+
+def val_context(X: np.ndarray, ids: np.ndarray, n_ctx: int) -> np.ndarray:
+    """The `n_ctx` frames immediately before each window: (N, n_ctx*2, H, W), raw units.
+
+    Validation windows tile each trajectory at stride 20 (make_val.py), so the frames before
+    window k are the inputs of windows k-1, k-2, ... of the same trajectory -- exactly what
+    predict() sees. Front-padded by repeating the earliest available frame, matching
+    train2.fetch and the official short-tail convention.
+    """
+    traj = np.array([str(i).split(":")[0] for i in ids])
+    h, w = X.shape[2], X.shape[3]
+    out = np.zeros((len(X), n_ctx * 2, h, w), dtype=np.float32)
+    for name in np.unique(traj):
+        sel = np.flatnonzero(traj == name)
+        order = sel[np.argsort([int(str(ids[k]).split(":")[1]) for k in sel])]
+        frames = np.concatenate([X[k][..., :2] for k in order], axis=0)   # (20*nw, H, W, 2)
+        for j, k in enumerate(order):
+            t = j * 20
+            seg = frames[max(t - n_ctx, 0):t]
+            if len(seg) < n_ctx:
+                pad = np.repeat(seg[:1] if len(seg) else frames[:1], n_ctx - len(seg), axis=0)
+                seg = np.concatenate([pad, seg])
+            out[k] = seg.transpose(0, 3, 1, 2).reshape(n_ctx * 2, h, w)
+    return out
+
+
+def val_history(X: np.ndarray, ids: np.ndarray) -> np.ndarray:
+    """Causal history stats for a validation set: (N, HIST_CH, H, W), raw physical units.
+
+    Mirrors model.history_stats, but the validation sets are already materialized as windows
+    tiled at stride 20 (make_val.py), so the history of window k is simply the concatenated
+    input frames of windows 0..k of the same trajectory -- exactly what predict() would see.
+    """
+    traj = np.array([str(i).split(":")[0] for i in ids])
+    out = np.empty((len(X), HIST_CH, X.shape[2], X.shape[3]), dtype=np.float32)
+    for name in np.unique(traj):
+        w = np.flatnonzero(traj == name)
+        f = X[w][..., :2].astype(np.float64).reshape(len(w), -1, X.shape[2], X.shape[3], 2)
+        n = np.arange(1, len(w) + 1) * f.shape[1]
+        c1 = f.sum(1).cumsum(0)
+        c2 = (f ** 2).sum(1).cumsum(0)
+        m = c1 / n[:, None, None, None]
+        sd = np.sqrt(np.maximum(c2 / n[:, None, None, None] - m ** 2, 0.0))
+        out[w] = np.concatenate([m, sd], -1).transpose(0, 3, 1, 2)
+    return out
 
 
 # --------------------------------------------------------------------------- inference
 
 
-def run(ckpt: str, X: np.ndarray, alpha: float, batch: int = 16):
+def run(ckpt: str, X: np.ndarray, alpha: float, batch: int = 16, hist: np.ndarray | None = None,
+        ctx: np.ndarray | None = None):
     """-> (prediction (N,T,H,W,3), sigma (N,1,H,W,2) or None, seconds per window).
 
     Timing is forward-pass-only at batch 16, matching eval_all.py so the numbers are
@@ -43,8 +90,18 @@ def run(ckpt: str, X: np.ndarray, alpha: float, batch: int = 16):
     """
     blob = torch.load(ckpt, map_location="cuda")
     two = blob.get("mode") == "twohead"
+    use_hist = bool(blob.get("hist", False))
+    n_ctx = max(int(blob.get("ctx", 20)) - 20, 0)
+    if use_hist and hist is None:
+        raise ValueError(f"{ckpt} was trained with --hist; pass the history channels")
+    if n_ctx and ctx is None:
+        raise ValueError(f"{ckpt} was trained with --ctx; pass the context frames")
     if two:
-        m = UNetTwoHead(blob.get("width", 64), var_head=blob.get("var_head", True)).cuda()
+        from models_alt import build
+        m = build(blob.get("arch", "unet"), blob.get("width", 64),
+                  blob.get("var_head", True), (HIST_CH if use_hist else 0) + n_ctx * 2,
+                  blob.get("modes_y", 12), blob.get("modes_x", 16),
+                  blob.get("n_layers", 4), blob.get("p", 256)).cuda()
     else:
         m = UNet().cuda()
     m.load_state_dict(blob["model_state_dict"])
@@ -68,6 +125,7 @@ def run(ckpt: str, X: np.ndarray, alpha: float, batch: int = 16):
             y = from_ch(mse_predict(m, prev))
         return y, s
 
+    H_, W_ = X.shape[2], X.shape[3]
     preds, sigmas, batches = [], [], []
     with torch.no_grad():
         for i in range(0, len(X), batch):
@@ -76,6 +134,16 @@ def run(ckpt: str, X: np.ndarray, alpha: float, batch: int = 16):
             # carries the per-window scale as well.
             w = window_scale(xb) if sn else 1.0
             prev = to_ch((xb / w - mean) / std if sn else (xb - mean) / std)
+            if n_ctx:
+                cb = torch.from_numpy(ctx[i:i + batch]).cuda()
+                cb = cb.reshape(len(cb), n_ctx, 2, H_, W_).permute(0, 1, 3, 4, 2)
+                cb = (cb / w - mean) / std if sn else (cb - mean) / std
+                prev = torch.cat([prev, cb.permute(0, 1, 4, 2, 3).reshape(
+                    len(cb), n_ctx * 2, H_, W_)], dim=1)
+            if use_hist:
+                hb = torch.from_numpy(hist[i:i + batch]).cuda()
+                sc_ = w if sn else torch.ones(1, device="cuda")
+                prev = torch.cat([prev, norm_history(hb, sc_, mean, std)], dim=1)
             batches.append(prev)
             y, s = forward(prev)
             preds.append(((y * std + mean) * w).float().cpu().numpy())
@@ -197,11 +265,12 @@ def main() -> None:
                          "the WP-D sim diagnostic")
     args = ap.parse_args()
 
-    sets = {}
+    sets, hists = {}, {}
     for tag in ("unseen", "seen"):
         path = f"val_{tag}{args.suffix}.npz"
         d = np.load(os.path.join(HERE, path))
         sets[tag] = (d["x"], d["y"])
+        hists[tag] = val_history(d["x"], d["ids"])
 
     const_grid = np.concatenate([np.linspace(0.001, 0.02, 39), np.linspace(0.022, 0.06, 20)])
     scale_grid = np.linspace(0.1, 3.0, 30)
@@ -227,7 +296,7 @@ def main() -> None:
         for alpha in alphas:
             row = {}
             for tag, (X, Y) in sets.items():
-                P, S, t = run(path, X, alpha)
+                P, S, t = run(path, X, alpha, hist=hists[tag])
                 row[tag] = (P, S, t, subscores(P, Y, t))
                 v = row[tag][3]
                 print(f"{alpha:5.2f} {tag:7s} {v['rel_err']:6.3f} {v['tke_err']:6.3f} "
