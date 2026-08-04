@@ -433,6 +433,8 @@ its retained modes — hence the gain ordering FNO ≫ U-Net > DeepONet.
 - *Ensembling at this operating point*: ×2 and ×3 give the best field quality in the project
   (rel-L2 0.0818, MVPE 0.0723) but **score lower** — at e≈0.08 the `100/(1+0.5e)` curve is so
   flat that accuracy is nearly free to the score while latency is not.
+  **REVERSED in round 5**: that used forward-only latency. End-to-end, ensembling is +0.20 —
+  see Round 5 item 3.
 - *Decoupled pair on FNO*: neutral (−0.07). FNO's own variance head does not damage its field
   head the way the U-Net's did.
 - *Long context* (`--ctx 80/140`, sim): monotonically worse despite a 60–75 frame shedding
@@ -443,6 +445,56 @@ its retained modes — hence the gain ordering FNO ≫ U-Net > DeepONet.
 New code: `unet/models_alt.py` (`FNO2d`, `DeepONetCh`, `divergence`, `radial_spectrum`,
 `build`), `train2.py --arch/--lam-div/--lam-spec/--ctx/--swa/--lam-f`,
 `fno_deeponet/eval_sweep.py`, `fno_deeponet/eval_phase3.py`.
+
+### Round 5 (2026-08-03) — 86.30 PACKAGED, and the local time_score was wrong all along
+
+Full detail: `Track_1/fno_deeponet/report_20260802.md` §7–12. **Shipped:
+`Track_1/submit_fno/submission.zip`** — a 3-seed ensemble of 0.90M FNOs with velocity-gradient
+matching. **This is the first packaged model in five rounds**; every previous round's best is
+recorded as "not yet packaged" and therefore never scored.
+
+**1. `eval_wp.py` times the FORWARD PASS ONLY. Every `time_score` in every report is inflated.**
+The evaluator times all of `predict()`. Measured on the same 336 windows: 0.109 ms forward-only
+(`time_score` 98.79) against **1.19 ms end-to-end (`time_score` 96.12)** — **−0.59 on `final`**,
+applied uniformly to every historical number here. Rankings are unaffected (one architecture),
+absolute numbers are not. The API forces three `(N,20,32,64,3)` float32 arrays out, ~0.5 GB of
+writes at N=336, which is a floor no model change touches. Use
+`submit_fno/validate_strict.py` for any number quoted against the leaderboard.
+
+**2. It is not divergence — it is BOTH INVARIANTS of ∇u.** `--lam-grad` (match the target's full
+velocity-gradient tensor) scores **86.68** vs `--lam-div`'s 86.53, replicated over three runs.
+Decisive ablation: `--lam-div 1.0 --lam-vort 1.0` *without* strain rates reaches 86.67, i.e.
+identical to the full tensor, while either invariant **alone** gives 86.53–86.57. So constraining
+the trace and the antisymmetric part is what matters; the traceless symmetric part is already
+fine. λ plateau 1–3 (0.3 → 86.57, 10 → 86.44). U-Net reproduces the ordering (+0.13).
+
+**3. Ensembling was rejected on the wrong cost model — it is worth +0.20.** The old −0.07/−0.10
+used forward-only latency, where a 2nd member nearly doubles cost. End-to-end the forward pass is
+0.109 of 1.19 ms and the rest is fixed API overhead a 2nd member does **not** duplicate — if
+members are averaged **on the GPU before the host transfer** (`_fno.predict_fno` does this:
+average raw field and sigma, then `compose()` once). 3 seeds = 86.30; 7 members has the best
+rel-L2/TKE/MVPE in the project but ties at 86.22, accuracy gain exactly cancelled by latency.
+**Use 3.**
+
+**4. σ for this recipe is 0.015, not 0.040.** Three seeds: 86.67 / 86.69 / 86.66. The 0.040 in
+round 3 was a *different* recipe; do not reuse a borrowed σ. At 0.015, deltas of 0.05 are real.
+
+**Closed this round, measured:**
+- *Sim → real pretraining.* **Null, and not for normalizer reasons.** Self-norm both stages:
+  +0.08 vs its own control, but `--norm self` itself costs −0.20, so the bundle loses. Sim-norm →
+  real-norm (stage 2 in the winning config): **+0.00** (86.68 vs a from-scratch mean of 86.673).
+  Sim helps a handicapped model and adds nothing to a healthy one. Strategy item 6 is now
+  measured, not untested. New flag `train2.py --init` warm-starts and prints the copied-tensor
+  count so a partial load cannot masquerade as from-scratch.
+- *Post-hoc sigma calibration on the FNO's own head*: TKE 0.5003 → 0.5047, everything else flat.
+  It helps only a **separate** sigma net (round 3's +0.16, Phase 3's +0.06); a well-conditioned
+  shared head just gets noise, which `compose()` puts straight onto TKE.
+- *Laplacian matching*: **not built.** λ_grad 1.0 and 3.0 tie exactly, so "weight high
+  wavenumbers harder" is falsified — the λ plateau is the evidence.
+
+**Engineering, worth +0.26 on its own** (2.425 → 1.19 ms, error metrics bit-identical): never
+materialize the half-width to full size (`band` is `(1,20,…)` and broadcasts), write `u,v` into a
+pre-zeroed output instead of `np.concatenate`, upload whole windows and slice on GPU, batch 64.
 
 ### Clean simulation data is HARDER to predict than noisy PIV
 

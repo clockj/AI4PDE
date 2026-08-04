@@ -1,0 +1,19 @@
+model              params  ms/win     a   relL2     TKE    MVPE |   rel   tke  mvpe  time   sps |  FINAL
+fno_grad            0.90M   0.171  0.75  0.0840  0.5047  0.0726 |  96.0  79.8  96.5  98.5  62.1 |  86.57
+fno_grad_hi         0.90M   0.199  0.75  0.0836  0.5015  0.0727 |  96.0  80.0  96.5  98.4  62.0 |  86.57
+fno_dv              0.90M   0.188  0.75  0.0835  0.5046  0.0718 |  96.0  79.9  96.5  98.4  62.1 |  86.57
+
+NOTE: ms/win here is CONTAMINATED (0.171-0.199 against a clean 0.108-0.109) -- Phase 6 training
+was running concurrently. Compare the ERROR metrics, which are timing-independent, not FINAL.
+
+fno_grad, uncalibrated (phase5_results_20260803.txt) vs calibrated:
+    rel-L2   0.0839 -> 0.0840   (same)
+    TKE      0.5003 -> 0.5047   (WORSE)
+    MVPE     0.0726 -> 0.0726   (same)
+    sps      62.1   -> 62.1     (same)
+
+VERDICT: post-hoc sigma calibration is neutral-to-negative for the FNO's OWN variance head, and
+is not applied. This does not contradict round 3 (+0.16) or Phase 3 (+0.06): both of those
+calibrated a SEPARATE sigma network (wpF1_varonly) paired with a field-only model. The FNO's own
+head is already well conditioned, so the least-squares refit adds variance rather than signal --
+and because sigma feeds compose() at alpha 0.75, that noise lands directly on TKE.

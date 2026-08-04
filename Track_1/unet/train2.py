@@ -127,6 +127,16 @@ def main() -> None:
                          "fluctuation. Targets the measured amplitude deficit at high k "
                          "(gain 0.54 at k=32, report_20260731.md section 1.1) without "
                          "requiring phase agreement, which is unreachable there.")
+    ap.add_argument("--init", default="",
+                    help="warm-start the weights from this checkpoint instead of from random. "
+                         "The architecture flags must match it. This is what makes the two-stage "
+                         "sim -> real route possible: stage 1 trains on train_sim with --norm "
+                         "sim, stage 2 fine-tunes here on train_real with --norm real and a "
+                         "smaller --lr. Sim-ONLY training scores 69.0, below free persistence, "
+                         "but that measures zero-shot transfer, not pretraining -- the official "
+                         "sim_real_ft checkpoints get all their real skill from stage 2. Only "
+                         "the shared tensors are copied, so a normalizer or head shape change "
+                         "does not block the warm start.")
     ap.add_argument("--all-data", action="store_true",
                     help="train on ALL trajectories including the held-out ones. Submission "
                          "checkpoints only -- it makes local evaluation meaningless.")
@@ -166,6 +176,18 @@ def main() -> None:
                   (HIST_CH if args.hist else 0) + n_ctx * C,
                   args.modes_y, args.modes_x, args.n_layers, args.p).to(dev)
     print(f"params: {sum(p.numel() for p in model.parameters())/1e6:.2f}M", flush=True)
+
+    if args.init:
+        # Copy only the tensors that exist in both with the same shape, and say how many were
+        # skipped. A silent partial load is the failure mode that would make a fine-tuning run
+        # look like a from-scratch run.
+        src = torch.load(args.init, map_location="cpu")["model_state_dict"]
+        dst = model.state_dict()
+        ok = {k: v for k, v in src.items() if k in dst and dst[k].shape == v.shape}
+        model.load_state_dict({**dst, **{k: v.to(dev) for k, v in ok.items()}})
+        print(f"init: {args.init} -> {len(ok)}/{len(dst)} tensors copied "
+              f"({len(dst) - len(ok)} left at their random init)", flush=True)
+
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-5)
     steps = args.epochs * ((len(idx) + args.batch - 1) // args.batch)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=args.lr, total_steps=steps)
