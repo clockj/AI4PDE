@@ -1,4 +1,4 @@
-# Track 1 submission — 0.90M FNO with velocity-gradient matching (kit v9)
+# Track 1 submission — 8-member FNO ensemble, velocity-gradient matching (kit v9)
 
 An honest forecaster. Reads only its own input window; would score identically if the evaluator
 called it one window at a time. `validate_strict.py` asserts that as a test.
@@ -16,15 +16,17 @@ python submit_fno/fit_band.py        --ckpt $M     # writes band.npy
 python submit_fno/validate_strict.py --ckpt $M     # builds the zip, must print SUBMITTABLE
 ```
 
-**All-data (what to submit).** Same recipe, trained on all 82 real trajectories instead of 74.
-`val_seen` and `val_unseen` are both training data for these, so they have **no honest local
-score** — and, critically, no honest local *error field* either. `--err-ckpt` therefore points
-the band at the held-out models, whose errors on the same data are real predictions rather than
-memorization:
+**All-data, 8 diverse members (what to submit).** Same recipe, trained on all 82 real
+trajectories instead of 74. `val_seen` and `val_unseen` are both training data for these, so
+they have **no honest local score** — and, critically, no honest local *error field* either.
+`--err-ckpt` therefore points the band at the held-out models, whose errors on the same data
+are real predictions rather than memorization:
 
 ```bash
-A="unet/fno_all_s1.pth unet/fno_all_s2.pth unet/fno_all_s3.pth"
-M="unet/fno_grad.pth unet/fno_grad_s2.pth unet/fno_grad_s3.pth"
+A="unet/fno_all_s1.pth unet/fno_all_s2.pth unet/fno_all_s3.pth unet/fno_all_s4.pth \
+   unet/fno_all_s5.pth unet/fno_all_w48.pth unet/fno_all_m1220.pth unet/fno_all_w64.pth"
+M="unet/fno_grad.pth unet/fno_grad_s2.pth unet/fno_grad_s3.pth \
+   unet/fno_w48.pth unet/fno_m1220.pth unet/fno_w64.pth"
 python submit_fno/fit_band.py        --ckpt $A --err-ckpt $M
 python submit_fno/validate_strict.py --ckpt $A
 ```
@@ -42,7 +44,7 @@ fitted to that specific model's error field.
 |---|---|
 | `submission.py` | `predict()`; normalize → FNO → rescale fluctuation to the predicted std → denormalize |
 | `_fno.py` | self-contained `FNO2d`, mirrors `unet/models_alt.py` so checkpoints load unchanged |
-| `fno.pth`, `fno_2.pth`, `fno_3.pth` | three independent seeds, averaged on the GPU |
+| `fno.pth` … `fno_8.pth` | eight members of three architectures, averaged on the GPU |
 | `band.npy` | `(1,20,32,64,3)` SPS half-widths from `fit_band.py` |
 
 Only `torch` and `numpy` are imported. The Track 1 eval image has no `scipy`, `h5py`, `einops`,
@@ -51,12 +53,25 @@ the extract directory is *not* on `sys.path`.
 
 ## The model
 
-Three independent seeds of one recipe, averaged in raw field space on the GPU before the
-fluctuation rescaling, so `compose()` runs once on a coherent field and the three members cost
-three forward passes but only one host transfer. Re-checked under v9: 1→2 members is +0.97 SPS,
-2→3 is +0.23, and a 4th would buy under +0.1 for 0.11 ms. Three is the right number.
+Eight members, averaged in raw field space on the GPU before the fluctuation rescaling, so
+`compose()` runs once on a coherent field and eight members cost eight forward passes but only
+one host transfer.
 
-Each member: 4-layer FNO, width 24, modes (8, 12) — 0.90M parameters, 3.6 MB. A per-pixel
+**Member count is no longer a trade.** Two board rounds returned `time_score` 91.697 and 91.726
+for packages 2.07× apart in local latency, so board time is harness overhead and does not
+respond to the model. The measured slope is 0.033 ms of board time per ms of local time: this
+package runs 2.211 ms/window locally and is predicted at `time_score` 91.707, nineteen
+thousandths below the 1.282 ms three-member build.
+
+**The members are deliberately not all the same architecture.** Five are width-24 seeds; one is
+width 48, one modes (12, 20), one width 64. Individually the bigger ones are *worse* — on the
+AoA 15–20 proxy, width 24 scores 81.67 against 81.54 / 81.33 / 81.17 — because with 74
+trajectories and a gradient loss, capacity buys memorization. But they fail differently, and in
+an ensemble that is what counts. Held-out member curve: 3×w24 74.418 → +m1220 74.490 → +w48
+74.563 → +w64 74.614 → 7 members 74.645 → 9 members 74.657. Each new *architecture* is worth
++0.05…0.07; each extra *same-width seed* only +0.01…0.03.
+
+Each width-24 member: 4-layer FNO, modes (8, 12) — 0.90M parameters, 3.6 MB. A per-pixel
 log-std head runs alongside the field head; at inference the predicted fluctuation is rescaled
 toward that std at `ALPHA = 0.75`. That value was re-swept under v9 with the band refitted at
 every point and did not move.
@@ -88,15 +103,17 @@ through `predict()`** by `validate_strict.py` — the way the evaluator measures
 | | |
 |---|---|
 | rel_l2 0.0807 / TKE 0.4906 / MVPE 0.0698 | 96.12 / 80.30 / 96.63 |
-| ~1.32 ms/window | time 95.9 here, **~93.8 on the v9 board** |
-| fitted band | sps 47.9 here, **~42.6 at board error scale** |
+| 2.211 ms/window | time 94.8 here, **91.71 on the v9 board** (constant) |
+| fitted band | sps 47.9 here, **~46 at board error scale** |
 | **mean5** | **83.5 here, ~80.3 projected** |
 
 Two warnings about that table:
 
 * **`mean5` is not `final_score`.** v9 stopped publishing the combination rule and it is no
-  longer the plain mean — the 2026-08-05 board reported 79.733 where its own five subscores
-  average 78.999. Projected `final_score` is therefore ~81.
+  longer the plain mean. Across two board rounds `final − mean5` was +0.727 and +0.743, so the
+  working rule is `final ≈ mean5 + 0.73`. Projected `final_score` ~80.3.
+* **The projection has been wrong before.** The same proxy predicted 81 last round and the
+  board returned 79.985. Direction, not number.
 * **Local accuracy deltas have stopped transferring.** Two architectures differing by 0.008 in
   local rel-L2 landed within 0.0004 of each other on the board. Treat anything under ~0.4 in
   mean5 as unproven.

@@ -559,18 +559,17 @@ and the test set (see the box under *Scoring*). Board **79.733** for the July 30
 
 Facts worth not re-deriving:
 
-* **`predict()` is 1.390 ms/window, and the "0.109 ms forward pass" quoted all through rounds
-  1–5 is 8% of it.** Profile: H2D 0.047, three forwards + rescale 0.695, `.cpu().numpy()` +
-  strided host write 0.251, `pred ± band` 0.390, `isfinite` 0.066. The API — three
-  (N,20,32,64,3) float32 arrays at 165 MB each — is most of the cost.
-* **`pred ± band` costs 0.390 ms fresh and 0.033 ms into a reused buffer.** That 12× is
-  first-touch page faults. Reuse across calls is **rejected**: the kit says `predict` may be
-  called more than once, and if the harness holds references rather than consuming each result,
-  a reused buffer silently corrupts earlier calls. +0.06 mean5 is not worth a zeroed
-  submission.
-* **The v9 evaluation hardware is ~2.3× slower than the v7 one.** U-Net: 5.975 ms board vs
-  2.648 local. FNO's previous board run: 1.351 vs 1.390 local. Budget the FNO at ~3.1 ms and
-  `time_score` ≈ 93.8, not the 95.9 its last board run showed.
+* **`time_score` IS A CONSTANT ~91.7. It does not respond to the model.** Two v9 board rounds:
+  U-Net **5.976 ms/window** board (2.648 local), FNO ×3 **5.931 ms** board (1.282 local). A
+  1.366 ms/window *local* difference produced **0.045 ms** on the board — board time is harness
+  overhead at our scale. Therefore: **ensembling is free** (rounds 1–6 all priced members
+  against a penalty that does not exist), latency optimization is worthless, and model size is
+  no longer constrained by inference cost. Safe member ceiling is an interpolation, not an
+  extrapolation: 8 members ≈ 1.83 ms local, still under the 2.648 ms that measured 5.976.
+* **`predict()` is 1.390 ms/window locally, and the "0.109 ms forward pass" quoted all through
+  rounds 1–5 is 8% of it.** Profile: H2D 0.047, three forwards + rescale 0.695, `.cpu().numpy()`
+  + strided host write 0.251, `pred ± band` 0.390, `isfinite` 0.066. Only of local interest now
+  — see the constant-time bullet above.
 * **Two very different models land within 0.4% of each other on board rel-L2** (U-Net 0.11787,
   FNO 0.11753) across two different test sets, while differing by 0.008 locally. Local accuracy
   deltas have stopped transferring; treat a local gain under ~0.4 as unproven.
@@ -603,6 +602,51 @@ Three stays.
 
 Run-to-run σ is **~0.05 in v9 mean5**, not the 0.015 quoted in rounds 3–5 — that figure was the σ
 of v7's `final`, whose logistic SPS compressed exactly the variation v9 exposes.
+
+### Round 7 (2026-08-05 evening) — 79.985, and two false positives caught
+
+Board: rel 94.5754 / tke 78.5278 / mvpe 93.9100 / time 91.7264 / sps 37.4680 → **79.985**, up
+from 79.733. Every subscore improved. Full write-up: `Track_1/report/report_20260805_v9.md` §11.
+
+* **The board's errors are heavy-TAILED, not large.** Board rel-L2 is only **1.06×** the AoA
+  15–20 proxy, but SPS behaved like a **1.39×** stretch (`Track_1/calib_board.py`, inverted
+  from the measured board SPS for a known band). rel-L2 is an rms; SPS asks whether each
+  element landed *inside* its interval, and an element just outside forfeits everything while
+  barely moving rel-L2. Per-metric board inflation: rel **1.13×**, tke **1.27×**, mvpe
+  **1.49×**, per-element tail **1.39×**. Size the band against the tail — it is the default now.
+* **`final − mean5` = +0.727 and +0.743** across two submissions. Stable. Working rule:
+  `final ≈ mean5 + 0.73`. Two equations still cannot fix five weights — a 0.05-grid search
+  leaves two mutually inconsistent survivors — so this is empirical, not derived.
+* **ALPHA 0.90 was a contamination artifact.** Re-swept at board error scale it looked worth
+  +0.103 mean4 over 0.75 on the *all-data* models; the held-out control gave **+0.029**. The
+  all-data models trained on `val_unseen`, so their TKE there is partly memorized and unusually
+  cheap for α to buy. **ALPHA stays 0.75.** Second false positive in two rounds from tuning on
+  all-data checkpoints — always run a held-out control before shipping anything fitted to them.
+* **The band is closed.** Three independent attacks — exact solver, AoA fit split,
+  board-calibrated inflation — each returned ~+0.5 SPS and the response curve is flat either
+  side of every optimum. Stop.
+
+### Round 8 (2026-08-06) — capacity is bad, diversity is good, and both only because time is free
+
+Report §12. Eleven runs, all converged (last-30/prev-30 loss ratio 0.25–0.32).
+
+* **Model capacity is monotonically HARMFUL with the gradient loss.** AoA 15–20 proxy: width 24
+  **81.67**, modes (12,20) 81.54, width 48 81.33, width 64 81.17 — while *training* loss goes
+  the other way (0.069 → 0.038). With 74 trajectories and a dense per-pixel gradient signal,
+  capacity buys memorization. Note this **inverts** the pre-gradient-loss ladder (+0.30 from
+  `fno_s` to `fno_xl`); do not cite that ladder as evidence for scaling any more.
+* **Ensemble diversity is monotonically GOOD, and architecture beats seeds.** Held-out sets:
+  3×w24 74.418 → +m1220 74.490 → +w48 74.563 → +w64 74.614 → +cp0.25 74.645 → 9 members 74.657.
+  Each new *architecture* is worth +0.05…0.07; each extra *same-width seed* only +0.01…0.03.
+  Adding w48 (individually −0.34) beat adding a fourth w24 seed. This only became affordable
+  once time_score turned out to be constant.
+* **Board time slope, measured from two points: 0.033 ms board per ms local.** So ensemble size
+  is unconstrained — even a 3 ms/window local package predicts `time_score` 91.7.
+* **THIRD contamination artifact.** The all-data ensemble sweep makes `fno_all_w48` look worth
+  **+0.745** where the held-out experiment measures **+0.10** for the same change: 3.6M
+  parameters trained on `val_unseen` recall the proxy that scores them. Standing rule now:
+  **nothing gets decided on a number computed from an all-data checkpoint** — they supply
+  weights, never evidence.
 
 ### Physics losses: rejected, measured
 
