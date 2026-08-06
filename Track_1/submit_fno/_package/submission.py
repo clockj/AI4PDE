@@ -80,6 +80,13 @@ def _load():
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     models = [_fno.load(p, dev) for p in _CKPTS]
     band = np.load(_BAND).astype(np.float32) if os.path.exists(_BAND) else None
+    # The ingestion program rejects a non-finite or reversed interval by zeroing EVERY
+    # subscore, so the band is checked -- but here, at import, where it is 0.5 MB and free,
+    # not inside the timed call where the same guarantee would cost a scan of two 165 MB
+    # arrays. Nothing downstream can break it: subtracting a non-negative half-width from a
+    # finite prediction cannot reorder the bounds.
+    if band is not None and not (np.all(np.isfinite(band)) and np.all(band >= 0.0)):
+        band = None
     return models, dev, band
 
 
@@ -111,11 +118,11 @@ def predict(input_array, metadata=None):
     # crashing on the broadcast.
     half = band if (band is not None and band.shape[1:] == pred.shape[1:]) else np.float32(0.0065)
 
-    # The ingestion program asserts float32 and lower <= prediction <= upper. Any violation
-    # zeroes EVERY subscore, not just sps, so both are made explicit rather than incidental.
-    # Subtraction of a non-negative half cannot reorder them, so checking finiteness of pred
-    # and of the band once is enough -- no need to rescan two 165 MB bound arrays.
+    # No finiteness scan here. It cost 0.066 ms/window -- 5% of the whole timed call -- to
+    # duplicate a check the scorer already performs on `prediction` before scoring anything,
+    # and ours was strictly worse: the scorer degrades a non-finite prediction to zero scores,
+    # while an assert would raise out of predict() and fail the run outright. The band's
+    # finiteness and sign are established once at import instead.
     lower = (pred - half).astype(np.float32, copy=False)
     upper = (pred + half).astype(np.float32, copy=False)
-    assert np.isfinite(pred).all() and np.all(np.isfinite(half)) and np.all(half >= 0.0)
     return {"prediction": pred, "lower": lower, "upper": upper}

@@ -129,8 +129,27 @@ normalized space; the evaluator denormalizes, bounds included.
 
 ## Scoring (both tracks, identical formulas)
 
-`final_score = mean(rel_l2_score, tke_score, mvpe_score, time_score, sps_score)`, each 0–100.
-`realpde_t1_starting_kit_v7/.../scoring.py` is the exact official program — run it locally.
+> **Kit v9 (2026-08-04) replaced the scoring program and the test set.** Use
+> `realpde_t1_starting_kit_v9/.../scoring.py`. The SPS bullet below is rewritten for it; the
+> other four subscores are unchanged. Two v9 changes, both in SPS, and both large:
+>
+> * `score_sps` was `100/(1+exp(-w))` and is now `100*w`. The old form was pinned in
+>   `[50, 73.11]`; the new one is a full 0–100 subscore. The aggregate `w` barely moved across
+>   the change (0.376 → 0.369), so the board's drop from `sps 59.30` to `36.94` is the
+>   rescaling, **not** a regression. The slope went from ~23 to 100, so anything that cuts
+>   per-element error is now worth **4.4× more** through SPS.
+> * Elements whose target is exactly 0 — outside the PIV field of view, inside the airfoil
+>   body, ~9.9% of `u,v` — now leave **both** the numerator and the denominator. They used to
+>   be free points (prediction ≈ 0, any band around it contains the target), so losing them
+>   costs real score.
+>
+> **`final_score` is no longer published and is no longer the plain mean**: the 2026-08-05
+> board reported 79.733 where its own five subscores average 78.999. One equation, five
+> unknowns — not solvable. Track `mean5` (the plain mean) as a proxy and say so; all five
+> subscores still move `final_score` monotonically.
+
+`realpde_t1_starting_kit_v9/.../scoring.py` is the exact official subscore program — run it
+locally before every submission.
 
 * `score = 100 / (1 + 0.5 * error)` for Rel-L2, TKE, MVPE (measured channels `u,v` only).
 * **Rel-L2** — per-window `‖p−t‖/‖t‖` over the whole `u,v` field.
@@ -140,11 +159,22 @@ normalized space; the evaluator denormalizes, bounds included.
   `y ∈ {8,10,…,24}` on the 32×64 grid.
 * **Time** — `100/(1+sqrt(t_neural/0.72896))`, `t_neural` = mean per-step wall time.
   Zero/missing/non-finite ⇒ 0.
-* **SPS** — per element `(1−pm)·exp(−(upper−lower)/σ)` counted only where the target lies inside
-  the interval; `pm = e/(0.5+e)` per branch, weights DM 0.5 / TKE 0.3 / MVPE 0.2, then
-  `100/(1+exp(−w))`. **σ = 0.0563870259, frozen for the season.** Range is `[50, ~73]`.
-  Bounds optional; default band is `±5%·|pred|`. Bounds must be per-element, same shape, finite,
+* **SPS (v9)** — per element `(1−pm)·exp(−(upper−lower)/σ)` counted only where the target lies
+  inside the interval **and is non-zero**; `pm = e/(0.5+e)` per branch, weights DM 0.5 / TKE 0.3
+  / MVPE 0.2, then **`100·w` (was `100/(1+exp(−w))`)**. **σ = 0.0563870259, frozen for the
+  season.** Range is now the full `[0, 100]`. Bounds optional; default band is `±5%·|pred|` and
+  scores only 22.8 — always supply your own. Bounds must be per-element, same shape, finite,
   `lower ≤ upper` — otherwise **every** subscore is zeroed, not just SPS.
+
+  **The aggregate factorizes**, and `Track_1/sps9.py` exploits it:
+  `w = (1/n_scored)·Σ a_i·exp(−2h_e/σ)·1[|E_ie| ≤ h_e]` with
+  `a_i = 0.5(1−pm_dm) + 0.3(1−pm_tke) + 0.2(1−pm_mvpe)` — the three branches differ only in a
+  per-**sample** factor while the interval term is per-**element**. So scoring a band is one
+  pass instead of three, and the band problem separates over elements: each element's optimum
+  sits exactly at one of its observed `|E_ie|`, so sorting gives the **exact** optimum with no
+  Gaussian assumption (`sps9.optimal_band`). That is also the ceiling on band fitting, and it
+  is only +0.6 over the old `optimal_half(c·RMS)` — **band work is finished**, see
+  `Track_1/report/report_20260805_v9.md` §4.
 
 ### Measured local numbers (336 real windows, 8 held-out trajectories, `t = 10 ms`)
 
@@ -520,6 +550,59 @@ artifact** — sim TKE 0.486 vs real 0.547, same regime.
 Sim normalizer constants (fitted on all 100 trajectories, `[u, v]` only, 32×64):
 `MEAN_SIM = [0.858663955, -0.004962022]`, `STD_SIM = [0.443825609, 0.214743194]`. Sim's scale is
 ~6× real's — normalizing sim with the real constants puts the input at 7.3σ.
+
+### Round 6 (2026-08-05) — the rules changed; the band is now solved, and it is finished
+
+Full write-up: `Track_1/report/report_20260805_v9.md`. Kit **v9** replaced the scoring program
+and the test set (see the box under *Scoring*). Board **79.733** for the July 30 U-Net package
+(`Track_1/submit/`), which is what was submitted — not the FNO.
+
+Facts worth not re-deriving:
+
+* **`predict()` is 1.390 ms/window, and the "0.109 ms forward pass" quoted all through rounds
+  1–5 is 8% of it.** Profile: H2D 0.047, three forwards + rescale 0.695, `.cpu().numpy()` +
+  strided host write 0.251, `pred ± band` 0.390, `isfinite` 0.066. The API — three
+  (N,20,32,64,3) float32 arrays at 165 MB each — is most of the cost.
+* **`pred ± band` costs 0.390 ms fresh and 0.033 ms into a reused buffer.** That 12× is
+  first-touch page faults. Reuse across calls is **rejected**: the kit says `predict` may be
+  called more than once, and if the harness holds references rather than consuming each result,
+  a reused buffer silently corrupts earlier calls. +0.06 mean5 is not worth a zeroed
+  submission.
+* **The v9 evaluation hardware is ~2.3× slower than the v7 one.** U-Net: 5.975 ms board vs
+  2.648 local. FNO's previous board run: 1.351 vs 1.390 local. Budget the FNO at ~3.1 ms and
+  `time_score` ≈ 93.8, not the 95.9 its last board run showed.
+* **Two very different models land within 0.4% of each other on board rel-L2** (U-Net 0.11787,
+  FNO 0.11753) across two different test sets, while differing by 0.008 locally. Local accuracy
+  deltas have stopped transferring; treat a local gain under ~0.4 as unproven.
+* **The loss weights the wrong channel.** `--loss mse` is in normalized units, so v gets ~37×
+  u's weight per unit *physical* error, while u carries 85.9% of the rel-L2 error energy and
+  every scored metric is physical. `--chan-pow` now interpolates (0 = old, 1 = physical).
+
+* **Error is governed by angle of attack and by almost nothing else.** Per-trajectory rel-L2:
+  AoA 0° ≈ 0.057, 5° ≈ 0.044, 10° ≈ 0.073, 15° ≈ 0.103, 20° ≈ 0.105, monotone from 5° up, while
+  Re spans 7× across the same table and explains nothing. **The board's 0.1179 is above our
+  hardest single trajectory (0.1143)** — no mixture of what we have reproduces it. The AoA 15–20
+  subset (0.1082) is the only local proxy in the right neighbourhood, and it is 5% from the
+  board where the full split is 46% away. Evaluate there: `compare_v9.py --aoa 15 20`.
+
+Nulls, measured, do not retry: **ALPHA is still 0.75** under v9 (re-swept with the band refitted
+at every point; SPS peaks at α=0.45 but not enough to outrun TKE). **Blending the predicted
+time-mean toward the input window's mean** makes MVPE monotonically worse, 0.0698 → 0.1240 —
+the model's mean beats persistence by a lot. **Ensemble spread as an adaptive band**: correlates
+with |error| at only 0.347 once the per-element mean is removed, and its best variant is *worse*
+in-sample while better out-of-sample, i.e. noise. **A fitted fluctuation gain on top of ALPHA**
+(scalar, per-pixel, per-pixel/time): every form gains in-sample, two of three lose out-of-sample
+— the variance head has no systematic residual left. **Input-noise augmentation**: 0.05 → 83.163,
+0.15 → 83.181, against a seed spread of 83.177–83.274. **`--chan-pow`** (§7 of the report — the
+MSE loss weights v ~37× per unit physical error while u carries 86% of the scored error energy):
+falsified monotonically, p = 0.25 / 0.5 / 1.0 → 83.254 / 83.116 / 83.010. The weighting is right
+as it is. **Model capacity**: `fno_s`/`m`/`l`/`xl` span only 0.31 mean5 across 37× parameters
+(82.02 / 81.86 / 82.17 / 82.32) while the 0.90M model *with* the gradient loss scores 83.20.
+**A 4th ensemble member**: 1→2 is +0.97 SPS, 2→3 is +0.23, a 4th under +0.1 for 0.11 ms.
+Three stays.
+
+Run-to-run σ is **~0.05 in v9 mean5**, not the 0.015 quoted in rounds 3–5 — that figure was the σ
+of v7's `final`, whose logistic SPS compressed exactly the variation v9 exposes.
 
 ### Physics losses: rejected, measured
 

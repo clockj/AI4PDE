@@ -34,7 +34,7 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TRACK1 = os.path.dirname(HERE)
-KIT = "/home/clockj/RealPDE/realpde_t1_starting_kit_v7/realpde_t1_starting_kit_v7"
+KIT = "/home/clockj/RealPDE/realpde_t1_starting_kit_v9/realpde_t1_starting_kit_v9"
 MISSING = ["scipy", "h5py", "einops", "matplotlib", "pandas"]
 
 
@@ -107,10 +107,14 @@ def main() -> None:
           f"mean field drift {drift:.1e} of rms, all three error metrics stable to 1e-5)")
     subs = [sc.score_error(r), sc.score_error(k), sc.score_error(mv), sc.score_time(dt),
             sc.score_sps(sc.aggregate_sps(P, Y, 2, lower=lo, upper=hi)[0])]
-    print("OK: scored through the official scoring.py")
+    print("OK: scored through the v9 scoring.py")
     print(f"    rel_l2 {r:.4f}  tke {k:.4f}  mvpe {mv:.4f}   ({dt*1000:.3f} ms/window)")
     print(f"    rel {subs[0]:.2f}  tke {subs[1]:.2f}  mvpe {subs[2]:.2f}  "
-          f"time {subs[3]:.2f}  sps {subs[4]:.2f}   FINAL {float(np.mean(subs)):.3f}")
+          f"time {subs[3]:.2f}  sps {subs[4]:.2f}   mean5 {float(np.mean(subs)):.3f}")
+    # v9 stopped publishing the combination rule, and it is no longer the plain mean: the
+    # 2026-08-05 board reported 79.733 where the mean of its own five subscores is 78.999.
+    # mean5 above is a tracking number, not the leaderboard's.
+    print("    (mean5 is a tracking proxy; v9 does not publish how final_score is combined)")
 
     ext = sum(os.path.getsize(os.path.join(r_, f)) for r_, _, fs in os.walk(work) for f in fs)
     print(f"OK: extracted {ext/1e6:.2f} MB < 256 MB cap")

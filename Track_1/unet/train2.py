@@ -137,6 +137,12 @@ def main() -> None:
                          "sim_real_ft checkpoints get all their real skill from stage 2. Only "
                          "the shared tensors are copied, so a normalizer or head shape change "
                          "does not block the warm start.")
+    ap.add_argument("--chan-pow", type=float, default=0.0,
+                    help="re-weight the MSE field loss by (std_c/max std)^chan_pow. 0 is the "
+                         "old behaviour, equal weight per channel in NORMALIZED units, which "
+                         "weights v ~37x more than u per unit of physical error. 1 puts the "
+                         "loss in physical units, where u carries 86% of the scored error "
+                         "energy. No effect on --loss rel, which is already physical.")
     ap.add_argument("--all-data", action="store_true",
                     help="train on ALL trajectories including the held-out ones. Submission "
                          "checkpoints only -- it makes local evaluation meaningless.")
@@ -161,6 +167,10 @@ def main() -> None:
     stats = NORM_STATS[args.norm]
     mean_v = torch.from_numpy(stats[0]).to(dev)
     std_v = torch.from_numpy(stats[1]).to(dev)
+
+    # Channel weights for the MSE field loss, normalized so the largest is 1 and chan_pow = 0
+    # reproduces the previous loss exactly. Broadcasts over (B, T, H, W, C).
+    cw = (std_v / std_v.max()) ** args.chan_pow
 
     hist_t = None
     if args.hist:
@@ -293,7 +303,14 @@ def main() -> None:
                 den = (y * mul + off).reshape(b, -1).norm(dim=1).clamp(min=1e-8)
                 l_field = (num / den).mean()
             else:
-                l_field = args.w_mean * torch.mean(dm ** 2) + torch.mean(df ** 2)
+                # `cw` re-weights the channels. The MSE branch lives in NORMALIZED units, so
+                # by default a 1-sigma error in v counts the same as a 1-sigma error in u --
+                # which, since sigma_u/sigma_v = 6.1, weights v about 37x more per unit of
+                # PHYSICAL error. Every scored metric disagrees: rel-L2 and MVPE are physical
+                # norms in which u carries 86% of the error energy, and SPS measures every
+                # interval against one global sigma in physical units. chan_pow = 1 puts the
+                # loss in physical units (the `rel` branch already is); 0 leaves it as it was.
+                l_field = args.w_mean * torch.mean((dm * cw) ** 2) + torch.mean((df * cw) ** 2)
 
             loss = args.lam_f * l_field
             l_probe = torch.zeros((), device=dev)
