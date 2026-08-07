@@ -559,13 +559,12 @@ and the test set (see the box under *Scoring*). Board **79.733** for the July 30
 
 Facts worth not re-deriving:
 
-* **`time_score` IS A CONSTANT ~91.7. It does not respond to the model.** Two v9 board rounds:
-  U-Net **5.976 ms/window** board (2.648 local), FNO ×3 **5.931 ms** board (1.282 local). A
-  1.366 ms/window *local* difference produced **0.045 ms** on the board — board time is harness
-  overhead at our scale. Therefore: **ensembling is free** (rounds 1–6 all priced members
-  against a penalty that does not exist), latency optimization is worthless, and model size is
-  no longer constrained by inference cost. Safe member ceiling is an interpolation, not an
-  extrapolation: 8 members ≈ 1.83 ms local, still under the 2.648 ms that measured 5.976.
+* ~~**`time_score` IS A CONSTANT ~91.7.**~~ **FALSIFIED in round 9** — see that section. Two v9
+  board rounds (U-Net 5.976 ms board / 2.648 local; FNO ×3 5.931 / 1.282) happened to land
+  0.045 ms apart and were over-read as "harness overhead". Round 9's 8-member package is
+  **faster locally** (2.211 ms) and **2.09 ms slower on the board** (8.020 ms). Board time
+  tracks the number of **sequential model invocations**, not local wall time. Members cost
+  ~0.42 board ms each ≈ **−0.015 `final`** each — cheap, not free.
 * **`predict()` is 1.390 ms/window locally, and the "0.109 ms forward pass" quoted all through
   rounds 1–5 is 8% of it.** Profile: H2D 0.047, three forwards + rescale 0.695, `.cpu().numpy()`
   + strided host write 0.251, `pred ± band` 0.390, `isfinite` 0.066. Only of local interest now
@@ -614,9 +613,9 @@ from 79.733. Every subscore improved. Full write-up: `Track_1/report/report_2026
   element landed *inside* its interval, and an element just outside forfeits everything while
   barely moving rel-L2. Per-metric board inflation: rel **1.13×**, tke **1.27×**, mvpe
   **1.49×**, per-element tail **1.39×**. Size the band against the tail — it is the default now.
-* **`final − mean5` = +0.727 and +0.743** across two submissions. Stable. Working rule:
-  `final ≈ mean5 + 0.73`. Two equations still cannot fix five weights — a 0.05-grid search
-  leaves two mutually inconsistent survivors — so this is empirical, not derived.
+* ~~**`final − mean5` = +0.727 and +0.743.** Working rule `final ≈ mean5 + 0.73`.~~
+  **FALSIFIED in round 9**: the third offset was **+0.903**, and mean5 went *down* while `final`
+  went *up*. It was two coincidences, not a rule. Use the round-9 weights instead.
 * **ALPHA 0.90 was a contamination artifact.** Re-swept at board error scale it looked worth
   +0.103 mean4 over 0.75 on the *all-data* models; the held-out control gave **+0.029**. The
   all-data models trained on `val_unseen`, so their TKE there is partly memorized and unusually
@@ -647,6 +646,44 @@ Report §12. Eleven runs, all converged (last-30/prev-30 loss ratio 0.25–0.32)
   parameters trained on `val_unseen` recall the proxy that scores them. Standing rule now:
   **nothing gets decided on a number computed from an all-data checkpoint** — they supply
   weights, never evidence.
+
+### Round 9 (2026-08-07) — 80.115, and the scoring function is finally readable
+
+Board: rel 94.6342 / tke 78.8825 / mvpe 93.8030 / time 90.5066 / sps 38.2338 → **80.115065**.
+Analysis and plan: `Track_1/report/report_20260807_round9.md`. Nothing new was trained or
+submitted this round; the work was reading three board rounds and the literature.
+
+* **`final_score` is a weighted mean of the five subscores, and the weights are now bounded.**
+  Three rounds + Σw = 1 leave a one-parameter family, but most weights barely move along it:
+  `time` **0.034–0.099**, `sps` **0.171–0.189**, `tke` **0.219–0.273**, `rel + mvpe`
+  **0.493–0.522** (their split is *not* identified — they moved together in all three rounds).
+  Midpoint: `[0.266, 0.244, 0.241, 0.069, 0.181]`. Geometric and harmonic means miss by 5
+  points, so the linear family is the right one. **Not yet validated** — three points, five
+  unknowns, exact fit. Predict the next board `final` *before* submitting.
+* **Latency is ~3× cheaper than every earlier plan assumed.** 20 ms board costs 0.33 `final`,
+  50 ms costs 0.78, 100 ms costs 1.21. A 25× inference-cost increase costs ~1.2 points, so
+  test-time adaptation, multi-pass inference and deep ensembles are all inside budget now.
+* **The accuracy→score exchange rate, measured** (`Track_1/exchange_v9.py`, held-out 6-member
+  ensemble on the AoA 15–20 proxy, errors scaled synthetically, band refit at each point):
+  **+0.089 `final` per 1 % of error removed**, linear to −20 %. Decomposition of a 10 % cut:
+  **sps +2.22 (45 % of the gain)**, tke +0.75 (21 %), rel +0.64 (19 %), mvpe +0.57 (15 %).
+  → **SPS pays 2.3× more per unit of error than any other channel** despite its 0.181 weight,
+  because interval containment is far steeper than `100/(1+0.5e)`. The band is closed; reach SPS
+  through accuracy. → **TKE is a trap**: worst-looking subscore, largest accuracy weight, but it
+  moves only 0.75 per 10 % and sits near its 0.47 PIV-sampling floor — ≤ +0.6 `final` remains
+  there for anyone. → Because SPS scores per-element containment, **tail reduction beats mean
+  reduction**: prefer robustness and regularization over capacity and average-case accuracy.
+* **Scale**: 80.1 → 81.0 needs ~10 % error reduction; → 82.0 needs ~21 %. Going from 3 to 8
+  ensemble members bought ~1.6 %.
+* **DPOT is not the best model on the airfoil**, contrary to a common reading of RealPDEBench.
+  On the Foil dataset U-Net wins every reported metric (rel-L2 0.0145 vs DPOT-L 0.0161, DPOT-S
+  0.0174; same ordering at 1/2/3 autoregressive rounds). DPOT-L is best only *averaged over the
+  five datasets*. Their Foil numbers are also not comparable to ours — 99 traj × 3990 frames ×
+  128×256 against our 82 × 607 × 64×128 — and DPOT's next-frame autoregressive shape is wrong
+  for a one-shot 20 → 20 task. Full argument in §5 of the round-9 report.
+* **Untapped data, free**: `model.py:load_trajectories` does `[:, ::2, ::2]` on **64×128** raw
+  frames. Phase (0,0) is the scored grid; phases (0,1), (1,0), (1,1) are three more *real* 32×64
+  views we discard — a 4× augmentation in the regime where capacity is already harmful.
 
 ### Physics losses: rejected, measured
 
