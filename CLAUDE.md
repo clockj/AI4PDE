@@ -896,6 +896,55 @@ next round: `Track_1/plan/plan_20260809.md`. Best other team: **80.79**.
   ms/window** (round 10: 3.487). Predicted board **80.603** (+0.091); prediction recorded in
   `Track_1/plan/plan_20260809.md` before submitting.
 
+### Architecture directions assessed 2026-08-09 — `Track_1/report/directions_20260809_architecture.md`
+
+**The diagnosis after round 11.** Capacity, data, ensembling, the band and latency are all
+closed with measurements. What is left: **we predict a conditional mean and bolt a hand-tuned
+variance onto it, but ~38% of the score is distributional.** `tke` (a second moment) and `sps`
+(an interval-coverage score) carry 0.47 of the 1.23 per-point weight and are our two weakest
+subscores (79.15; 39.6 against a ceiling of 71.03). `rel_l2` and `mvpe` are point scores.
+Round 11's `lam_v` U-shape says log-MSE is a **misaligned surrogate**, not a hard ceiling.
+
+* **THE BET: an FGN-style probabilistic head.** arXiv 2506.10772, "Skillful joint probabilistic
+  weather forecasting from marginals" — the engine behind WeatherNext 2. Sample a 32-dim
+  Gaussian vector, feed it through parameter-shared **conditional-normalization** layers to
+  sample new *weights* (perturbation in PARAMETER space, not output space); train on **CRPS** of
+  per-location marginals; **one network call per sample**, 8x faster than GenCast's 40-step
+  diffusion. Fits because CRPS is a proper scoring rule for what SPS measures, parameter-space
+  noise gives spatially coherent samples from marginal-only training, and one forward pass is
+  the only reason a generative model is admissible in a latency-scored task. `StackedFNO`
+  already fuses weight-sharing samples into one invocation. It would replace ALPHA, the sigma
+  head and `fit_band.py` with one learned object. **Tension to resolve, not ignore:** the scorer
+  computes `tke` on `prediction`, so the submitted array must be close in L2 AND correctly
+  dispersed; ALPHA is our current point on that trade and a generative model does not dissolve it.
+* **MAYBE: phase as a co-trained second modality.** WN-C (`Papers/Track_1/s41586-026-10953-2`)
+  deliberately does NOT run a tracker in the loop — it "griddifies" a sparse, physically
+  meaningful modality and co-trains it with the dense field; its Extended Data Fig. 4 shows a
+  two-stage "predict then track" pipeline loses the transfer benefit. Our analogue is not
+  vortices but **shedding phase / Strouhal / convection speed**, derivable from the target by
+  signal processing, no extra data. **Free diagnostic first:** split the per-window error into a
+  phase/advection part and an amplitude part (find the error-minimizing spatial shift). Not a
+  Q-criterion loss — every auxiliary physics loss except `--lam-grad` has been null.
+* **REJECTED: graph neural networks.** Wrong inductive bias for a dense 32x64 uniform grid with
+  fixed geometry. GraphCast/WN-C use an icosahedral mesh because the Earth is a sphere and
+  lat-lon degenerates at the poles; we have no such pathology. The flow-reconstruction GNN in
+  the reading list (arXiv 2411.08764) is for *sparse data in time-varying geometries*. Plus:
+  capacity ladder points down, and a graph transformer costs scored latency.
+* **REJECTED: KANO** (ICLR 2026, `Papers/Track_1/2509.16825v6.pdf`). Dual-domain spectral+spatial
+  operator with KAN edges, for position-dependent PDEs. (1) Sells **parameter efficiency** (152
+  params against FNO's 566k) — we are over-parameterized, not expressivity-limited. (2) Its core
+  move, empowering the spatial basis, is what `--point-mlp` did: **−0.379**. (3) Authors concede
+  "orders heavier FLOPs" and FLOPs are scored. (4) Its benchmarks are noise-free 1-D symbolic
+  recovery and disjoint-family extrapolation; we interpolate in-distribution with an 8%
+  board-vs-proxy gap. Its *premise* is fair (airfoil, FOV edge, 9.9% zero-target elements) but
+  those elements are dropped from SPS entirely, and the lift already sees coordinates through a
+  128-wide MLP. Cheap test if anyone insists: region-wise error maps, then a per-location FiLM.
+
+**The pattern:** GNN and KANO are both proposals about **operator expressivity**, and rounds
+8–11 say expressivity stopped being the binding constraint. What remains is that the fluctuation
+is partly unpredictable (`diag_spectral.py`: only ~31% of fluctuation energy is coherently
+predictable) and we model it with a log-MSE sigma head instead of a proper scoring rule.
+
 ### Physics losses: rejected, measured
 
 `rms(∇·u)/rms(|∇u|)` is **0.42–0.49 on real PIV and 0.28–0.34 even on the CFD**, and unchanged

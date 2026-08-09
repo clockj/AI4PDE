@@ -403,6 +403,34 @@ What it did produce, which is worth more than the +0.10 to the next round:
   a capacity floor. And `l_var` regularizes the TKE objective rather than competing with it,
   which retroactively explains the one result from round 10 that never made sense.
 
-Round 12's plan is `plan/plan_20260810.md`. Its headline: every lever that is not the model
-itself is now closed with a measurement, so the only remaining direction is a second model
-**family** in the ensemble — the FNO members are, by `compose_v9.py`, all the same model.
+---
+
+## 7. What the round-11 evidence says about where to go next
+
+Written after the round closed, from a literature review against the measurements above.
+Full reasoning and citations: **`report/directions_20260809_architecture.md`**. Actionable
+form: **`plan/plan_20260810.md`**.
+
+The diagnosis in one line:
+
+> We predict a conditional mean and bolt a hand-tuned variance onto it, but **~38% of the score
+> is distributional** — `tke` (a second moment) and `sps` (an interval-coverage score) carry
+> 0.47 of the 1.23 per-point weight, and they are our two weakest subscores.
+
+Round 11's `lam_v` U-shape is the evidence that log-MSE is a *misaligned surrogate* rather than
+a hard ceiling on sigma, which reopens the sigma question from a direction none of the six arms
+tested: the **objective**, as a proper scoring rule.
+
+| direction | verdict |
+|---|---|
+| **FGN-style probabilistic model** — parameter-space noise, CRPS loss, one forward pass per sample (arXiv 2506.10772, the engine behind WeatherNext 2) | **The bet.** Aligns training with the distributional 38%, and is the one generative family that survives a latency-scored task — this project already measured PDE-Refiner at 82.53 against its own MSE control's 83.83 at 4x compute. |
+| **Phase as a co-trained second modality** (WN-C's "griddification" transposed: not a tracker, a sparse physically-meaningful modality co-trained with the dense field) | Maybe. A free diagnostic decides it: split the per-window error into phase/advection and amplitude parts. |
+| Second model **family** for ensemble diversity | Live but budget-constrained: it must clear one invocation plus its forward time. |
+| **Graph neural networks** | **No.** Wrong inductive bias for a dense uniform grid with fixed geometry; the mesh in GraphCast/WN-C exists because the Earth is a sphere. |
+| **KANO** (ICLR 2026, `Papers/Track_1/2509.16825v6.pdf`) | **No.** Sells parameter efficiency; we are over-parameterized. Its core move is what `--point-mlp` did, at −0.379. Authors concede "orders heavier FLOPs", and FLOPs are scored. |
+
+The pattern worth carrying forward: GNN and KANO are both proposals about **operator
+expressivity**, and rounds 8–11 say expressivity stopped being the binding constraint some time
+ago. What remains is that the fluctuation is partly unpredictable — `diag_spectral.py` puts only
+~31% of fluctuation energy in the coherently predictable part — and we model that with a
+log-MSE sigma head instead of a proper scoring rule.
