@@ -818,6 +818,84 @@ next round: `Track_1/plan/plan_20260809.md`. Best other team: **80.79**.
   everything downstream of it before comparing.** Fitting the SPS band's `base` once at p = 0
   is what made round 6 declare the band closed, and it nearly repeated in round 10.
 
+### Round 11 (2026-08-09), in progress — `Track_1/report/report_20260809_round11.md`
+
+* **Local time is 3.487 ms/window, not 1.383.** Inverting the round-10 `time_score` through the
+  board-time model gives it. The per-window band added ~1.4 ms and was never re-profiled.
+* **The band stage was 1.45 ms/window of avoidable memory traffic → 0.13.** Two changes: give
+  the sigma scale factor a third, zero channel so `half` is one allocation and the full-size
+  `np.concatenate` disappears; and run the three full-size ops through **torch**, which threads
+  them (numpy's ufuncs are single-threaded and this is bandwidth-bound). SPS identical to 8e-8.
+  **+0.028 final.**
+* **`StackedFNO`'s lift no longer repeats a shared input.** Every member sees the same tensor at
+  the lift, so `Conv2d(cin, K*width, 1)` replaces `grouped(x.repeat(1,K,1,1))`. Bit-exact.
+* **Mode-padded fusion**: members may differ in retained modes; the spectral weights are
+  zero-padded to the group max. m1220 now joins the width-24 group. **+0.012 final** (saves
+  0.324 board ms of invocation, costs 0.199 local ms = 0.086 board ms of extra spectral work).
+  **`w2` pads at the FRONT** — it multiplies `ft[-my:]`, so its row axis runs the opposite way
+  in frequency from `w1`'s. Padding both at the end moves the field by 1.26.
+* **An extra fused member is NOT free**: ~0.27 local ms ≈ **0.006 final** each. Round 8's curve
+  is ~+0.012/member at 8→9, so past ~8 members the ensemble is roughly break-even. Above K = 10
+  in one group the 8 GB card thrashes (K = 12: +1.26 ms/member).
+* **The SPS band is closed** (`Track_1/band_cv_v9.py`, leave-one-trajectory-out CV, 84 configs).
+  Pooling the fitting split buys **0.000** sps; the val_seen contamination costs nothing (the
+  honest out-of-sample alternative has 2 trajectories and is 0.37 sps *worse*); p = 0.45 over
+  0.50 is 0.026, inside the fold spread. k = 3 confirmed at every p.
+* **The recomposition gain is genuinely one-dimensional** (`Track_1/gain_v9.py`): the full
+  family `g = (a·σ + b·s)/s` has its ridge on `a + b = 1`, so five rounds of sweeping `alpha`
+  alone lost nothing. But the optimum on that line is **alpha ≈ 0.90, not 0.75** — +0.094 here,
+  +0.041…0.070 in round 10, three readings all positive. Re-measure on the final member set;
+  if it ships, **`fit_band.py --alpha` must change with it.**
+* **TF32 on the spectral matmul: null.** No speedup (+0.05 ms), no subscore change past 1e-5.
+* **Longer context for sigma is undeployable.** `predict()` gets 20-frame windows; earlier
+  frames exist only in sibling windows, which makes the submission order-dependent
+  (`validate_strict.py` asserts permutation invariance to 1e-4) and leans on the same tiling
+  assumption as the disclosed leak.
+* **Seed sigma, measured on 4 baseline seeds:** wfinal σ = **0.017** on the AoA 15-20 proxy and
+  0.030 on the full split; TKE σ = 0.0028. The often-quoted "0.055 noise floor" is pessimistic.
+* **TKE is paid twice.** SPS's per-sample factor is `a_i = 0.5g(rel)+0.3g(tke)+0.2g(mvpe)`,
+  `g(m)=0.5/(0.5+m)`. At board metrics a = 0.710, so SPS's ceiling is 71.0 against 39.6 scored.
+  Board TKE 0.527 → 0.45 is `tke_score` +2.47 **and** +0.65 sps ≈ **+0.74 final**.
+* **THE VARIANCE HEAD IS AT AN INFORMATION FLOOR, not a capacity floor.** Three arms, all null
+  on the AoA proxy (82.038 / 82.047 / 82.049 against baselines 82.046 ± 0.017) **and all with a
+  training `var` inside the baseline seed spread** (0.36562 / 0.36801 / 0.36796 against
+  0.36708 / 0.36572 / 0.36698):
+  `--var-hidden 256` (double the head's hidden width), `--var-deep` (head reads
+  `concat(h1..h4)`), `--var-in-std` (head also reads the INPUT window's per-pixel temporal std).
+  `var` is a mean squared log error against `std_t(y)` — the very quantity sigma is judged on —
+  so **an arm that does not move `var` cannot move TKE**, and that is now the cheap screen: read
+  the training curve before scoring anything. `--var-pred-std` (feed the head the field head's
+  own predicted std) was cancelled on this evidence; the code is in the tree and bit-exact
+  through `fuse`. What is NOT closed by this argument is sigma's **objective**: `l_var` is a
+  log-MSE, uniform over pixels, while the scored `tke_rel_l2` is energy-weighted and only cares
+  about the wake. `--lam-v 0.05 --lam-t 1.0` is the arm that tests it.
+* **`l_var` IS NOT COMPETING WITH THE TKE OBJECTIVE — IT IS REGULARIZING IT.** `--lam-v 0.05
+  --lam-t 1.0` drove the TRAINING tke loss from ~0.414 to 0.3667 (−11%) and drove held-out TKE
+  the other way, 0.4800 → 0.5059; wfinal 81.463 against 82.046, a 34σ loss, with rel-L2
+  0.1111 → 0.1165 and sps 42.34 → 40.73. Strip the uniform log-MSE and the head fits the
+  training TKE field by memorizing it. **This explains round 10's "tripling `--lam-t` moves TKE
+  by 0.0001"**: the objective was never the problem, and the term that regularizes was
+  correctly resisting the term that overfits. Do not revisit `lam_t` upward, and do not try
+  `--detach-var` with it — detaching protects the *trunk*, and the failure is in the *head*.
+  The open question it leaves is the opposite one: `lam_v` has only ever been moved DOWN, or
+  moved together with `lam_t` (1.0/0.5 in round 2, which lost 0.34 on MVPE because the trunk
+  went 10:1 to the variance objective).
+* **`--lam-v 0.6` closes the last direction, and completes the picture.** Training `var`
+  improves MONOTONICALLY with `lam_v` (0.4941 / 0.367 / 0.36103 at 0.05 / 0.3 / 0.6) while
+  held-out TKE is U-SHAPED with its minimum at the shipped 0.3 (0.5059 / 0.4823 / 0.4868).
+  **Fitting log-sigma better does not predict the amplitude envelope better.** Sigma is at a
+  GENERALIZATION ceiling: the readout cannot move `var` whatever its shape or inputs, the loss
+  weights can move `var` but not held-out TKE, and 0.3 is already the optimum of the one family
+  that moves it. Do not reopen sigma without a structurally new source of information.
+* **The batch size is now measured at import, not hardcoded.** `submission._pick_batch` times
+  a few sizes on whatever GPU it lands on (import is not timed). On this 8 GB card batch 12
+  runs at 1.657 ms/window against batch 64's 2.135 — the fused width-24 group's intermediates
+  stop fitting in cache — but that ordering is a property of one memory hierarchy and should
+  invert on a larger GPU where the 1/batch launch cost dominates. Falls back to 64 on any error.
+* **Round-11 package: 8 members, 3 invocations, ALPHA 0.90, band p 0.45/k 3, local 2.002
+  ms/window** (round 10: 3.487). Predicted board **80.603** (+0.091); prediction recorded in
+  `Track_1/plan/plan_20260809.md` before submitting.
+
 ### Physics losses: rejected, measured
 
 `rms(∇·u)/rms(|∇u|)` is **0.42–0.49 on real PIV and 0.28–0.34 even on the CFD**, and unchanged

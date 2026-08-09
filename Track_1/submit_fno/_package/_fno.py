@@ -44,7 +44,9 @@ class SpectralConv2d(nn.Module):
 
 class FNO2d(nn.Module):
     def __init__(self, width=24, modes_y=8, modes_x=12, n_layers=4, var_head=True,
-                 extra_ch=0, var_mlp=False, lift_mlp=False, point_mlp=False):
+                 extra_ch=0, var_mlp=False, lift_mlp=False, point_mlp=False,
+                 var_hidden=128, var_deep=False, var_in_std=False,
+                 var_pred_std=False):
         super().__init__()
         cin = CH + extra_ch + 2
         self.lift = (nn.Sequential(nn.Conv2d(cin, 128, 1), nn.GELU(), nn.Conv2d(128, width, 1))
@@ -57,23 +59,36 @@ class FNO2d(nn.Module):
         self.norm = nn.ModuleList([nn.GroupNorm(8, width) for _ in range(n_layers)])
         self.head_field = nn.Sequential(nn.Conv2d(width, 128, 1), nn.GELU(),
                                         nn.Conv2d(128, CH, 1))
+        self.var_deep, self.var_in_std, self.var_pred_std = var_deep, var_in_std, var_pred_std
+        var_cin = ((width * n_layers if var_deep else width)
+                   + (C if var_in_std else 0) + (C if var_pred_std else 0))
         if not var_head:
             self.head_logstd = None
         elif var_mlp:
-            self.head_logstd = nn.Sequential(nn.Conv2d(width, 128, 1), nn.GELU(),
-                                             nn.Conv2d(128, C, 1))
+            self.head_logstd = nn.Sequential(nn.Conv2d(var_cin, var_hidden, 1), nn.GELU(),
+                                             nn.Conv2d(var_hidden, C, 1))
         else:
-            self.head_logstd = nn.Conv2d(width, C, 1)
+            self.head_logstd = nn.Conv2d(var_cin, C, 1)
         yy, xx = torch.meshgrid(torch.linspace(-1, 1, H), torch.linspace(-1, 1, W),
                                 indexing="ij")
         self.register_buffer("grid", torch.stack([xx, yy])[None])
 
     def forward(self, prev, detach_var: bool = False):
         h = self.lift(torch.cat([prev, self.grid.expand(len(prev), -1, -1, -1)], 1))
+        hs = []
         for s, p, n in zip(self.spec, self.point, self.norm):
             h = h + torch.nn.functional.gelu(n(s(h) + p(h)))
-        logstd = None if self.head_logstd is None else self.head_logstd(h)
-        return self.head_field(h), logstd
+            hs.append(h)
+        field = self.head_field(h)
+        logstd = None
+        if self.head_logstd is not None:
+            z = torch.cat(hs, 1) if self.var_deep else h
+            if self.var_in_std:
+                z = torch.cat([z, prev[:, :CH].reshape(len(prev), T_IN, C, H, W).std(1)], 1)
+            if self.var_pred_std:
+                z = torch.cat([z, field.reshape(len(prev), T_OUT, C, H, W).std(1)], 1)
+            logstd = self.head_logstd(z)
+        return field, logstd
 
 
 class StackedFNO(nn.Module):
@@ -103,13 +118,20 @@ class StackedFNO(nn.Module):
         super().__init__()
         first = members[0]
         self.n_members = k = len(members)
+        # Retained modes are the ONE thing members may disagree on: a spectral weight is
+        # zero-padded out to the group maximum below, and a zero weight on an extra mode
+        # contributes nothing to the einsum, so the padded member computes exactly what it
+        # computed alone. That lets modes (8,12) and (12,20) share an invocation.
         for m in members[1:]:
             assert m.state_dict().keys() == first.state_dict().keys(), "shape mismatch"
             for key, v in m.state_dict().items():
+                if key.endswith(".w1") or key.endswith(".w2"):
+                    continue
                 assert v.shape == first.state_dict()[key].shape, f"{key} shape mismatch"
 
         self.n_layers = len(first.spec)
-        self.my, self.mx = first.spec[0].my, first.spec[0].mx
+        self.my = max(s.my for m in members for s in m.spec)
+        self.mx = max(s.mx for m in members for s in m.spec)
         lift_last = first.lift[-1] if isinstance(first.lift, nn.Sequential) else first.lift
         self.width = lift_last.out_channels
         self.register_buffer("grid", first.grid.clone())
@@ -122,6 +144,20 @@ class StackedFNO(nn.Module):
             g.bias.data.copy_(torch.cat([c.bias.data for c in convs], 0))
             return g
 
+        def shared(convs):
+            """K same-shape 1x1 convs fed the SAME input -> one plain 1x1 conv.
+
+            Only the first layer of `lift` qualifies: every member sees the identical
+            (window, grid) tensor there. Conv2d(cin, K*cout, 1) with the weights stacked is
+            arithmetically the same as the grouped conv over a K-fold repeat of x -- same
+            FLOPs -- but it never materialises the K-times-wider input.
+            """
+            cin, cout = convs[0].in_channels, convs[0].out_channels
+            g = nn.Conv2d(cin, k * cout, 1)
+            g.weight.data.copy_(torch.cat([c.weight.data for c in convs], 0))
+            g.bias.data.copy_(torch.cat([c.bias.data for c in convs], 0))
+            return g
+
         def gnorm(norms):
             g = nn.GroupNorm(8 * k, k * self.width, eps=norms[0].eps)
             g.weight.data.copy_(torch.cat([n.weight.data for n in norms], 0))
@@ -129,10 +165,10 @@ class StackedFNO(nn.Module):
             return g
 
         if isinstance(first.lift, nn.Sequential):        # --lift-mlp
-            self.lift = nn.Sequential(grouped([m.lift[0] for m in members]), nn.GELU(),
+            self.lift = nn.Sequential(shared([m.lift[0] for m in members]), nn.GELU(),
                                       grouped([m.lift[2] for m in members]))
         else:
-            self.lift = grouped([m.lift for m in members])
+            self.lift = shared([m.lift for m in members])
         self.point = nn.ModuleList([
             nn.Sequential(grouped([m.point[i][0] for m in members]), nn.GELU(),
                           grouped([m.point[i][2] for m in members]))
@@ -140,13 +176,30 @@ class StackedFNO(nn.Module):
             grouped([m.point[i] for m in members]) for i in range(self.n_layers)])
         self.norm = nn.ModuleList([gnorm([m.norm[i] for m in members])
                                    for i in range(self.n_layers)])
+        def padded(t, j):
+            """(wid, wid, my_m, mx_m, 2) -> (wid, wid, self.my, self.mx, 2), zero-filled.
+
+            `w1` multiplies ft[:my] and `w2` multiplies ft[-my:], so their row axes run in
+            opposite directions in frequency: raising `my` extends w1 toward higher positive
+            wavenumbers (pad at the END) and w2 toward more negative ones (pad at the FRONT).
+            Padding both at the end silently rotates the negative block and changes the field
+            by O(1). Columns are `rfft` bins 0..mx-1 for both, so they always pad at the end.
+            """
+            out = t.new_zeros(t.shape[0], t.shape[1], self.my, self.mx, 2)
+            rows = slice(None, t.shape[2]) if j == 1 else slice(self.my - t.shape[2], None)
+            out[:, :, rows, :t.shape[3]] = t
+            return out
+
         for j in (1, 2):
-            w = torch.stack([torch.stack([getattr(m.spec[i], f"w{j}").data
+            w = torch.stack([torch.stack([padded(getattr(m.spec[i], f"w{j}").data, j)
                                           for m in members]) for i in range(self.n_layers)])
             self.register_parameter(f"w{j}", nn.Parameter(w))   # (L, K, wid, wid, my, mx, 2)
 
         self.head_field = nn.Sequential(grouped([m.head_field[0] for m in members]), nn.GELU(),
                                         grouped([m.head_field[2] for m in members]))
+        self.var_deep = getattr(first, "var_deep", False)
+        self.var_in_std = getattr(first, "var_in_std", False)
+        self.var_pred_std = getattr(first, "var_pred_std", False)
         h0 = first.head_logstd
         if h0 is None:
             self.head_logstd = None
@@ -172,13 +225,30 @@ class StackedFNO(nn.Module):
     def forward(self, prev, detach_var: bool = False):
         b, k = len(prev), self.n_members
         x = torch.cat([prev, self.grid.expand(b, -1, -1, -1)], 1)
-        h = self.lift(x.repeat(1, k, 1, 1))
+        h = self.lift(x)                    # first lift conv is shared, see `shared()`
+        hs = []
         for i in range(self.n_layers):
             h = h + torch.nn.functional.gelu(self.norm[i](self._spec(i, h) + self.point[i](h)))
-        field = self.head_field(h).reshape(b, k, CH, *h.shape[-2:]).mean(1)
+            hs.append(h)
+        hw = h.shape[-2:]
+        f_all = self.head_field(h).reshape(b, k, CH, *hw)      # per member, before averaging
+        field = f_all.mean(1)
         logstd = None
         if self.head_logstd is not None:
-            ls = self.head_logstd(h).reshape(b, k, C, *h.shape[-2:])
+            # The grouped head expects MEMBER-major channels, so anything appended to the
+            # readout has to sit inside each member's own block, not after all of them.
+            if self.var_deep or self.var_in_std or self.var_pred_std:
+                parts = ([t.reshape(b, k, self.width, *hw) for t in hs] if self.var_deep
+                         else [h.reshape(b, k, self.width, *hw)])
+                if self.var_in_std:
+                    s_in = prev[:, :CH].reshape(b, T_IN, C, *hw).std(1)
+                    parts.append(s_in.unsqueeze(1).expand(b, k, C, *hw))
+                if self.var_pred_std:
+                    parts.append(f_all.reshape(b, k, T_OUT, C, *hw).std(2))
+                z = torch.cat(parts, 2).reshape(b, -1, *hw)
+            else:
+                z = h
+            ls = self.head_logstd(z).reshape(b, k, C, *hw)
             # Mean of the members' SIGMAS, returned as a log so the caller's exp recovers it.
             # The clamp matches predict_fno's, whose second application is then a no-op.
             logstd = ls.clamp(-8.0, 2.0).exp().mean(1).log()
@@ -193,8 +263,13 @@ def fuse(models):
     groups = {}
     for m in models:
         # Keyed on the full parameter signature rather than a few attributes, so any
-        # architecture flag (var_mlp, lift_mlp, ...) separates groups automatically.
-        key = tuple((k, tuple(v.shape)) for k, v in m.state_dict().items())
+        # architecture flag (var_mlp, lift_mlp, ...) separates groups automatically. The
+        # spectral weights are excluded: StackedFNO zero-pads differing mode counts, which is
+        # exact, so a modes-(12,20) member joins its width-matched (8,12) siblings instead of
+        # buying its own invocation. Width and every other shape still separate, because they
+        # appear in lift / point / norm / the heads.
+        key = tuple((k, tuple(v.shape)) for k, v in m.state_dict().items()
+                    if not (k.endswith(".w1") or k.endswith(".w2")))
         groups.setdefault(key, []).append(m)
     return [g[0] if len(g) == 1 else StackedFNO(g).to(g[0].grid.device).eval()
             for g in groups.values()]
@@ -206,7 +281,11 @@ def load(path: str, device: str):
               blob.get("n_layers", 4), blob.get("var_head", True),
               var_mlp=blob.get("var_mlp", False),
               lift_mlp=blob.get("lift_mlp", False),
-              point_mlp=blob.get("point_mlp", False)).to(device)
+              point_mlp=blob.get("point_mlp", False),
+              var_hidden=blob.get("var_hidden", 128),
+              var_deep=blob.get("var_deep", False),
+              var_in_std=blob.get("var_in_std", False),
+              var_pred_std=blob.get("var_pred_std", False)).to(device)
     m.load_state_dict(blob["model_state_dict"])
     m.eval()
     return m

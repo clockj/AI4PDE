@@ -32,3 +32,10 @@ fno_all_vl_s4.pth   --var-mlp --lift-mlp --all-data
 fno_all_vl_s5.pth   --var-mlp --lift-mlp --all-data
 fno_all_vl_m1220.pth --var-mlp --lift-mlp --all-data --modes-y 12 --modes-x 20
 fno_all_vl_w64.pth  --var-mlp --lift-mlp --all-data --width 64
+fno_all_vl_w48.pth  --var-mlp --lift-mlp --all-data --width 48
+fno_vh256.pth   --var-mlp --lift-mlp --var-hidden 256
+fno_vdeep.pth   --var-mlp --lift-mlp --var-deep
+fno_vstd.pth    --var-mlp --lift-mlp --var-in-std
+fno_ltke.pth    --var-mlp --lift-mlp --lam-v 0.05 --lam-t 1.0
+fno_ltke2.pth   --var-mlp --lift-mlp --lam-v 0.15 --lam-t 0.6
+fno_lv06.pth    --var-mlp --lift-mlp --lam-v 0.6

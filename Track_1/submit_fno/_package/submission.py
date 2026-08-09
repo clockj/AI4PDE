@@ -71,9 +71,54 @@ _CKPTS = [p for p in [os.path.join(_HERE, "fno.pth")]
           + [os.path.join(_HERE, f"fno_{i}.pth") for i in range(2, 17)] if os.path.exists(p)]
 
 # Fluctuation rescaling strength. 0 returns the raw field; 1 forces the output's per-pixel
-# temporal std to equal the variance head's prediction. 0.75 is the measured optimum of that
-# trade and has been stable across every architecture and round in this project.
-ALPHA = 0.75
+# temporal std to equal the variance head's prediction.
+#
+# 0.75 was carried for five rounds. It is not the optimum. `../gain_v9.py` sweeps the full
+# two-parameter family g = (a*sigma + b*s)/s -- of which alpha is the line a + b = 1 -- on the
+# 7-member held-out ensemble, fit on val_seen AoA 15-20 and reported on val_unseen AoA 15-20 at
+# the board's 1.39x. The ridge does lie on that line, so five rounds of sweeping one number lost
+# nothing, but the optimum on it is a broad plateau over alpha 0.85-0.95, worth +0.098 wfinal
+# against 0.75. It trades rel-L2 (93.16 -> 93.02) and sps (36.76 -> 36.46) for TKE
+# (75.31 -> 76.05), and stays positive across the whole admissible range of the sps weight.
+# Round 10 saw the same thing at +0.041..0.070 and called it noise; three readings later it
+# is not noise.
+#
+# If this changes, fit_band.py --alpha MUST change with it: both sigma_ref and the error field
+# the band is solved against have to be measured at the alpha the package actually deploys.
+ALPHA = 0.90
+
+
+def _pick_batch(models, dev):
+    """Time a few batch sizes on THIS machine and keep the fastest.
+
+    Called from _load(), i.e. at import, which the evaluator does not time -- so this is free.
+    It is measured rather than hardcoded because the optimum is not portable: on the 8 GB card
+    this was developed on, batch 12 runs at 1.657 ms/window against batch 64's 2.135, because
+    the fused width-24 group's intermediates stop fitting in cache. That ordering is a property
+    of one card's memory hierarchy. On a larger GPU the fixed per-launch cost (which falls as
+    1/batch) should dominate instead and push the optimum back up, so guessing either way risks
+    giving back more than the ~0.5 ms it is worth. Any failure falls back to 64, the value four
+    rounds of board results were measured with.
+    """
+    if dev != "cuda":
+        return 64
+    try:
+        import time as _time
+        probe = np.zeros((112, 20, 32, 64, 3), dtype=np.float32)
+        best_t, best_b = None, 64
+        for b in (14, 28, 56, 112):
+            _fno.predict_fno(models, probe[:b], dev, alpha=ALPHA, batch=b)      # warm up
+            torch.cuda.synchronize()
+            t0 = _time.perf_counter()
+            for _ in range(2):
+                _fno.predict_fno(models, probe, dev, alpha=ALPHA, batch=b)
+            torch.cuda.synchronize()
+            t = _time.perf_counter() - t0
+            if best_t is None or t < best_t:
+                best_t, best_b = t, b
+        return best_b
+    except Exception:
+        return 64
 
 
 def _load():
@@ -117,7 +162,7 @@ def _load():
         band = None
     if band is not None and p and not (ref is not None and np.all(ref > 0.0)):
         p = 0.0
-    return models, dev, band, ref, p
+    return models, dev, band, ref, p, _pick_batch(models, dev)
 
 
 try:
@@ -131,7 +176,7 @@ def predict(input_array, metadata=None):
     global _state
     if _state is None:
         _state = _load()
-    models, dev, band, ref, p = _state
+    models, dev, band, ref, p, batch = _state
 
     x = np.ascontiguousarray(input_array, dtype=np.float32)
     # Allocate the output once, zero-filled, and let the model write u,v into it. The pressure
@@ -141,26 +186,40 @@ def predict(input_array, metadata=None):
     # (N, 1, 32, 64, 2), 5.5 MB at N = 336 against the field's 165 MB -- cheap enough to ask
     # for inside a timed call, and only requested when the band actually uses it.
     sig = np.empty((len(x), 1, 32, 64, 2), dtype=np.float32) if p else None
-    _fno.predict_fno(models, x, dev, alpha=ALPHA, out=pred, sigma_out=sig)
+    _fno.predict_fno(models, x, dev, alpha=ALPHA, batch=batch, out=pred, sigma_out=sig)
 
-    # `half` is (1, 20, 32, 64, 3) and broadcasts against pred natively, so it is NEVER
-    # materialized to full size -- pred - half allocates the result and nothing else. Doing
-    # this the obvious way (broadcast_to(...).copy(), then ascontiguousarray on each bound)
-    # allocated three extra full-size arrays, ~500 MB at N=336, and predict() is TIMED.
-    # A test horizon we did not anticipate falls back to the fitted constant rather than
-    # crashing on the broadcast.
+    # The FALLBACK band -- used when band.npz is missing, has no sigma scaling, or the test
+    # horizon is not the 20 frames it was fitted for. It is (1, 20, 32, 64, 3) or a scalar and
+    # broadcasts against pred natively, so it is never materialized to full size. The live
+    # path is the sigma-scaled branch below, which does materialize one full-size array.
     half = band if (band is not None and band.shape[1:] == pred.shape[1:]) else np.float32(0.0065)
     if p and sig is not None and band is not None and half is band:
         # Per-window widths: base * (sigma / sigma_ref)**p, clipped to the range the fit was
-        # solved over. This DOES materialize `half` at full size, which the fixed band avoided
-        # -- one extra 165 MB array at N = 336. It is worth it: the sigma scaling is +0.51 sps
-        # on the board-like proxy and +1.64 on the full split, both in AND out of sample,
-        # where the round-6 attempt using ensemble spread was noise.
+        # solved over. The sigma scaling is +0.51 sps on the board-like proxy and +1.64 on the
+        # full split, both in AND out of sample, where the round-6 attempt using ensemble
+        # spread was noise.
         # Order-independent: sigma_ref is a stored constant, so a window's band depends only
         # on that window.
-        r = np.clip(sig / ref[..., :2], 0.3, 3.0) ** np.float32(p)
-        half = band[..., :2] * r                       # (N, 20, 32, 64, 2) by broadcasting
-        half = np.concatenate([half, np.zeros_like(half[..., :1])], -1)
+        #
+        # This section is 1.45 ms/window of pure host memory traffic done the obvious way,
+        # against 3.9 for the whole forward pass, and board time charges 0.431 ms per local
+        # ms. Two changes take it to 0.13:
+        #   * the scale factor carries a THIRD, zero channel, so `half` is one allocation and
+        #     the (N,20,32,64,3) np.concatenate that appended the zero pressure band is gone;
+        #   * the three full-size ops go through torch, which threads them. numpy's ufuncs are
+        #     single-threaded and this stage is bandwidth-bound, not FLOP-bound.
+        # torch.from_numpy wraps without copying, so these are views of the same buffers.
+        # `upper` doubles as the scratch for `half` -- it is overwritten in place by the last
+        # op, so no fourth full-size array is ever live.
+        r3 = np.zeros((len(x), 1, 32, 64, 3), dtype=np.float32)
+        np.power(np.clip(sig / ref[..., :2], 0.3, 3.0), np.float32(p), out=r3[..., :2])
+        lower = np.empty_like(pred)
+        upper = np.empty_like(pred)
+        t_pred, t_lo, t_hi = (torch.from_numpy(a) for a in (pred, lower, upper))
+        torch.mul(torch.from_numpy(band), torch.from_numpy(r3), out=t_hi)   # half -> upper
+        torch.sub(t_pred, t_hi, out=t_lo)
+        torch.add(t_pred, t_hi, out=t_hi)
+        return {"prediction": pred, "lower": lower, "upper": upper}
 
     # No finiteness scan here. It cost 0.066 ms/window -- 5% of the whole timed call -- to
     # duplicate a check the scorer already performs on `prediction` before scoring anything,

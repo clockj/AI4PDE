@@ -57,7 +57,9 @@ class FNO2d(nn.Module):
 
     def __init__(self, width: int = 32, modes_y: int = 12, modes_x: int = 16,
                  n_layers: int = 4, var_head: bool = True, extra_ch: int = 0,
-                 var_mlp: bool = False, lift_mlp: bool = False, point_mlp: bool = False):
+                 var_mlp: bool = False, lift_mlp: bool = False, point_mlp: bool = False,
+                 var_hidden: int = 128, var_deep: bool = False, var_in_std: bool = False,
+                 var_pred_std: bool = False):
         super().__init__()
         # The default lift is a single 1x1 conv: a LINEAR map from 42 channels (20 frames x
         # u,v, plus the coordinate grid) down to width=24. The whole input window is
@@ -81,13 +83,33 @@ class FNO2d(nn.Module):
         # trunk, against the field head's 128-wide MLP. var_mlp gives the two heads the same
         # shape. Worth trying because tke_branch_v9.py prices a 25% closing of the sigma gap
         # at +1.2 final, which is the largest single lever measured.
+        #
+        # Two further knobs, both pure BOUNDARY capacity (the trunk is untouched, which is the
+        # side of the boundary/trunk rule that has paid every time it was tested):
+        #   var_hidden  widens that MLP's hidden layer past 128;
+        #   var_deep    feeds it concat(h1..hL) instead of the last block's output only. The
+        #               20-frame amplitude envelope is a multi-scale quantity and the final
+        #               trunk state has had four blocks to specialize toward the field head.
+        #   var_in_std  hands the head the INPUT window's own per-pixel temporal std, the two
+        #               channels the trunk would have to form a quadratic of 20 frames to
+        #               recover. It is the only one of the three that adds information rather
+        #               than capacity, and it is computed from the window predict() is already
+        #               given -- no extra frames, no cross-window read.
+        #   var_pred_std hands it the std of the FIELD HEAD's own output window. compose()
+        #               forms g = (alpha*sigma + (1-alpha)*s)/s with exactly that s, so without
+        #               it the head is asked for sigma in absolute terms and the answer is then
+        #               divided by a quantity it never saw; with it, it can learn the ratio.
+        #               Detached, so the variance loss still cannot reshape the field trunk.
+        self.var_deep, self.var_in_std, self.var_pred_std = var_deep, var_in_std, var_pred_std
+        var_cin = ((width * n_layers if var_deep else width)
+                   + (C if var_in_std else 0) + (C if var_pred_std else 0))
         if not var_head:
             self.head_logstd = None
         elif var_mlp:
-            self.head_logstd = nn.Sequential(nn.Conv2d(width, 128, 1), nn.GELU(),
-                                             nn.Conv2d(128, C, 1))
+            self.head_logstd = nn.Sequential(nn.Conv2d(var_cin, var_hidden, 1), nn.GELU(),
+                                             nn.Conv2d(var_hidden, C, 1))
         else:
-            self.head_logstd = nn.Conv2d(width, C, 1)
+            self.head_logstd = nn.Conv2d(var_cin, C, 1)
         if self.head_logstd is not None:
             last = self.head_logstd[-1] if var_mlp else self.head_logstd
             nn.init.zeros_(last.weight)
@@ -98,12 +120,26 @@ class FNO2d(nn.Module):
 
     def forward(self, prev: torch.Tensor, detach_var: bool = False):
         h = self.lift(torch.cat([prev, self.grid.expand(len(prev), -1, -1, -1)], 1))
+        hs = []
         for s, p, n in zip(self.spec, self.point, self.norm):
             h = h + torch.nn.functional.gelu(n(s(h) + p(h)))
+            hs.append(h)
+        field = self.head_field(h)
         logstd = None
         if self.head_logstd is not None:
-            logstd = self.head_logstd(h.detach() if detach_var else h)
-        return self.head_field(h), logstd
+            z = torch.cat(hs, 1) if self.var_deep else h
+            if detach_var:
+                z = z.detach()
+            if self.var_in_std:
+                # prev's first CH channels are the 20 input frames x (u, v), time-major.
+                s_in = prev[:, :CH].reshape(len(prev), CH // C, C, *prev.shape[-2:]).std(1)
+                z = torch.cat([z, s_in], 1)
+            if self.var_pred_std:
+                # head_field is (B, T_OUT*C, H, W) time-major, same layout as to_ch/from_ch.
+                sp = field.detach().reshape(len(prev), T_OUT, C, *field.shape[-2:]).std(1)
+                z = torch.cat([z, sp], 1)
+            logstd = self.head_logstd(z)
+        return field, logstd
 
 
 class DeepONetCh(nn.Module):
@@ -229,14 +265,17 @@ def radial_index(h: int, w: int, device) -> tuple[torch.Tensor, int]:
 
 def build(arch: str, width: int, var_head: bool, extra_ch: int, modes_y: int = 12,
           modes_x: int = 16, n_layers: int = 4, p: int = 256, var_mlp: bool = False,
-          lift_mlp: bool = False, point_mlp: bool = False):
+          lift_mlp: bool = False, point_mlp: bool = False,
+          var_hidden: int = 128, var_deep: bool = False, var_in_std: bool = False,
+          var_pred_std: bool = False):
     """Factory shared by train2.py and eval_wp.run so both build identical objects."""
     from model import UNetTwoHead
     if arch == "unet":
         return UNetTwoHead(width, var_head=var_head, extra_ch=extra_ch)
     if arch == "fno":
         return FNO2d(width, modes_y, modes_x, n_layers, var_head, extra_ch, var_mlp, lift_mlp,
-                     point_mlp)
+                     point_mlp, var_hidden, var_deep, var_in_std,
+                     var_pred_std)
     if arch == "deeponet":
         return DeepONetCh(p, trunk_width=width * 2, branch_width=width,
                           var_head=var_head, extra_ch=extra_ch)

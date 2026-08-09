@@ -56,6 +56,32 @@ def main() -> None:
                          "nn.Conv2d(width, width, 1) -- linear -- and there are n_layers of "
                          "them, so it is the same 1x1 bottleneck as --lift-mlp and --var-mlp, "
                          "repeated. Those two are worth +0.086 and +0.076 and are additive.")
+    ap.add_argument("--var-hidden", type=int, default=128,
+                    help="hidden width of the --var-mlp log-std head. Boundary capacity, which "
+                         "is the side of the boundary/trunk rule that has paid every time: "
+                         "lift +0.076 and head_logstd +0.086, against --point-mlp -0.379 and "
+                         "every width increase inside the trunk.")
+    ap.add_argument("--var-deep", action="store_true",
+                    help="feed the log-std head concat(h1..hL) instead of the last block's "
+                         "output alone. Still a readout -- no trunk capacity is added -- but "
+                         "the amplitude envelope is multi-scale and the final trunk state has "
+                         "had four blocks to specialize toward the field head.")
+    ap.add_argument("--var-in-std", action="store_true",
+                    help="feed the log-std head the INPUT window's own per-pixel temporal std "
+                         "(2 channels) alongside the trunk state. Unlike --var-hidden and "
+                         "--var-deep this adds INFORMATION, not capacity: the trunk would have "
+                         "to form a quadratic of 20 frames to recover it, and the variance "
+                         "loss is a log-MSE against exactly that statistic of the TARGET "
+                         "window. Uses only the window predict() is handed -- no extra frames "
+                         "and no cross-window read, so it stays deployable.")
+    ap.add_argument("--var-pred-std", action="store_true",
+                    help="feed the log-std head the temporal std of the FIELD HEAD's own "
+                         "predicted window (detached). compose() forms "
+                         "(alpha*sigma + (1-alpha)*s)/s with exactly that s, so without this "
+                         "the head predicts sigma in absolute terms and the answer is divided "
+                         "by a quantity it never saw. --var-hidden 256 showed the head is not "
+                         "capacity-limited (training `var` identical to baseline), so the "
+                         "remaining lever is information, not width.")
     ap.add_argument("--loss", choices=["rel", "mse"], default="rel",
                     help="field loss. 'rel' = per-sample relative L2 in physical units (WP1.1); "
                          "'mse' = plain MSE in normalized units, as the original train.py. The "
@@ -241,7 +267,10 @@ def main() -> None:
                   (HIST_CH if args.hist else 0) + n_ctx * C,
                   args.modes_y, args.modes_x, args.n_layers, args.p,
                   var_mlp=args.var_mlp, lift_mlp=args.lift_mlp,
-                  point_mlp=args.point_mlp).to(dev)
+                  point_mlp=args.point_mlp, var_hidden=args.var_hidden,
+                  var_deep=args.var_deep,
+                  var_in_std=args.var_in_std,
+                  var_pred_std=args.var_pred_std).to(dev)
     print(f"params: {sum(p.numel() for p in model.parameters())/1e6:.2f}M", flush=True)
 
     if args.init:
@@ -464,6 +493,8 @@ def main() -> None:
 
     torch.save({"model_state_dict": model.state_dict(), "mode": "twohead",
                 "width": args.width, "var_head": args.var_head, "var_mlp": args.var_mlp, "lift_mlp": args.lift_mlp, "point_mlp": args.point_mlp,
+                "var_hidden": args.var_hidden, "var_deep": args.var_deep,
+                "var_in_std": args.var_in_std, "var_pred_std": args.var_pred_std,
                 "hist": args.hist,
                 "ctx": args.ctx, "arch": args.arch, "modes_y": args.modes_y,
                 "modes_x": args.modes_x, "n_layers": args.n_layers, "p": args.p,
