@@ -1,6 +1,56 @@
 # Round 10 — two linear bottlenecks, and the SPS band reopened
 
-**Date:** 2026-08-08 · **Our board:** 80.115065 · **Target:** 80.4 (another team) · **Nothing submitted.**
+## BOARD RESULT: 80.512025 (+0.397)
+
+Submitted and returned. Predicted 80.422 before looking; the admissible family said
+80.373–80.465, and the actual landed **0.047 above the top of that range**.
+
+| subscore | R8/9 | predicted | **ACTUAL** | pred err | Δ vs R8/9 |
+|---|---|---|---|---|---|
+| `rel_l2_score` | 94.6342 | 94.668 | **94.5764** | −0.092 | **−0.058** |
+| `tke_score` | 78.8825 | 79.144 | **79.1528** | **+0.009** | +0.270 |
+| `mvpe_score` | 93.8030 | 93.784 | **93.6812** | −0.103 | **−0.122** |
+| `time_score` | 90.5066 | 91.477 | **91.1209** | −0.356 | +0.614 |
+| `sps_score` | 38.2338 | 39.186 | **39.6263** | **+0.440** | **+1.393** |
+| **`final_score`** | **80.115065** | 80.422 | **80.512025** | +0.090 | **+0.397** |
+
+Three things this settles.
+
+**1. The band was the round.** +1.393 board sps, well over its +0.95 forecast, and it accounts
+for roughly two-thirds of the gain. TKE came in near-exact (+0.009 error).
+
+**2. `rel_l2` and `mvpe` REGRESSED on the board** (−0.058, −0.122) where the held-out proxy
+predicted small improvements. The package went 8 members → 7 and dropped w48 on a proxy margin
+of **0.001** (78.667 vs 78.668). The board says that margin was noise and the cut cost real
+field accuracy. **Restore the members** — under fusion the extra w24 seeds are nearly free.
+
+**3. The linear weighting model is FALSIFIED.** Forcing all four rounds to fit with Σw = 1 and
+no intercept requires `mvpe` weight **−0.256**. Allowing an intercept restores non-negative
+fits, and the ranges that survive are:
+
+| weight | range over all non-negative fits | previous estimate |
+|---|---|---|
+| `sps` | **0.139 – 0.321** | 0.181 |
+| `time` | 0.043 – 0.120 | 0.069 |
+| `rel` / `tke` / `mvpe` | only loosely bounded | — |
+
+**SPS is worth up to 1.8× what round 9 priced it at**, which reprices every future decision.
+Use `--ckpt`-independent deltas, not the level fit, until a fifth point arrives.
+
+**4. Board time is solved.** Two terms fit all four rounds to **0.064 ms**:
+
+    board ms  =  4.447  +  0.324 * invocations  +  0.431 * local ms
+
+R7 and R10 both ran 3 invocations and differ by 1.0 ms, so invocation count alone was never
+enough. Fusion saved 5 × 0.324 = 1.62 ms of invocations and gave 0.60 ms back in local time
+(2.211 → 3.598 ms), net −1.02 against the −1.098 observed. **Local compute is not free after
+all — it is worth 0.431 board ms per local ms**, and 1 board ms ≈ 0.05 `final`.
+
+Follow-up plan: `Track_1/plan/plan_20260809.md`.
+
+---
+
+**Date:** 2026-08-08 · **Our board:** 80.115065 → **80.512025** · **Target:** 80.79 (another team)
 Plan this executes: `Track_1/plan/plan_20260807.md`. Constraint from the user: no extra
 training data, so the RealPDEBench public Foil release stays out (§9 of the round-9 report).
 

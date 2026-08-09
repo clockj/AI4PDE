@@ -792,6 +792,32 @@ the AoA 15–20 proxy (`compare_v9.py --aoa 15 20`; `wfinal` = round-9 weights o
   **+0.112**, fusion **+0.067**, band **+0.132** → **≈80.43**. The fusion term is the fragile
   one; if board time really tracks local time it becomes −0.007 and the package lands ≈80.36.
 
+### Round 10 BOARD RESULT (2026-08-08) — 80.512025, +0.397
+
+rel 94.5764 / tke 79.1528 / mvpe 93.6812 / time 91.1209 / sps 39.6263. Predicted 80.422 before
+submitting (family range 80.373–80.465); actual landed 0.047 *above* the range. Plan for the
+next round: `Track_1/plan/plan_20260809.md`. Best other team: **80.79**.
+
+* **The band was the round**: sps **+1.393**, against a +0.95 forecast — roughly two-thirds of
+  the gain. TKE came in near-exact (predicted 79.144, actual 79.153).
+* **`rel_l2` −0.058 and `mvpe` −0.122 REGRESSED** where the held-out proxy predicted small
+  gains. The package went 8 → 7 members and dropped w48 on a proxy margin of **0.001**. That
+  margin was noise. **The AoA 15-20 proxy is not the authority on member count — the board is.**
+  Restore w48 and add w24 seeds (free in invocations under fusion).
+* ~~**`final_score` is a weighted mean with Σw = 1 and no intercept.**~~ **FALSIFIED in round
+  10.** Fitting all four rounds that way needs `mvpe` weight **−0.256**. With an intercept
+  allowed, non-negative fits survive and give **`sps` 0.139–0.321** (not 0.181), `time`
+  0.043–0.120, and only loose bounds on rel/tke/mvpe. **SPS is worth up to 1.8× the round-9
+  price.** Work in DELTAS between rounds (the intercept cancels), not the level fit.
+* **BOARD TIME IS SOLVED**, four rounds to 0.064 ms:
+  **`board ms = 4.447 + 0.324·invocations + 0.431·local ms`**, and **1 board ms ≈ 0.05 final**.
+  R7 and R10 both ran 3 invocations and differ by 1.0 ms, so the invocation-only model of round
+  10 was incomplete. **Local compute is NOT free** — round 10's fusion saved 1.62 ms of
+  invocations and handed 0.60 ms back in local time (2.211 → 3.598 ms).
+* Method rule earned twice now: **when testing a scaling or regularization parameter, refit
+  everything downstream of it before comparing.** Fitting the SPS band's `base` once at p = 0
+  is what made round 6 declare the band closed, and it nearly repeated in round 10.
+
 ### Physics losses: rejected, measured
 
 `rms(∇·u)/rms(|∇u|)` is **0.42–0.49 on real PIV and 0.28–0.34 even on the CFD**, and unchanged
