@@ -9,9 +9,12 @@ val_seen at the board-calibrated 1.39x and reported on the AoA 15-20 subset of v
 ensemble's errors differ from its members', so a shared band would flatter whichever set it was
 fitted to.
 
-`time` is excluded from the mean. Two board rounds returned 91.697 and 91.726 for models 2.07x
-apart in local latency, so it is a constant and adding members is free; including it would only
-dilute every difference by a fifth.
+`mean4` excludes `time`, which no local number can predict. Round 9 falsified the "time is a
+constant" reading of the first two board rounds: the 8-member package is FASTER locally than
+the U-Net and 2.09 ms slower on the board, because board time tracks sequential model
+invocations. Members cost ~0.42 board ms each. `--time-score` feeds that back in so the
+`final` column is a whole-board projection -- pass the time_score you actually expect, or the
+last board's if the member count is unchanged.
 
 The motivating question is whether a member that is WORSE on its own can still help. Ensembles
 average out independent error, so what matters is member diversity as much as member quality --
@@ -26,6 +29,7 @@ import sys
 
 import numpy as np
 
+import final_v9
 import sps9
 from sps9 import optimal_band, prep, sc, sps_score
 
@@ -42,6 +46,10 @@ def main() -> None:
     ap.add_argument("--alpha", type=float, default=0.75)
     ap.add_argument("--aoa", type=int, nargs="+", default=[15, 20])
     ap.add_argument("--f", type=float, default=F_BOARD)
+    ap.add_argument("--time-score", type=float, default=90.5066,
+                    help="board time_score to assume for the `final` projection. The default "
+                         "is round 8's, i.e. an 8-member package; subtract ~0.42 board ms per "
+                         "member removed and re-score with sps9.sc.score_time.")
     args = ap.parse_args()
 
     import torch
@@ -57,8 +65,9 @@ def main() -> None:
     cache = {}
 
     hdr = (f"{'members':52s} {'n':>2s} | {'relL2':>7s} {'TKE':>7s} {'MVPE':>7s} {'sps':>6s} | "
-           f"{'mean4':>7s}")
-    print(f"AoA {args.aoa} proxy, band refit per set at {args.f}x, time excluded (constant)")
+           f"{'mean4':>7s} {'final':>7s}")
+    print(f"AoA {args.aoa} proxy, band refit per set at {args.f}x; `final` uses the round-9 "
+          f"weights with time_score = {args.time_score:.3f}")
     print(hdr)
     print("-" * len(hdr))
 
@@ -83,8 +92,9 @@ def main() -> None:
         four = [sc.score_error(r * args.f), sc.score_error(k * args.f),
                 sc.score_error(mv * args.f), s]
         label = ", ".join(os.path.basename(c).replace(".pth", "") for c in names)
+        fin = final_v9.predict(four[:3] + [args.time_score, four[3]])[0]
         print(f"{label[:52]:52s} {len(names):2d} | {r:7.4f} {k:7.4f} {mv:7.4f} {s:6.2f} | "
-              f"{np.mean(four):7.3f}")
+              f"{np.mean(four):7.3f} {fin:7.3f}")
 
 
 if __name__ == "__main__":

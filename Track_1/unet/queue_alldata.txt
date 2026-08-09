@@ -1,0 +1,34 @@
+# STAGED, NOT QUEUED. Copy over queue.txt only once the round-10 recipe is final.
+#
+# The submission package is 8 ALL-DATA members of three architectures (submit_fno/README.md).
+# A recipe change means retraining all eight; they supply weights, never evidence.
+#
+# Recipe delta for round 10: + --var-mlp --lift-mlp (additive, +0.168 single-checkpoint).
+# Both fix a LINEAR bottleneck: head_logstd was a 1x1 probe on a 24-ch trunk, and lift was a
+# linear 42->24 compression of the whole input window. 10,976 params, no extra invocation.
+# Everything else in runq.sh's BASE is unchanged from the shipped Aug 6 build.
+#
+# ~20 min each, ~3.7 h for all eleven. AFTER these:
+#   1. python submit_fno/fit_band.py --ckpt $A --err-ckpt $M      <- --err-ckpt is mandatory;
+#      the README calls skipping it "the single most expensive mistake available here"
+#   2. python submit_fno/validate_strict.py --ckpt $A             <- must print SUBMITTABLE
+#   3. Record the predicted `final` (final_v9.predict) in plan/ BEFORE submitting. The
+#      weighting model is a 3-point exact fit; one held-out prediction turns it into evidence.
+
+# HELD-OUT counterparts of the three non-w24 architectures, on the new recipe. fit_band.py
+# needs held-out error statistics that MATCH the shipped architecture; reusing the round-8
+# held-out w48/m1220/w64 would point the band at a pre-var-mlp error distribution. These are
+# also what ens_v9.py needs to confirm round 8's "architecture diversity beats seeds" still
+# holds once the two bottlenecks are gone.
+fno_vl_w48.pth      --var-mlp --lift-mlp --width 48
+fno_vl_m1220.pth    --var-mlp --lift-mlp --modes-y 12 --modes-x 20
+fno_vl_w64.pth      --var-mlp --lift-mlp --width 64
+
+fno_all_vl_s1.pth   --var-mlp --lift-mlp --all-data
+fno_all_vl_s2.pth   --var-mlp --lift-mlp --all-data
+fno_all_vl_s3.pth   --var-mlp --lift-mlp --all-data
+fno_all_vl_s4.pth   --var-mlp --lift-mlp --all-data
+fno_all_vl_s5.pth   --var-mlp --lift-mlp --all-data
+fno_all_vl_w48.pth  --var-mlp --lift-mlp --all-data --width 48
+fno_all_vl_m1220.pth --var-mlp --lift-mlp --all-data --modes-y 12 --modes-x 20
+fno_all_vl_w64.pth  --var-mlp --lift-mlp --all-data --width 64

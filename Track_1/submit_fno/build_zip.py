@@ -3,7 +3,7 @@
     python submit_fno/build_zip.py --ckpt ../unet/fno_grad.pth
     python submit_fno/validate_strict.py
 
-Stages submission.py + _fno.py + fno.pth + band.npy at the archive ROOT (the layout the
+Stages submission.py + _fno.py + fno.pth + band.npz at the archive ROOT (the layout the
 platform expects) and writes submission.zip. The chosen checkpoint is always packaged under the
 fixed name fno.pth, which is what submission.py loads; the source name is printed so the zip's
 provenance stays traceable.
@@ -36,7 +36,7 @@ def main() -> None:
     files = [
         (os.path.join(HERE, "submission.py"), "submission.py"),
         (os.path.join(HERE, "_fno.py"), "_fno.py"),
-        (os.path.join(HERE, "band.npy"), "band.npy"),
+        (os.path.join(HERE, "band.npz"), "band.npz"),
     ] + list(zip(args.ckpt, names))
     for src, name in zip(args.ckpt, names):
         print(f"packaging checkpoint: {src}  ->  {name}")
@@ -48,7 +48,7 @@ def main() -> None:
     for src, name in files:
         if not os.path.exists(src):
             raise SystemExit(f"missing required file: {src}\n"
-                             f"(band.npy comes from: python submit_fno/fit_band.py --ckpt ...)")
+                             f"(band.npz comes from: python submit_fno/fit_band.py --ckpt ...)")
         shutil.copy2(src, os.path.join(STAGE, name))
 
     extracted_mb = sum(os.path.getsize(os.path.join(STAGE, n)) for _, n in files) / 1e6

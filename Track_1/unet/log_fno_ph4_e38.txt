@@ -1,0 +1,13 @@
+train: 296 trajectory-phases (4 phase(s)) -> 48160 windows, 8 held out
+config: {'data': '/home/clockj/RealPDE/train_real/train_real', 'epochs': 38, 'batch': 32, 'stride': 5, 'width': 24, 'lr': 0.0002, 'out': 'fno_ph4_e38.pth', 'var_head': True, 'var_mlp': False, 'loss': 'mse', 'alpha_train': 0.0, 'lam_f': 1.0, 'lam_v': 0.3, 'lam_t': 0.15, 'w_mean': 1.0, 'lam_p': 0.0, 'detach_var': False, 'aug_scale': 0.0, 'aug_noise': 0.0, 'norm': 'real', 'ctx': 20, 'hist': False, 'swa': 0, 'arch': 'fno', 'modes_y': 8, 'modes_x': 12, 'n_layers': 4, 'p': 256, 'lam_div': 0.0, 'lam_vort': 0.0, 'lam_grad': 1.0, 'lam_spec': 0.0, 'init': '', 'chan_pow': 0.0, 'phases': 4, 'aoa_boost': 1.0, 'aoa_hi': [15, 20], 'aoa_only': False, 'all_data': False}
+params: 0.90M
+  epoch   0  loss 4.48248  field 0.83816  var 7.75331  tke 3.74821  probe 0.00000  div 0.75610  spec 0.00000  (26s)
+  epoch   5  loss 0.75170  field 0.12198  var 0.51627  tke 0.53121  probe 0.00000  div 0.39516  spec 0.00000  (148s)
+  epoch  10  loss 0.66304  field 0.09120  var 0.43869  tke 0.47233  probe 0.00000  div 0.36938  spec 0.00000  (270s)
+  epoch  15  loss 0.63740  field 0.08306  var 0.41708  tke 0.45001  probe 0.00000  div 0.36171  spec 0.00000  (391s)
+  epoch  20  loss 0.62296  field 0.07804  var 0.40637  tke 0.43591  probe 0.00000  div 0.35762  spec 0.00000  (513s)
+  epoch  25  loss 0.61294  field 0.07413  var 0.40014  tke 0.42607  probe 0.00000  div 0.35485  spec 0.00000  (634s)
+  epoch  30  loss 0.60633  field 0.07144  var 0.39640  tke 0.41932  probe 0.00000  div 0.35307  spec 0.00000  (756s)
+  epoch  35  loss 0.60324  field 0.07021  var 0.39471  tke 0.41580  probe 0.00000  div 0.35225  spec 0.00000  (877s)
+  epoch  37  loss 0.60290  field 0.07008  var 0.39454  tke 0.41538  probe 0.00000  div 0.35216  spec 0.00000  (926s)
+saved fno_ph4_e38.pth

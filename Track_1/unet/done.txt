@@ -1,0 +1,34 @@
+fno_ctrl.pth
+fno_vmlp.pth        --var-mlp
+fno_t045.pth        --lam-t 0.45
+fno_vmlp_d.pth      --var-mlp --detach-var
+fno_varonly.pth     --var-mlp --lam-f 0 --lam-t 0.45
+fno_vmlp_s2.pth     --var-mlp
+fno_vmlp_s3.pth     --var-mlp
+fno_aoab2.pth       --aoa-boost 2.0
+fno_aoab4.pth       --aoa-boost 4.0
+fno_aoaonly.pth     --aoa-only
+fno_ph4_e38.pth     --phases 4 --epochs 38
+fno_ph4_s1.pth      --phases 4
+fno_ph4_s2.pth      --phases 4
+fno_lift.pth         --lift-mlp
+fno_vmlp_lift.pth    --var-mlp --lift-mlp
+fno_vmlp_lift_s2.pth --var-mlp --lift-mlp
+fno_vl_w48.pth      --var-mlp --lift-mlp --width 48
+fno_vl_m1220.pth    --var-mlp --lift-mlp --modes-y 12 --modes-x 20
+fno_pt.pth           --var-mlp --lift-mlp --point-mlp
+fno_pt_s2.pth        --var-mlp --lift-mlp --point-mlp
+fno_pt.pth           --var-mlp --lift-mlp --point-mlp
+fno_w16.pth          --var-mlp --lift-mlp --width 16
+fno_w20.pth          --var-mlp --lift-mlp --width 20
+fno_vl_m1220.pth    --var-mlp --lift-mlp --modes-y 12 --modes-x 20
+fno_vl_w64.pth      --var-mlp --lift-mlp --width 64
+fno_vl_s3.pth        --var-mlp --lift-mlp
+fno_vl_s4.pth        --var-mlp --lift-mlp
+fno_all_vl_s1.pth   --var-mlp --lift-mlp --all-data
+fno_all_vl_s2.pth   --var-mlp --lift-mlp --all-data
+fno_all_vl_s3.pth   --var-mlp --lift-mlp --all-data
+fno_all_vl_s4.pth   --var-mlp --lift-mlp --all-data
+fno_all_vl_s5.pth   --var-mlp --lift-mlp --all-data
+fno_all_vl_m1220.pth --var-mlp --lift-mlp --all-data --modes-y 12 --modes-x 20
+fno_all_vl_w64.pth  --var-mlp --lift-mlp --all-data --width 64

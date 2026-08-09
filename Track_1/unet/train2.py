@@ -18,9 +18,9 @@ import time
 import numpy as np
 import torch
 
-from model import (C, H, HIST_CH, NORM_STATS, T_IN, T_OUT, UNetTwoHead, VAL_TRAJ, W, compose,
-                   from_ch, history_stats, load_trajectories, norm_history, rel_l2, self_norm,
-                   std_t, tke, to_ch, window_index, window_scale)
+from model import (C, H, HIST_CH, NORM_STATS, PHASES_ALL, T_IN, T_OUT, UNetTwoHead, VAL_TRAJ, W,
+                   compose, from_ch, history_stats, load_trajectories, norm_history, rel_l2,
+                   self_norm, std_t, tke, to_ch, trajectory_names, window_index, window_scale)
 
 # The scorer's wake probes on the 32x64 grid, derived in scoring.mvpe_rel_l2_per_sample from
 # d=16, center=(10, 32), n_probe=9, sub_s=2. Hard-coded because the geometry is fixed for the
@@ -39,6 +39,23 @@ def main() -> None:
     ap.add_argument("--lr", type=float, default=2e-4)
     ap.add_argument("--out", required=True)
     ap.add_argument("--var-head", action="store_true", help="WP2: add the log-std head")
+    ap.add_argument("--var-mlp", action="store_true",
+                    help="give the log-std head the same 128-wide MLP the field head has. "
+                         "Without it the variance readout is a single 1x1 conv -- a linear "
+                         "probe on a 24-channel trunk -- while the field head gets two layers. "
+                         "tke_branch_v9.py prices closing 25%% of the sigma-to-oracle gap at "
+                         "+1.2 final, so the variance head is worth spending parameters on.")
+    ap.add_argument("--lift-mlp", action="store_true",
+                    help="give the input lift a hidden layer. By default it is a single 1x1 "
+                         "conv, i.e. a LINEAR map from 42 channels (20 frames x u,v, plus the "
+                         "coordinate grid) down to width=24 -- the whole input window is "
+                         "compressed linearly before the first spectral block sees it. Same "
+                         "shape of fix as --var-mlp, at the other end of the network.")
+    ap.add_argument("--point-mlp", action="store_true",
+                    help="give the pointwise half of each FNO block a hidden layer. `point` is "
+                         "nn.Conv2d(width, width, 1) -- linear -- and there are n_layers of "
+                         "them, so it is the same 1x1 bottleneck as --lift-mlp and --var-mlp, "
+                         "repeated. Those two are worth +0.086 and +0.076 and are additive.")
     ap.add_argument("--loss", choices=["rel", "mse"], default="rel",
                     help="field loss. 'rel' = per-sample relative L2 in physical units (WP1.1); "
                          "'mse' = plain MSE in normalized units, as the original train.py. The "
@@ -143,6 +160,27 @@ def main() -> None:
                          "weights v ~37x more than u per unit of physical error. 1 puts the "
                          "loss in physical units, where u carries 86% of the scored error "
                          "energy. No effect on --loss rel, which is already physical.")
+    ap.add_argument("--phases", type=int, default=1, choices=[1, 4],
+                    help="number of ::2 decimation phases to train on. 1 is the scored grid "
+                         "alone, which is what every checkpoint before round 10 used and what "
+                         "the raw 64x128 frames were being thrown away for. 4 adds the three "
+                         "half-cell-shifted views: real samples of the same PIV field, so this "
+                         "is not the input-noise augmentation that was already falsified. "
+                         "Windows and therefore gradient steps per epoch go up 4x.")
+    ap.add_argument("--aoa-boost", type=float, default=1.0,
+                    help="WP3: sampling weight for windows at --aoa-hi angles of attack, "
+                         "relative to 1.0 for the rest. Error is governed by AoA (0 deg 0.057, "
+                         "5 deg 0.044, 10 deg 0.073, 15 deg 0.103, 20 deg 0.105) and the board "
+                         "reads 0.113, at or above our hardest single trajectory -- so equal "
+                         "weighting spends most of the gradient on regimes the board barely "
+                         "tests. Sampling becomes with-replacement; steps per epoch are "
+                         "unchanged. 1.0 keeps the plain shuffle, bit for bit.")
+    ap.add_argument("--aoa-hi", type=int, nargs="+", default=[15, 20],
+                    help="the angles --aoa-boost and --aoa-only refer to")
+    ap.add_argument("--aoa-only", action="store_true",
+                    help="WP3(c): drop every window outside --aoa-hi, i.e. train a high-AoA "
+                         "specialist to be blended with the generalist rather than reweighting "
+                         "one model. Held-out trajectories are excluded first, as always.")
     ap.add_argument("--all-data", action="store_true",
                     help="train on ALL trajectories including the held-out ones. Submission "
                          "checkpoints only -- it makes local evaluation meaningless.")
@@ -153,10 +191,27 @@ def main() -> None:
     # recoverable before the global normalizer folds every condition onto one distribution.
     self_norm_mode = args.norm == "self"
     trajs = load_trajectories(args.data, exclude=[] if args.all_data else VAL_TRAJ,
-                              normalize=False)
+                              normalize=False, phases=PHASES_ALL[:args.phases])
     idx = window_index(trajs, args.stride)
     held = "NONE (all-data)" if args.all_data else f"{len(VAL_TRAJ)} held out"
-    print(f"train: {len(trajs)} trajectories -> {len(idx)} windows, {held}", flush=True)
+    print(f"train: {len(trajs)} trajectory-phases ({args.phases} phase(s)) -> "
+          f"{len(idx)} windows, {held}", flush=True)
+
+    # WP3: which windows sit at a high angle of attack. `<Re>_<AoA>` filenames, aligned with
+    # `trajs` by construction.
+    names = trajectory_names(args.data, exclude=[] if args.all_data else VAL_TRAJ,
+                             phases=PHASES_ALL[:args.phases])
+    is_hi = np.isin([int(n.split("_")[1]) for n in names], args.aoa_hi)[idx[:, 0]]
+    if args.aoa_only:
+        idx = idx[is_hi]
+        is_hi = is_hi[is_hi]
+        print(f"--aoa-only {args.aoa_hi}: {len(idx)} windows kept", flush=True)
+    w_samp = None
+    if args.aoa_boost != 1.0:
+        w_samp = torch.from_numpy(np.where(is_hi, args.aoa_boost, 1.0).astype(np.float64))
+        print(f"--aoa-boost {args.aoa_boost} on AoA {args.aoa_hi}: "
+              f"{int(is_hi.sum())}/{len(idx)} windows -> "
+              f"{float(w_samp[is_hi].sum() / w_samp.sum()):.1%} of draws", flush=True)
     print(f"config: {vars(args)}", flush=True)
 
     # Trajectories stay on the CPU (~1 GB); windows are sliced per batch. Materializing them
@@ -184,7 +239,9 @@ def main() -> None:
     rad_idx, rad_nb = radial_index(H, W, dev)
     model = build(args.arch, args.width, args.var_head,
                   (HIST_CH if args.hist else 0) + n_ctx * C,
-                  args.modes_y, args.modes_x, args.n_layers, args.p).to(dev)
+                  args.modes_y, args.modes_x, args.n_layers, args.p,
+                  var_mlp=args.var_mlp, lift_mlp=args.lift_mlp,
+                  point_mlp=args.point_mlp).to(dev)
     print(f"params: {sum(p.numel() for p in model.parameters())/1e6:.2f}M", flush=True)
 
     if args.init:
@@ -226,7 +283,10 @@ def main() -> None:
     t0 = time.time()
     for ep in range(args.epochs):
         model.train()
-        perm = torch.randperm(len(idx_t))
+        # With --aoa-boost this draws with replacement, so an epoch is the same number of
+        # steps over a differently-weighted pool rather than one pass over every window.
+        perm = (torch.randperm(len(idx_t)) if w_samp is None else
+                torch.multinomial(w_samp, len(idx_t), replacement=True))
         acc = np.zeros(7)
         n = 0
         for i in range(0, len(idx_t), args.batch):
@@ -403,7 +463,8 @@ def main() -> None:
         model.load_state_dict({k: v.to(dev) for k, v in swa_state.items()})
 
     torch.save({"model_state_dict": model.state_dict(), "mode": "twohead",
-                "width": args.width, "var_head": args.var_head, "hist": args.hist,
+                "width": args.width, "var_head": args.var_head, "var_mlp": args.var_mlp, "lift_mlp": args.lift_mlp, "point_mlp": args.point_mlp,
+                "hist": args.hist,
                 "ctx": args.ctx, "arch": args.arch, "modes_y": args.modes_y,
                 "modes_x": args.modes_x, "n_layers": args.n_layers, "p": args.p,
                 "self_norm": self_norm_mode, "norm": args.norm,

@@ -102,7 +102,27 @@ def main() -> None:
                     help="scale the local error field by this before solving, to match the "
                          "error magnitude the model will actually FACE on the board (see the "
                          "module docstring; measured 1.46x)")
-    ap.add_argument("--out", default=os.path.join(HERE, "band.npy"))
+    ap.add_argument("--band-p", type=float, default=0.5,
+                    help="exponent on the per-window sigma ratio: half(i,e) = base(e) * "
+                         "(sigma(i,e)/sigma_ref(e))**p. 0 reproduces the shipped per-element "
+                         "band exactly. Round 6 closed this idea using ENSEMBLE SPREAD, which "
+                         "correlates with per-element |error| at only 0.347 once the "
+                         "per-element mean is removed; the variance head's own sigma "
+                         "correlates 0.551. Refitting `base` for each p (deflating the errors "
+                         "by r**p before solving, so no p is handicapped) makes p = 0.5 the "
+                         "best value BOTH in-sample and out-of-sample -- +0.51 sps on the AoA "
+                         "15-20 proxy and +1.64 on the full split. See ../band_sigma_v9.py.")
+    ap.add_argument("--band-smooth", type=int, default=3,
+                    help="box-blur the per-element base over (T, H, W) with this window. The "
+                         "base has 20*32*64*2 = 81,920 free parameters fitted from ~126 "
+                         "windows, so `optimal_band`'s exact in-sample optimum is badly "
+                         "overfitted; smoothing is pure variance reduction. It cannot be "
+                         "chosen in-sample -- the unsmoothed band is the in-sample optimum by "
+                         "construction -- so 3 comes from leave-one-TRAJECTORY-out CV inside "
+                         "the fitting split (CV sps 42.81 / 43.07 / 43.34 / 43.28 / 43.18 for "
+                         "k = 1/2/3/5/7), and the same k is independently best on val_unseen "
+                         "(40.615 against 40.414). 1 disables.")
+    ap.add_argument("--out", default=os.path.join(HERE, "band.npz"))
     args = ap.parse_args()
 
     import torch
@@ -113,9 +133,14 @@ def main() -> None:
     ds = np.load(os.path.join(TRACK1, "val_seen.npz"))
     du = np.load(os.path.join(TRACK1, "val_unseen.npz"))
 
-    def infer(models, X):
-        uv = _fno.predict_fno(models, X, dev, alpha=args.alpha)
+    def infer(models, X, sigma_out=None):
+        uv = _fno.predict_fno(models, X, dev, alpha=args.alpha, sigma_out=sigma_out)
         return np.concatenate([uv, np.zeros_like(uv[..., :1])], -1).astype(np.float32)
+
+    def sigma_of(models, X):
+        s = np.empty((len(X), 1, 32, 64, 2), dtype=np.float32)
+        _fno.predict_fno(models, X, dev, alpha=args.alpha, sigma_out=s)
+        return np.concatenate([s, np.zeros_like(s[..., :1])], -1).astype(np.float32)
 
     fit_d = ds if args.fit_on == "seen" else du
     keep = np.isin(np.array([int(str(i).split(":")[0].split("_")[1]) for i in fit_d["ids"]]),
@@ -123,21 +148,49 @@ def main() -> None:
     Pf, Yf = infer(m_err, fit_d["x"])[keep], fit_d["y"][keep]
     Pu, Yu = infer(m, du["x"]), du["y"]
 
+    # sigma_ref comes from --ckpt, NOT --err-ckpt: it normalizes the sigma the SHIPPED models
+    # will emit at test time, so it has to be their scale. The error field below still comes
+    # from --err-ckpt, because that is about how big the errors honestly are.
+    sig_fit = sigma_of(m, fit_d["x"])[keep]
+    sigma_ref = np.maximum(sig_fit.mean(0, keepdims=True), 1e-8).astype(np.float32)
+    ratio_f = np.clip(sig_fit / sigma_ref, 0.3, 3.0)
+
     # Solve on the fitting split's error field -- an offline quantity that uses no test target
-    # and no per-window information -- with |error| scaled to board magnitude.
+    # and no per-window information -- with |error| scaled to board magnitude. Deflating by
+    # ratio**p first is what makes `base` the right partner for a per-window band: the
+    # containment test |E| <= base * r**p is exactly |E| / r**p <= base.
     As, as_, scored_s, ns = prep(Pf, Yf)
-    uv_band = optimal_band(np.float32(args.inflate) * As, as_, scored_s)
+    Adef = np.float32(args.inflate) * As
+    if args.band_p:
+        Adef = (Adef / ratio_f[..., :2] ** args.band_p).astype(np.float32)
+    uv_band = optimal_band(Adef, as_, scored_s)
+    if args.band_smooth > 1:
+        k = args.band_smooth
+        o = uv_band.astype(np.float64)
+        for ax in (1, 2, 3):                      # T, H, W; channels stay independent
+            pad = [(0, 0)] * 5
+            pad[ax] = (k // 2, k // 2)
+            q = np.pad(o, pad, mode="edge")
+            o = np.mean([np.take(q, range(i, i + uv_band.shape[ax]), axis=ax)
+                         for i in range(k)], axis=0)
+        uv_band = o.astype(np.float32)
 
     # The scorer only reads the measured channels, but the ingestion program requires bounds
     # the same shape as the prediction, so the unscored pressure channel gets a zero column.
     band = np.concatenate([uv_band, np.zeros_like(uv_band[..., :1])], -1).astype(np.float32)
-    np.save(args.out, band)
+    np.savez(args.out, base=band, sigma_ref=sigma_ref, p=np.float32(args.band_p))
 
     U = prep(Pu, Yu)
     hi = np.isin(np.array([int(str(i).split(":")[0].split("_")[1]) for i in du["ids"]]),
                  args.fit_aoa)
     Uh = prep(Pu[hi], Yu[hi])
     dmh, tkh, mvh = sps9.sample_metrics(Pu[hi], Yu[hi])
+
+    # The per-window half-widths the submission will actually use, on each reporting split.
+    ratio_u = np.clip(sigma_of(m, du["x"]) / sigma_ref, 0.3, 3.0)
+    h_fit = (uv_band * ratio_f[..., :2] ** args.band_p).astype(np.float32)
+    h_all = (uv_band * ratio_u[..., :2] ** args.band_p).astype(np.float32)
+    h_hi = h_all[hi]
 
     def at_board(f):
         """The AoA-restricted view of val_unseen, stretched by f -- the closest proxy we have
@@ -150,16 +203,18 @@ def main() -> None:
         print(f"err-ckpt    {', '.join(os.path.basename(c) for c in args.err_ckpt)}")
     print(f"fit-on      val_{args.fit_on}  AoA {args.fit_aoa}  "
           f"({int(keep.sum())}/{len(keep)} windows)   inflate {args.inflate:.2f}x")
-    print(f"band        {band.shape}  half-width min {uv_band.min():.5f} "
-          f"median {np.median(uv_band):.5f} max {uv_band.max():.5f}")
-    print(f"sps  val_{args.fit_on} (fitted)   {sps_score(As, as_, scored_s, ns, uv_band):.2f}")
+    print(f"band        base {band.shape}  half-width min {uv_band.min():.5f} "
+          f"median {np.median(uv_band):.5f} max {uv_band.max():.5f}   sigma-scaling p="
+          f"{args.band_p}")
+    print(f"sps  val_{args.fit_on} (fitted)   {sps_score(As, as_, scored_s, ns, h_fit):.2f}"
+          f"   [p=0 band: {sps_score(As, as_, scored_s, ns, uv_band):.2f}]")
     contaminated = args.err_ckpt is not None or args.fit_on == "unseen"
     print(f"sps  val_unseen ({'NOT honest' if contaminated else '  reported'}) "
-          f"{sps_score(*U, uv_band):.2f}   vs "
+          f"{sps_score(*U[:3], U[3], h_all):.2f}   vs "
           f"{sc.score_sps(sc.aggregate_sps(Pu, Yu, 2)[0]):.2f} for the scorer's default band")
     print("sps  board proxy (val_unseen AoA "
           + f"{args.fit_aoa}) stretched: "
-          + "  ".join(f"{f:.2f}x {sps_score(*at_board(f), uv_band):5.2f}"
+          + "  ".join(f"{f:.2f}x {sps_score(*at_board(f), h_hi):5.2f}"
                       for f in (1.0, 1.05, 1.15, 1.3)))
     print(f"wrote {args.out}")
 

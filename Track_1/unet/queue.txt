@@ -1,0 +1,40 @@
+# -- Round 10c: the THIRD instance of the same bottleneck. `point` is nn.Conv2d(width, width, 1)
+#    -- linear -- and there is one per FNO block, so four of them. --var-mlp and --lift-mlp are
+#    worth +0.086 and +0.076 and are additive; this is the same fix, repeated per layer.
+#    MUST run before the architecture variants: if it wins, those need retraining with it.
+
+# STAGED, NOT QUEUED. Copy over queue.txt only once the round-10 recipe is final.
+#
+# The submission package is 8 ALL-DATA members of three architectures (submit_fno/README.md).
+# A recipe change means retraining all eight; they supply weights, never evidence.
+#
+# Recipe delta for round 10: + --var-mlp --lift-mlp (additive, +0.168 single-checkpoint).
+# Both fix a LINEAR bottleneck: head_logstd was a 1x1 probe on a 24-ch trunk, and lift was a
+# linear 42->24 compression of the whole input window. 10,976 params, no extra invocation.
+# Everything else in runq.sh's BASE is unchanged from the shipped Aug 6 build.
+#
+# ~20 min each, ~3.7 h for all eleven. AFTER these:
+#   1. python submit_fno/fit_band.py --ckpt $A --err-ckpt $M      <- --err-ckpt is mandatory;
+#      the README calls skipping it "the single most expensive mistake available here"
+#   2. python submit_fno/validate_strict.py --ckpt $A             <- must print SUBMITTABLE
+#   3. Record the predicted `final` (final_v9.predict) in plan/ BEFORE submitting. The
+#      weighting model is a 3-point exact fit; one held-out prediction turns it into evidence.
+
+# HELD-OUT counterparts of the three non-w24 architectures, on the new recipe. fit_band.py
+# needs held-out error statistics that MATCH the shipped architecture; reusing the round-8
+# held-out w48/m1220/w64 would point the band at a pre-var-mlp error distribution. These are
+# also what ens_v9.py needs to confirm round 8's "architecture diversity beats seeds" still
+# holds once the two bottlenecks are gone.
+# -- Round 10d: trunk capacity points DOWN, and nobody tested below width 24.
+#    Round 8 ladder (old recipe): w24 81.67 > w48 81.33 > w64 81.17, monotone decreasing.
+#    --point-mlp just confirmed it again from the other side: +25k params INSIDE the trunk
+#    cost -0.379 while +11k at the BOUNDARIES (lift, head_logstd) gained +0.164.
+#    The ladder has never been extrapolated downward. w24 may not be the optimum.
+
+
+# -- Ensemble COMPOSITION test. Round 8 said architecture diversity beats extra seeds, but
+#    that was the old recipe, where w48/w64 were only ~0.3 behind w24. On the round-10 recipe
+#    w48 is 0.6 behind (81.451 vs 82.059). Two more w24 seeds let me score 4xw24 against
+#    2xw24+m1220+w64. If pure w24 wins, ALL members fuse into ONE invocation instead of four,
+#    worth another ~0.95 board ms (~+0.04) on top of whatever the accuracy does.
+

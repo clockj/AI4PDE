@@ -37,6 +37,12 @@ TRACK1 = os.path.dirname(HERE)
 KIT = "/home/clockj/RealPDE/realpde_t1_starting_kit_v9/realpde_t1_starting_kit_v9"
 MISSING = ["scipy", "h5py", "einops", "matplotlib", "pandas"]
 
+# Imported up front and the path entry removed again: the point of this script is that the
+# submission must load with NOTHING helpful on sys.path, so Track_1/ must not stay there.
+sys.path.insert(0, TRACK1)
+import final_v9  # noqa: E402
+sys.path.pop(0)
+
 
 def main() -> None:
     subprocess.run([sys.executable, os.path.join(HERE, "build_zip.py")] + sys.argv[1:],
@@ -113,8 +119,10 @@ def main() -> None:
           f"time {subs[3]:.2f}  sps {subs[4]:.2f}   mean5 {float(np.mean(subs)):.3f}")
     # v9 stopped publishing the combination rule, and it is no longer the plain mean: the
     # 2026-08-05 board reported 79.733 where the mean of its own five subscores is 78.999.
-    # mean5 above is a tracking number, not the leaderboard's.
-    print("    (mean5 is a tracking proxy; v9 does not publish how final_score is combined)")
+    # mean5 above is a tracking number; final_v9 projects the published-subscore weighting
+    # fitted to three board rounds. Both are computed on LOCAL data, so neither is a board
+    # prediction -- the board's errors run ~1.39x ours per element.
+    print("    " + final_v9.report(subs) + "  [local data, not a board prediction]")
 
     ext = sum(os.path.getsize(os.path.join(r_, f)) for r_, _, fs in os.walk(work) for f in fs)
     print(f"OK: extracted {ext/1e6:.2f} MB < 256 MB cap")

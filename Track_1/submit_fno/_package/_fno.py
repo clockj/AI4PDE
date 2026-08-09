@@ -44,16 +44,26 @@ class SpectralConv2d(nn.Module):
 
 class FNO2d(nn.Module):
     def __init__(self, width=24, modes_y=8, modes_x=12, n_layers=4, var_head=True,
-                 extra_ch=0):
+                 extra_ch=0, var_mlp=False, lift_mlp=False, point_mlp=False):
         super().__init__()
-        self.lift = nn.Conv2d(CH + extra_ch + 2, width, 1)
+        cin = CH + extra_ch + 2
+        self.lift = (nn.Sequential(nn.Conv2d(cin, 128, 1), nn.GELU(), nn.Conv2d(128, width, 1))
+                     if lift_mlp else nn.Conv2d(cin, width, 1))
         self.spec = nn.ModuleList(
             [SpectralConv2d(width, modes_y, modes_x) for _ in range(n_layers)])
-        self.point = nn.ModuleList([nn.Conv2d(width, width, 1) for _ in range(n_layers)])
+        self.point = nn.ModuleList([
+            nn.Sequential(nn.Conv2d(width, 128, 1), nn.GELU(), nn.Conv2d(128, width, 1))
+            if point_mlp else nn.Conv2d(width, width, 1) for _ in range(n_layers)])
         self.norm = nn.ModuleList([nn.GroupNorm(8, width) for _ in range(n_layers)])
         self.head_field = nn.Sequential(nn.Conv2d(width, 128, 1), nn.GELU(),
                                         nn.Conv2d(128, CH, 1))
-        self.head_logstd = nn.Conv2d(width, C, 1) if var_head else None
+        if not var_head:
+            self.head_logstd = None
+        elif var_mlp:
+            self.head_logstd = nn.Sequential(nn.Conv2d(width, 128, 1), nn.GELU(),
+                                             nn.Conv2d(128, C, 1))
+        else:
+            self.head_logstd = nn.Conv2d(width, C, 1)
         yy, xx = torch.meshgrid(torch.linspace(-1, 1, H), torch.linspace(-1, 1, W),
                                 indexing="ij")
         self.register_buffer("grid", torch.stack([xx, yy])[None])
@@ -66,10 +76,137 @@ class FNO2d(nn.Module):
         return self.head_field(h), logstd
 
 
+class StackedFNO(nn.Module):
+    """K identically-shaped FNO2d members evaluated in ONE invocation.
+
+    Board `time_score` tracks the number of sequential model invocations, not local wall time:
+    round 9's 8-member package was FASTER locally than the single U-Net (2.211 ms against
+    2.648) and 2.09 ms slower on the board. Members are ~0.42 board ms each, and this removes
+    all but one per architecture group.
+
+    Every op the members use is either pointwise in the channel axis or a per-member matmul,
+    so a member axis folds into `groups`:
+
+      * 1x1 convs   -> one grouped conv, weights concatenated along the output axis;
+      * GroupNorm(8, width) per member -> GroupNorm(8*K, K*width). The groups of a GroupNorm
+        are contiguous channel blocks, so 8K groups over K*width channels partitions exactly
+        as K separate 8-group norms do;
+      * the spectral matmul  "bixy,ioxy->boxy"  ->  "bkixy,kioxy->bkoxy".
+
+    `forward` returns the member MEAN of the field and, in the second slot,
+    log(mean(exp(logstd))) -- so the sigma the caller recovers is the mean of the members'
+    sigmas, exactly as the sequential loop computed it, and `predict_fno` needs no special
+    case. `n_members` lets `predict_fno` weight a group by its size.
+    """
+
+    def __init__(self, members):
+        super().__init__()
+        first = members[0]
+        self.n_members = k = len(members)
+        for m in members[1:]:
+            assert m.state_dict().keys() == first.state_dict().keys(), "shape mismatch"
+            for key, v in m.state_dict().items():
+                assert v.shape == first.state_dict()[key].shape, f"{key} shape mismatch"
+
+        self.n_layers = len(first.spec)
+        self.my, self.mx = first.spec[0].my, first.spec[0].mx
+        lift_last = first.lift[-1] if isinstance(first.lift, nn.Sequential) else first.lift
+        self.width = lift_last.out_channels
+        self.register_buffer("grid", first.grid.clone())
+
+        def grouped(convs):
+            """K same-shape 1x1 convs -> one grouped 1x1 conv."""
+            cin, cout = convs[0].in_channels, convs[0].out_channels
+            g = nn.Conv2d(k * cin, k * cout, 1, groups=k)
+            g.weight.data.copy_(torch.cat([c.weight.data for c in convs], 0))
+            g.bias.data.copy_(torch.cat([c.bias.data for c in convs], 0))
+            return g
+
+        def gnorm(norms):
+            g = nn.GroupNorm(8 * k, k * self.width, eps=norms[0].eps)
+            g.weight.data.copy_(torch.cat([n.weight.data for n in norms], 0))
+            g.bias.data.copy_(torch.cat([n.bias.data for n in norms], 0))
+            return g
+
+        if isinstance(first.lift, nn.Sequential):        # --lift-mlp
+            self.lift = nn.Sequential(grouped([m.lift[0] for m in members]), nn.GELU(),
+                                      grouped([m.lift[2] for m in members]))
+        else:
+            self.lift = grouped([m.lift for m in members])
+        self.point = nn.ModuleList([
+            nn.Sequential(grouped([m.point[i][0] for m in members]), nn.GELU(),
+                          grouped([m.point[i][2] for m in members]))
+            if isinstance(first.point[i], nn.Sequential) else
+            grouped([m.point[i] for m in members]) for i in range(self.n_layers)])
+        self.norm = nn.ModuleList([gnorm([m.norm[i] for m in members])
+                                   for i in range(self.n_layers)])
+        for j in (1, 2):
+            w = torch.stack([torch.stack([getattr(m.spec[i], f"w{j}").data
+                                          for m in members]) for i in range(self.n_layers)])
+            self.register_parameter(f"w{j}", nn.Parameter(w))   # (L, K, wid, wid, my, mx, 2)
+
+        self.head_field = nn.Sequential(grouped([m.head_field[0] for m in members]), nn.GELU(),
+                                        grouped([m.head_field[2] for m in members]))
+        h0 = first.head_logstd
+        if h0 is None:
+            self.head_logstd = None
+        elif isinstance(h0, nn.Sequential):
+            self.head_logstd = nn.Sequential(grouped([m.head_logstd[0] for m in members]),
+                                             nn.GELU(),
+                                             grouped([m.head_logstd[2] for m in members]))
+        else:
+            self.head_logstd = grouped([m.head_logstd for m in members])
+
+    def _spec(self, i, x):
+        b, _, h, w = x.shape
+        k, wid = self.n_members, self.width
+        ft = torch.fft.rfft2(x).reshape(b, k, wid, h, w // 2 + 1)
+        out = torch.zeros(b, k, wid, h, w // 2 + 1, dtype=torch.cfloat, device=x.device)
+        my, mx = min(self.my, h // 2), min(self.mx, w // 2 + 1)
+        for sl, wp in ((slice(None, my), self.w1), (slice(-my, None), self.w2)):
+            wc = torch.view_as_complex(wp[i])[:, :, :, :my, :mx]
+            out[:, :, :, sl, :mx] = torch.einsum("bkixy,kioxy->bkoxy",
+                                                 ft[:, :, :, sl, :mx], wc)
+        return torch.fft.irfft2(out.reshape(b, k * wid, h, w // 2 + 1), s=(h, w))
+
+    def forward(self, prev, detach_var: bool = False):
+        b, k = len(prev), self.n_members
+        x = torch.cat([prev, self.grid.expand(b, -1, -1, -1)], 1)
+        h = self.lift(x.repeat(1, k, 1, 1))
+        for i in range(self.n_layers):
+            h = h + torch.nn.functional.gelu(self.norm[i](self._spec(i, h) + self.point[i](h)))
+        field = self.head_field(h).reshape(b, k, CH, *h.shape[-2:]).mean(1)
+        logstd = None
+        if self.head_logstd is not None:
+            ls = self.head_logstd(h).reshape(b, k, C, *h.shape[-2:])
+            # Mean of the members' SIGMAS, returned as a log so the caller's exp recovers it.
+            # The clamp matches predict_fno's, whose second application is then a no-op.
+            logstd = ls.clamp(-8.0, 2.0).exp().mean(1).log()
+        return field, logstd
+
+
+def fuse(models):
+    """Group `models` by architecture and fuse each group. Order-preserving by first sight.
+
+    A package of 5x width-24 + w48 + m1220 + w64 goes from 8 invocations to 4.
+    """
+    groups = {}
+    for m in models:
+        # Keyed on the full parameter signature rather than a few attributes, so any
+        # architecture flag (var_mlp, lift_mlp, ...) separates groups automatically.
+        key = tuple((k, tuple(v.shape)) for k, v in m.state_dict().items())
+        groups.setdefault(key, []).append(m)
+    return [g[0] if len(g) == 1 else StackedFNO(g).to(g[0].grid.device).eval()
+            for g in groups.values()]
+
+
 def load(path: str, device: str):
     blob = torch.load(path, map_location=device)
     m = FNO2d(blob.get("width", 24), blob.get("modes_y", 8), blob.get("modes_x", 12),
-              blob.get("n_layers", 4), blob.get("var_head", True)).to(device)
+              blob.get("n_layers", 4), blob.get("var_head", True),
+              var_mlp=blob.get("var_mlp", False),
+              lift_mlp=blob.get("lift_mlp", False),
+              point_mlp=blob.get("point_mlp", False)).to(device)
     m.load_state_dict(blob["model_state_dict"])
     m.eval()
     return m
@@ -77,7 +214,8 @@ def load(path: str, device: str):
 
 @torch.no_grad()
 def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
-                batch: int = 64, out: np.ndarray | None = None) -> np.ndarray:
+                batch: int = 64, out: np.ndarray | None = None,
+                sigma_out: np.ndarray | None = None) -> np.ndarray:
     """(N,20,32,64,>=2) raw physical -> (N,20,32,64,2) raw physical.
 
     predict() is TIMED, and at ~0.1 ms/window of actual compute this function is dominated by
@@ -106,22 +244,34 @@ def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
         # ONE host transfer and one output write. At 0.109 ms of compute against ~1.27 ms of
         # fixed API overhead, that is what makes ensembling affordable at all.
         y = sig = None
+        total = 0
         for m in models:
+            # A StackedFNO already averaged over the members it fused, so it stands in for
+            # `n_members` of them and must be weighted accordingly -- otherwise fusing would
+            # silently change the ensemble's mixture.
+            nm = getattr(m, "n_members", 1)
+            total += nm
             raw, logstd = m(prev)
-            yi = raw.reshape(len(xb), T_OUT, C, H, W).permute(0, 1, 3, 4, 2)
+            yi = raw.reshape(len(xb), T_OUT, C, H, W).permute(0, 1, 3, 4, 2) * nm
             y = yi if y is None else y + yi
             if logstd is not None:
-                si = logstd.clamp(-8.0, 2.0).exp().permute(0, 2, 3, 1).unsqueeze(1)
+                si = logstd.clamp(-8.0, 2.0).exp().permute(0, 2, 3, 1).unsqueeze(1) * nm
                 sig = si if sig is None else sig + si
-        if len(models) > 1:
-            y = y / len(models)
+        if total > 1:
+            y = y / total
             if sig is not None:
-                sig = sig / len(models)
+                sig = sig / total
 
         if sig is not None and alpha > 0:
             m_ = y.mean(1, keepdim=True)
             f_ = y - m_
             s_ = y.std(1, keepdim=True, unbiased=False)
             y = m_ + f_ * ((alpha * sig + (1 - alpha) * s_) / (s_ + 1e-6))
+        if sigma_out is not None and sig is not None:
+            # Physical units, (B, 1, H, W, 2). The SPS band is scaled by this: predicted sigma
+            # correlates 0.551 with per-element |error| after the per-element mean is removed,
+            # against 0.482 for ensemble spread, so it says which WINDOWS need a wider
+            # interval. Costs one small copy -- 5.5 MB at N=336 against the field's 165 MB.
+            sigma_out[i:i + batch] = (sig * std).float().cpu().numpy()
         dst[i:i + batch, ..., :2] = (y * std + mean).float().cpu().numpy()
     return dst

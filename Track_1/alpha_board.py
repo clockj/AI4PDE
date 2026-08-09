@@ -5,9 +5,10 @@
 `alpha_v9.py` swept ALPHA on local errors and kept 0.75. Two things have changed since, and
 both push the same way:
 
-1. **time_score is a constant.** Two board submissions 2.07x apart in local latency returned
-   91.697 and 91.726. It does not respond to anything we do, so it drops out of the objective
-   entirely rather than sitting in it as a fixed 95.9 that flatters the local mean.
+1. **time_score does not respond to ALPHA.** ALPHA is one array multiply inside a kernel that
+   already runs, so it drops out of the objective. (Round 9 falsified the stronger claim that
+   board time is constant in general -- it tracks the number of sequential model invocations,
+   which a sweep over ALPHA does not change.)
 
 2. **The board's per-element errors are effectively 1.39x ours** (calib_board.py, inverted from
    a measured board SPS rather than assumed). ALPHA buys TKE and pays in rel-L2 and in
@@ -16,9 +17,11 @@ both push the same way:
    term is already deep enough into its tail that a little more fluctuation costs less than it
    does locally, which moves the balance.
 
-So the objective here is the mean of the four subscores that actually respond, evaluated on the
-AoA 15-20 proxy. `time` is excluded; including a constant would only dilute every difference by
-a fifth.
+So the objective here is over the four subscores that actually respond, evaluated on the AoA
+15-20 proxy. `mean4` weights them equally, which is what rounds 6-8 optimized; `final` uses the
+round-9 weights (final_v9.py) and is the one to read. They disagree about ALPHA because mean4
+implicitly prices `tke` at 0.25 and `sps` at 0.25, where the board prices them 0.243 and 0.181
+-- and ALPHA is precisely a trade between those two.
 
 PER-METRIC CALIBRATION
 ----------------------
@@ -49,6 +52,7 @@ import sys
 
 import numpy as np
 
+import final_v9
 import sps9
 from sps9 import optimal_band, prep, sc, sps_score
 
@@ -66,6 +70,8 @@ def main() -> None:
                     default=[0.45, 0.6, 0.75, 0.9, 1.0, 1.1])
     ap.add_argument("--aoa", type=int, nargs="+", default=[15, 20])
     ap.add_argument("--f", type=float, default=F_ELEM)
+    ap.add_argument("--time-score", type=float, default=90.5066,
+                    help="board time_score for the `final` column; constant down the sweep")
     ap.add_argument("--anchor", type=float, default=0.75,
                     help="the ALPHA the board numbers were measured at; the per-metric "
                          "inflation factors are defined by this row and applied to the rest")
@@ -99,11 +105,11 @@ def main() -> None:
     print(f"objective: AoA {args.aoa} proxy. per-metric inflation anchored at alpha="
           f"{args.anchor}: " + "  ".join(f"{k} {v:.3f}x" for k, v in fac.items())
           + f"   element tail {args.f:.2f}x")
-    print("time excluded: the board returned 91.697 and 91.726 for models 2.07x apart in "
-          "local latency")
+    print(f"`final` uses the round-9 weights with time_score = {args.time_score:.3f}; ALPHA "
+          f"does not change the invocation count, so time is constant DOWN this column")
 
     hdr = (f"{'alpha':>5s} | {'relL2':>7s} {'TKE':>7s} {'MVPE':>7s} | {'rel':>6s} {'tke':>6s} "
-           f"{'mvpe':>6s} {'sps':>6s} | {'mean4':>7s}")
+           f"{'mvpe':>6s} {'sps':>6s} | {'mean4':>7s} {'final':>7s}")
     print(hdr)
     print("-" * len(hdr))
 
@@ -115,8 +121,9 @@ def main() -> None:
         s = sps_score(f * Au, a_b, su, nu, band)
         four = [sc.score_error(r), sc.score_error(k), sc.score_error(mv), s]
         star = "  <-- anchor" if alpha == args.anchor else ""
+        fin = final_v9.predict(four[:3] + [args.time_score, four[3]])[0]
         print(f"{alpha:5.2f} | {r:7.4f} {k:7.4f} {mv:7.4f} | {four[0]:6.2f} {four[1]:6.2f} "
-              f"{four[2]:6.2f} {four[3]:6.2f} | {np.mean(four):7.3f}{star}")
+              f"{four[2]:6.2f} {four[3]:6.2f} | {np.mean(four):7.3f} {fin:7.3f}{star}")
 
 
 if __name__ == "__main__":

@@ -669,9 +669,15 @@ submitted this round; the work was reading three board rounds and the literature
   **sps +2.22 (45 % of the gain)**, tke +0.75 (21 %), rel +0.64 (19 %), mvpe +0.57 (15 %).
   → **SPS pays 2.3× more per unit of error than any other channel** despite its 0.181 weight,
   because interval containment is far steeper than `100/(1+0.5e)`. The band is closed; reach SPS
-  through accuracy. → **TKE is a trap**: worst-looking subscore, largest accuracy weight, but it
-  moves only 0.75 per 10 % and sits near its 0.47 PIV-sampling floor — ≤ +0.6 `final` remains
-  there for anyone. → Because SPS scores per-element containment, **tail reduction beats mean
+  through accuracy. → ~~**TKE is a trap**: it moves only 0.75 per 10 % and sits near its 0.47
+  PIV-sampling floor — ≤ +0.6 `final` remains there for anyone.~~ **FALSIFIED in round 10** —
+  the arithmetic was right and the conclusion was not. 10 % of a 0.483 error is a small step
+  down a long curve: an oracle per-pixel variance field is worth **+7.70 `final`** and the
+  first quarter of that gap **+1.21** (`Track_1/tke_branch_v9.py`). The 0.47 "floor" never was
+  one — the head is at 0.483, *below* the per-trajectory-mean estimator (0.560) and below the
+  disagreement between two independent 20-frame realizations (0.783), which is impossible for
+  a quantity limited by sampling noise. TKE is the **largest measured lever**, not a trap.
+  → Because SPS scores per-element containment, **tail reduction beats mean
   reduction**: prefer robustness and regularization over capacity and average-case accuracy.
 * **Scale**: 80.1 → 81.0 needs ~10 % error reduction; → 82.0 needs ~21 %. Going from 3 to 8
   ensemble members bought ~1.6 %.
@@ -684,6 +690,107 @@ submitted this round; the work was reading three board rounds and the literature
 * **Untapped data, free**: `model.py:load_trajectories` does `[:, ::2, ::2]` on **64×128** raw
   frames. Phase (0,0) is the scored grid; phases (0,1), (1,0), (1,1) are three more *real* 32×64
   views we discard — a 4× augmentation in the regime where capacity is already harmful.
+
+### Round 10 (2026-08-08) — the variance branch, opened and largely closed
+
+Report: `Track_1/report/report_20260808_round10.md`. Nothing submitted; the zip is still the
+Aug 6 build. Baseline for every number here: **wfinal 81.895 ± 0.055** over 4 held-out seeds on
+the AoA 15–20 proxy (`compare_v9.py --aoa 15 20`; `wfinal` = round-9 weights on local errors).
+
+* **The three pieces of a prediction, priced** (`Track_1/oracle_split_v9.py`). Splitting
+  `y = mean_t(y) + σ(y)·shape(y)` and handing the model the target's value for one piece at a
+  time: **σ +7.71**, time-mean +2.72, shape (phase-resolved fluctuation) **+1.95**, everything
+  +21.04. → **The hardest part of the problem is worth the least.** Replacing `shape` cuts
+  rel-L2 by 34% and buys +1.95; replacing σ leaves rel-L2 *unchanged* and buys +7.71. Near
+  e ≈ 0.1 the `100/(1+0.5e)` curve is flat — **stop optimizing rel-L2**, TKE and SPS carry the
+  response.
+* **Oracles are upper bounds, not forecasts.** The +7.71 σ headroom yielded **+0.08** in
+  practice across five arms. Quote the oracle to rank directions, never to predict a gain.
+* **The variance-trunk relationship is not monotone.** Fixed field, sigma swapped, TKE:
+  `--detach-var` 0.5625 (0% of the trunk shaped by variance) / shipped shared trunk 0.4851 /
+  **`--var-mlp` 0.4660** / `--lam-f 0` 0.4892 (100%). **The field task is a useful auxiliary for
+  the variance task**; a trunk trained on variance alone loses structure the head needs. The
+  shipped arrangement is already optimal on that axis.
+* **ADOPTED — `--var-mlp`**: give `head_logstd` the field head's 128-wide MLP instead of a
+  single 1×1 conv (a *linear* probe on a 24-channel trunk). 3 408 parameters, no extra
+  invocation. 3 seeds **81.998 ± 0.023 vs 81.895 ± 0.055, +0.103 at 3.4σ**; 3-vs-3 ensemble
+  **78.387 vs 78.305, +0.082**. rel-L2, TKE and SPS all improve — no hidden trade.
+* **Closed, measured**: **`--lam-t`** — tripling the TKE loss weight moves TKE by 0.0001 and
+  costs rel-L2 (the head is not under-trained). **`--detach-var`** — best rel-L2 of any arm,
+  worst TKE (0.5625, no better than a trajectory-constant predictor); reproduces round 4's
+  Run H on the U-Net. **`--lam-f 0`** (separate variance network) — worse than the shared
+  trunk, so the extra inference invocation buys nothing. **Post-hoc sigma blending**
+  (`sigma_blend_v9.py`, head + field std + input std + per-trajectory mean, log-space LSQ
+  fitted on val_seen) — **−0.311** out-of-sample; third null for post-hoc sigma correction.
+* **ALPHA re-swept under the round-9 weights**, held-out so it is a clean control: 0.90 beats
+  0.75 by **+0.041** on the baseline and **+0.070** on the `--var-mlp` pair, both inside the
+  0.05 noise floor. **ALPHA stays 0.75.**
+* **`--var-mlp`'s gain is diluted twice, structurally.** ALPHA 0.75 discards a quarter of any
+  σ_head improvement by construction (`0.75·σ_head + 0.25·std_t(field)`), and ensembling
+  averages sigma across members before per-member head quality matters. That is why a 3.9%
+  fixed-field TKE cut becomes +0.08 at the ensemble.
+* **`train2.py`'s argparse defaults are NOT the shipped recipe.** Every shipped member uses
+  `--lam-v 0.3 --lam-t 0.15 --alpha-train 0.0`; the defaults are 1.0 / 0.5 / **1.0**.
+  `--alpha-train 1.0` computes the FIELD loss on the sigma-rescaled field, so the field head
+  chases a target an untrained variance head is distorting — it collapses the model to rel-L2
+  0.19 against 0.112. Three arms were lost to this. **Read the recipe off `fno_grad.pth`'s
+  stored `config`, and keep a no-flags guard arm as the first line of any queue.**
+* **WP1 built, verified, not shipped.** `_fno.py:StackedFNO` + `fuse()` collapse same-shape
+  members into one invocation (7 members → 4), exact to **1.5e-8** with TF32 off. But it is
+  0.35 ms/window *slower* locally, and its +0.07 rests on the round-9 inference that board time
+  counts sequential invocations — one data point. Revisit when a second board round settles it.
+* New tooling: **`final_v9.py`** (round-9 weighting as code, returns midpoint + admissible
+  range, self-checks to 1e-13; wired into `compare_v9`/`ens_v9`/`alpha_board`/`validate_strict`
+  — the falsified `mean5 + 0.73` is gone), `tke_branch_v9.py`, `oracle_split_v9.py`,
+  `sigma_blend_v9.py`, `unet/runq.sh` + `queue.txt` (editable-while-running training queue).
+  `train2.py` gains `--phases`, `--aoa-boost`, `--aoa-hi`, `--aoa-only`, `--var-mlp`;
+  `model.py` gains `phases=` on `load_trajectories` (phase (0,0) verified bit-identical to the
+  old `[:, ::2, ::2]`) and `trajectory_names`.
+
+### Round 10b (2026-08-08 afternoon) — the band reopened, and the boundary/trunk rule
+
+* **ADOPTED — `--lift-mlp`**, and the rule behind it. `lift` was `Conv2d(42, 24, 1)`: a LINEAR
+  compression of the whole 20-frame input before the first spectral block. Giving it a hidden
+  layer is worth **+0.076**, and it is **additive with `--var-mlp`**: together **+0.164** at
+  5.9σ, **+0.146** at the 3-vs-3 ensemble, for 10 976 parameters.
+  → **`--point-mlp` FAILS (−0.379).** Same linear 1×1 shape, four of them, but `point` is
+  INSIDE the trunk and its training loss drops much further (field 0.052 vs 0.067). So the rule
+  is **capacity at the BOUNDARIES helps, capacity in the TRUNK hurts** — which is round 8's
+  capacity result seen from the other side, and the two now agree exactly.
+* **Width is an interior optimum**, tested downward for the first time: w16 81.865 < **w24
+  82.059** > w48 81.451. (w20 is untestable — `GroupNorm(8, 20)` needs divisibility.) The
+  round-10 recipe does not rescue w48 (81.451 vs the old recipe's 81.536) and does nothing for
+  w64 (81.359 vs 81.361). **The architecture search is finished.**
+* **THE SPS BAND WAS NOT CLOSED — round 6 closed it against the wrong proxy.** Ensemble spread
+  correlates with per-element |error| at only **0.347** after the per-element mean is removed;
+  the **variance head's own sigma correlates 0.551**. `half = base·(σ/σ_ref)^p`:
+  - **The obvious experiment reproduces round 6's negative and is WRONG.** Fitting `base` at
+    p = 0 makes every p ≠ 0 worse in-sample *by construction*. Refit `base` per p — deflate the
+    errors by `r**p`, since `|E| <= base·r**p` is exactly `|E|/r**p <= base` — and **p ≈ 0.45
+    wins in BOTH directions** (in-sample 44.538 → 44.828, out 39.886 → 40.414).
+  - **Smoothing the base is a second, separate gain.** It has 81 920 free parameters fitted
+    from ~126 windows. A box blur over (T,H,W) cannot be selected in-sample (the unsmoothed
+    band IS the in-sample optimum), so use leave-one-**TRAJECTORY**-out CV inside the fitting
+    split: it picks k = 3, which is independently best on val_unseen.
+  - **Total +0.729 sps = +0.132 `final`, no retraining.** `band.npy` → `band.npz`
+    (`base`, `sigma_ref`, `p`); `predict_fno(..., sigma_out=)` exposes sigma.
+  - Watch out: `fit_band.py`'s "board proxy 1.00x" column scores against **uninflated** errors
+    and made an all-AoA fit look worth +6.9 sps. At a matched 1.39× the AoA 15-20 fit still
+    wins. **`--fit-aoa 15 20` stands.**
+* **WP1 fusion SHIPPED, and the earlier decision to shelve it was wrong.** "Certain local cost
+  vs uncertain board gain" compares a local number to a board number. Regress the three v9
+  rounds instead: board ms ~ **invocations** fits with residuals **±0.4 ms** (slope +0.316);
+  board ms ~ local ms fits at ±1.3 ms. Under the better model 8 → 4 invocations is **+0.05**;
+  under the worse one fusing costs −0.007. `_fno.fuse()` is score-identical (78.4925 vs
+  78.4927) and exact to 1.5e-8 with TF32 off. **Extra same-architecture members are now free in
+  invocation count.**
+* **`w48` is out of the package.** Under fusion it earns back its own invocation group and no
+  more (78.667 with, 78.668 without). Final: **5×w24 + m1220 + w64, 3 invocations.**
+* **All-data training does NOT deflate the variance head**: mean sigma 0.00891 (all-data) vs
+  0.00890 (held-out) on val_seen. A stored `sigma_ref` is therefore safe.
+* Round-10 package projection, like-for-like against the 80.115 board: recipe+composition
+  **+0.112**, fusion **+0.067**, band **+0.132** → **≈80.43**. The fusion term is the fragile
+  one; if board time really tracks local time it becomes −0.007 and the package lands ≈80.36.
 
 ### Physics losses: rejected, measured
 

@@ -1,0 +1,16 @@
+train: 74 trajectory-phases (1 phase(s)) -> 12040 windows, 8 held out
+config: {'data': '/home/clockj/RealPDE/train_real/train_real', 'epochs': 150, 'batch': 32, 'stride': 5, 'width': 20, 'lr': 0.0002, 'out': 'fno_w20.pth', 'var_head': True, 'var_mlp': True, 'lift_mlp': True, 'point_mlp': False, 'loss': 'mse', 'alpha_train': 0.0, 'lam_f': 1.0, 'lam_v': 0.3, 'lam_t': 0.15, 'w_mean': 1.0, 'lam_p': 0.0, 'detach_var': False, 'aug_scale': 0.0, 'aug_noise': 0.0, 'norm': 'real', 'ctx': 20, 'hist': False, 'swa': 0, 'arch': 'fno', 'modes_y': 8, 'modes_x': 12, 'n_layers': 4, 'p': 256, 'lam_div': 0.0, 'lam_vort': 0.0, 'lam_grad': 1.0, 'lam_spec': 0.0, 'init': '', 'chan_pow': 0.0, 'phases': 1, 'aoa_boost': 1.0, 'aoa_hi': [15, 20], 'aoa_only': False, 'all_data': False}
+Traceback (most recent call last):
+  File "/home/clockj/RealPDE/AI4PDE/Track_1/unet/train2.py", line 476, in <module>
+    main()
+  File "/home/clockj/RealPDE/AI4PDE/Track_1/unet/train2.py", line 240, in main
+    model = build(args.arch, args.width, args.var_head,
+  File "/home/clockj/RealPDE/AI4PDE/Track_1/unet/models_alt.py", line 238, in build
+    return FNO2d(width, modes_y, modes_x, n_layers, var_head, extra_ch, var_mlp, lift_mlp,
+  File "/home/clockj/RealPDE/AI4PDE/Track_1/unet/models_alt.py", line 77, in __init__
+    self.norm = nn.ModuleList([nn.GroupNorm(8, width) for _ in range(n_layers)])
+  File "/home/clockj/RealPDE/AI4PDE/Track_1/unet/models_alt.py", line 77, in <listcomp>
+    self.norm = nn.ModuleList([nn.GroupNorm(8, width) for _ in range(n_layers)])
+  File "/home/clockj/miniconda3/envs/realpde/lib/python3.10/site-packages/torch/nn/modules/normalization.py", line 266, in __init__
+    raise ValueError('num_channels must be divisible by num_groups')
+ValueError: num_channels must be divisible by num_groups

@@ -10,6 +10,12 @@ and it is no longer that mean (the 2026-08-05 board reported 79.733 where its ow
 subscores average 78.999), so mean5 is a tracking proxy, not the leaderboard's number.  Every
 subscore still moves final_score monotonically, so it remains a usable ranking signal.
 
+`wfinal` applies the weighting fitted to three board rounds (final_v9.py) instead of weighting
+the five equally, which is the better ranking signal of the two: it prices `time` at ~0.07
+rather than 0.20 and `sps` at ~0.18.  It is computed from LOCAL errors, so it is a ranking
+number, not a board prediction -- the board runs ~1.39x our per-element error.  Use ens_v9.py,
+which inflates, when you want the projection itself.
+
 Run-to-run sigma for this recipe is 0.015 in mean5, from three seeds of fno_grad.  A difference
 under ~0.04 is not a result.
 """
@@ -21,6 +27,7 @@ import sys
 
 import numpy as np
 
+import final_v9
 import sps9
 from sps9 import optimal_band, prep, sc, sps_score
 
@@ -62,7 +69,7 @@ def main() -> None:
         print(f"val_unseen restricted to AoA {args.aoa}: {int(sel.sum())}/{len(aoa)} windows")
 
     hdr = (f"{'checkpoint':22s} {'relL2':>7s} {'TKE':>7s} {'MVPE':>7s} | {'rel':>6s} {'tke':>6s} "
-           f"{'mvpe':>6s} {'time':>6s} {'sps':>6s} | {'mean5':>7s}")
+           f"{'mvpe':>6s} {'time':>6s} {'sps':>6s} | {'mean5':>7s} {'wfinal':>7s}")
     print(hdr)
     print("-" * len(hdr))
     for c in args.ckpt:
@@ -83,7 +90,7 @@ def main() -> None:
                 sps_score(*U, band)]
         print(f"{os.path.basename(c):22s} {r:7.4f} {k:7.4f} {mv:7.4f} | {five[0]:6.2f} "
               f"{five[1]:6.2f} {five[2]:6.2f} {five[3]:6.2f} {five[4]:6.2f} | "
-              f"{np.mean(five):7.3f}")
+              f"{np.mean(five):7.3f} {final_v9.predict(five)[0]:7.3f}")
 
 
 if __name__ == "__main__":

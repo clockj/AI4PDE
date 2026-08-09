@@ -1,7 +1,11 @@
-# Track 1 submission — 8-member FNO ensemble, velocity-gradient matching (kit v9)
+# Track 1 submission — 7-member FNO ensemble, 3 fused invocations (kit v9, round 10)
 
 An honest forecaster. Reads only its own input window; would score identically if the evaluator
 called it one window at a time. `validate_strict.py` asserts that as a test.
+
+Round 10 changed three things: `--var-mlp --lift-mlp` in the recipe (+0.112), `_fno.fuse()`
+collapsing same-architecture members into one invocation each (+0.067), and a sigma-adaptive
+smoothed SPS band (+0.132). See `../report/report_20260808_round10.md`.
 
 ## Build
 
@@ -11,25 +15,38 @@ expected board score.
 **Held-out (reportable).** Every local number in this file comes from here.
 
 ```bash
-M="unet/fno_grad.pth unet/fno_grad_s2.pth unet/fno_grad_s3.pth"
-python submit_fno/fit_band.py        --ckpt $M     # writes band.npy
+M="unet/fno_vmlp_lift.pth unet/fno_vmlp_lift_s2.pth unet/fno_vl_s3.pth unet/fno_vl_s4.pth \
+   unet/fno_vl_m1220.pth unet/fno_vl_w64.pth"
+python submit_fno/fit_band.py        --ckpt $M     # writes band.npz
 python submit_fno/validate_strict.py --ckpt $M     # builds the zip, must print SUBMITTABLE
 ```
 
-**All-data, 8 diverse members (what to submit).** Same recipe, trained on all 82 real
-trajectories instead of 74. `val_seen` and `val_unseen` are both training data for these, so
-they have **no honest local score** — and, critically, no honest local *error field* either.
-`--err-ckpt` therefore points the band at the held-out models, whose errors on the same data
-are real predictions rather than memorization:
+**All-data, 7 members (what to submit).** Same recipe, trained on all 82 real trajectories
+instead of 74. `val_seen` and `val_unseen` are both training data for these, so they have **no
+honest local score** — and, critically, no honest local *error field* either. `--err-ckpt`
+therefore points the band at the held-out models, whose errors on the same data are real
+predictions rather than memorization:
 
 ```bash
-A="unet/fno_all_s1.pth unet/fno_all_s2.pth unet/fno_all_s3.pth unet/fno_all_s4.pth \
-   unet/fno_all_s5.pth unet/fno_all_w48.pth unet/fno_all_m1220.pth unet/fno_all_w64.pth"
-M="unet/fno_grad.pth unet/fno_grad_s2.pth unet/fno_grad_s3.pth \
-   unet/fno_w48.pth unet/fno_m1220.pth unet/fno_w64.pth"
+A="unet/fno_all_vl_s1.pth unet/fno_all_vl_s2.pth unet/fno_all_vl_s3.pth \
+   unet/fno_all_vl_s4.pth unet/fno_all_vl_s5.pth \
+   unet/fno_all_vl_m1220.pth unet/fno_all_vl_w64.pth"
+M="unet/fno_vmlp_lift.pth unet/fno_vmlp_lift_s2.pth unet/fno_vl_s3.pth unet/fno_vl_s4.pth \
+   unet/fno_vl_m1220.pth unet/fno_vl_w64.pth"
 python submit_fno/fit_band.py        --ckpt $A --err-ckpt $M
 python submit_fno/validate_strict.py --ckpt $A
 ```
+
+**`w48` is no longer a member.** Under fusion it earns back exactly its own invocation group
+and nothing more (78.667 with it against 78.668 without), and on the round-10 recipe it is 0.6
+behind w24 individually (81.451 against 82.059) where in round 8 it was only 0.3 behind.
+
+`--ckpt` and `--err-ckpt` both matter to `fit_band.py` now, and for different reasons: the
+error field comes from `--err-ckpt`, but `sigma_ref` — the normalizer for the per-window band —
+comes from `--ckpt`, because it has to be the scale of the models that will emit sigma at test
+time. Measured, the two agree to 0.1% (all-data mean sigma 0.00891 against held-out 0.00890 on
+val_seen), so all-data training does not deflate the variance head; the check is cheap and
+worth repeating if the recipe changes.
 
 Skipping `--err-ckpt` is the single most expensive mistake available here. The July 30 U-Net
 package did exactly that: its contaminated local rel-L2 of 0.0721 produced a band with median

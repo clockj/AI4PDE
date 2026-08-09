@@ -1,0 +1,4 @@
+train: 296 trajectory-phases (4 phase(s)) -> 48160 windows, 8 held out
+config: {'data': '/home/clockj/RealPDE/train_real/train_real', 'epochs': 150, 'batch': 32, 'stride': 5, 'width': 24, 'lr': 0.0002, 'out': 'fno_ph4_s2.pth', 'var_head': True, 'var_mlp': False, 'loss': 'mse', 'alpha_train': 0.0, 'lam_f': 1.0, 'lam_v': 0.3, 'lam_t': 0.15, 'w_mean': 1.0, 'lam_p': 0.0, 'detach_var': False, 'aug_scale': 0.0, 'aug_noise': 0.0, 'norm': 'real', 'ctx': 20, 'hist': False, 'swa': 0, 'arch': 'fno', 'modes_y': 8, 'modes_x': 12, 'n_layers': 4, 'p': 256, 'lam_div': 0.0, 'lam_vort': 0.0, 'lam_grad': 1.0, 'lam_spec': 0.0, 'init': '', 'chan_pow': 0.0, 'phases': 4, 'aoa_boost': 1.0, 'aoa_hi': [15, 20], 'aoa_only': False, 'all_data': False}
+params: 0.90M
+  epoch   0  loss 4.63101  field 0.88362  var 7.94576  tke 3.79039  probe 0.00000  div 0.79511  spec 0.00000  (26s)

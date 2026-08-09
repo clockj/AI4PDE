@@ -56,19 +56,42 @@ class FNO2d(nn.Module):
     """Fourier Neural Operator over the 32x64 grid, time folded into channels."""
 
     def __init__(self, width: int = 32, modes_y: int = 12, modes_x: int = 16,
-                 n_layers: int = 4, var_head: bool = True, extra_ch: int = 0):
+                 n_layers: int = 4, var_head: bool = True, extra_ch: int = 0,
+                 var_mlp: bool = False, lift_mlp: bool = False, point_mlp: bool = False):
         super().__init__()
-        self.lift = nn.Conv2d(CH + extra_ch + 2, width, 1)   # +2 for the coordinate grid
+        # The default lift is a single 1x1 conv: a LINEAR map from 42 channels (20 frames x
+        # u,v, plus the coordinate grid) down to width=24. The whole input window is
+        # compressed, linearly, before the first spectral block sees it. lift_mlp gives it a
+        # hidden layer -- the same fix that worked on head_logstd, at the other end.
+        cin = CH + extra_ch + 2                              # +2 for the coordinate grid
+        self.lift = (nn.Sequential(nn.Conv2d(cin, 128, 1), nn.GELU(), nn.Conv2d(128, width, 1))
+                     if lift_mlp else nn.Conv2d(cin, width, 1))
         self.spec = nn.ModuleList(
             [SpectralConv2d(width, modes_y, modes_x) for _ in range(n_layers)])
-        self.point = nn.ModuleList([nn.Conv2d(width, width, 1) for _ in range(n_layers)])
+        # The pointwise ("local") half of each FNO block, complementing the spectral half. It
+        # is linear by default -- the third 1x1 bottleneck of the same shape as `lift` and
+        # `head_logstd`, and the only one that repeats per layer.
+        self.point = nn.ModuleList([
+            nn.Sequential(nn.Conv2d(width, 128, 1), nn.GELU(), nn.Conv2d(128, width, 1))
+            if point_mlp else nn.Conv2d(width, width, 1) for _ in range(n_layers)])
         self.norm = nn.ModuleList([nn.GroupNorm(8, width) for _ in range(n_layers)])
         self.head_field = nn.Sequential(nn.Conv2d(width, 128, 1), nn.GELU(),
                                         nn.Conv2d(128, CH, 1))
-        self.head_logstd = nn.Conv2d(width, C, 1) if var_head else None
+        # The default logstd readout is a single 1x1 conv -- a LINEAR probe on a 24-channel
+        # trunk, against the field head's 128-wide MLP. var_mlp gives the two heads the same
+        # shape. Worth trying because tke_branch_v9.py prices a 25% closing of the sigma gap
+        # at +1.2 final, which is the largest single lever measured.
+        if not var_head:
+            self.head_logstd = None
+        elif var_mlp:
+            self.head_logstd = nn.Sequential(nn.Conv2d(width, 128, 1), nn.GELU(),
+                                             nn.Conv2d(128, C, 1))
+        else:
+            self.head_logstd = nn.Conv2d(width, C, 1)
         if self.head_logstd is not None:
-            nn.init.zeros_(self.head_logstd.weight)
-            nn.init.constant_(self.head_logstd.bias, float(np.log(0.3)))
+            last = self.head_logstd[-1] if var_mlp else self.head_logstd
+            nn.init.zeros_(last.weight)
+            nn.init.constant_(last.bias, float(np.log(0.3)))
         yy, xx = torch.meshgrid(torch.linspace(-1, 1, H), torch.linspace(-1, 1, W),
                                 indexing="ij")
         self.register_buffer("grid", torch.stack([xx, yy])[None])
@@ -205,13 +228,15 @@ def radial_index(h: int, w: int, device) -> tuple[torch.Tensor, int]:
 
 
 def build(arch: str, width: int, var_head: bool, extra_ch: int, modes_y: int = 12,
-          modes_x: int = 16, n_layers: int = 4, p: int = 256):
+          modes_x: int = 16, n_layers: int = 4, p: int = 256, var_mlp: bool = False,
+          lift_mlp: bool = False, point_mlp: bool = False):
     """Factory shared by train2.py and eval_wp.run so both build identical objects."""
     from model import UNetTwoHead
     if arch == "unet":
         return UNetTwoHead(width, var_head=var_head, extra_ch=extra_ch)
     if arch == "fno":
-        return FNO2d(width, modes_y, modes_x, n_layers, var_head, extra_ch)
+        return FNO2d(width, modes_y, modes_x, n_layers, var_head, extra_ch, var_mlp, lift_mlp,
+                     point_mlp)
     if arch == "deeponet":
         return DeepONetCh(p, trunk_width=width * 2, branch_width=width,
                           var_head=var_head, extra_ch=extra_ch)

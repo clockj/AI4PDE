@@ -56,13 +56,22 @@ VAL_TRAJ = ["3750_0", "6300_10", "8850_20", "11400_20",
 K_REFINE = 3
 
 
-def load_trajectories(data_dir: str, exclude: list[str],
-                      normalize: bool = True) -> list[np.ndarray]:
-    """Return one (T, H, W, 2) float32 array per trajectory.
+PHASES_ALL = ((0, 0), (0, 1), (1, 0), (1, 1))
+
+
+def load_trajectories(data_dir: str, exclude: list[str], normalize: bool = True,
+                      phases: tuple[tuple[int, int], ...] = ((0, 0),)) -> list[np.ndarray]:
+    """Return one (T, H, W, 2) float32 array per (trajectory, phase).
 
     `normalize=False` returns raw physical units, which self-normalization needs: the
     per-window scale is only recoverable before the global normalizer folds every flow
     condition onto one distribution.
+
+    `phases` picks the (y, x) offsets of the ::SUB decimation. The raw frames are 64x128 and
+    the scored grid is phase (0, 0), so the other three are the SAME PIV measurement sampled
+    half a coarse cell over -- real flow at 4x the sample count, not synthetic perturbation.
+    The airfoil sits half a cell away in the shifted phases, which is the risk: it is a
+    sub-pixel translation of the geometry, and the network has to absorb it.
     """
     import h5py  # local: absent from the evaluation container, training-only dependency
 
@@ -71,11 +80,27 @@ def load_trajectories(data_dir: str, exclude: list[str],
         if os.path.basename(path)[:-3] in exclude:
             continue
         with h5py.File(path, "r") as f:
-            u = f["u"][:, ::SUB, ::SUB].astype(np.float32)
-            v = f["v"][:, ::SUB, ::SUB].astype(np.float32)
-        d = np.stack([u, v], -1)
-        out.append((d - MEAN) / STD if normalize else d)
+            # Read once at full resolution and slice per phase; re-reading the file four
+            # times costs more than the 40 MB the raw pair holds transiently.
+            u_raw = f["u"][:].astype(np.float32)
+            v_raw = f["v"][:].astype(np.float32)
+        for py, px in phases:
+            d = np.stack([u_raw[:, py::SUB, px::SUB], v_raw[:, py::SUB, px::SUB]], -1)
+            out.append((d - MEAN) / STD if normalize else d)
     return out
+
+
+def trajectory_names(data_dir: str, exclude: list[str],
+                     phases: tuple[tuple[int, int], ...] = ((0, 0),)) -> list[str]:
+    """The `<Re>_<AoA>` stem of each array `load_trajectories` returns, in the same order.
+
+    Same glob, same sort, same phase loop -- so index i lines up with `trajs[i]`. Kept as a
+    separate function rather than a second return value so no existing caller changes.
+    """
+    return [os.path.basename(p)[:-3]
+            for p in sorted(glob.glob(os.path.join(data_dir, "*.h5")))
+            if os.path.basename(p)[:-3] not in exclude
+            for _ in phases]
 
 
 def make_windows(trajs: list[np.ndarray], stride: int) -> tuple[np.ndarray, np.ndarray]:
