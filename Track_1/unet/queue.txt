@@ -1,16 +1,14 @@
-# Round-12 campaign queue, 2026-08-29 (OSC A100). See plan/campaign_20260829.md.
-# fno_vl_s1 is being trained directly by the setup agent; everything else drains here.
-# Rebuild (R) and the FGN screen (F) interleaved so the verdict lands early.
-fno_vl_s2.pth      --var-mlp --lift-mlp
-fno_fgn1.pth       --var-mlp --lift-mlp --fgn 4 --lam-crps 0.3
-fno_vl_s3.pth      --var-mlp --lift-mlp
-fno_vl_s4.pth      --var-mlp --lift-mlp
-fno_vl_m1220.pth   --var-mlp --lift-mlp --modes-y 12 --modes-x 20
-fno_vl_w48.pth     --var-mlp --lift-mlp --width 48
-fno_vl_w64.pth     --var-mlp --lift-mlp --width 64
-# WP-3: second family. Overrides BASE via argparse last-wins: arch, width, and the U-Net's
-# own lam-grad optimum (0.3, round 4). var/lift-mlp are FNO-only and are simply ignored
-# by build() for unet, so they are left off the line.
-unet_g1.pth        --arch unet --width 64 --lam-grad 0.3
-# fno_fgn2 (--lam-crps 0.1) gets inserted here mid-run only if fgn1's training curve is not a
-# clear fail (svar must move toward ~0.36 by epoch 50; see campaign notes).
+# Gate-M queue, 15:58. Two never-run diversity arms first (round-8 pattern: each new
+# architecture is worth +0.05..0.07 at the ensemble, and both fuse into the w24 invocation
+# group for free), then the 8 all-data package members (recipe unchanged: WP-1 and WP-2 both
+# closed by measurement today; names match build_round11.sh's $A list).
+fno_all_vl_s1.pth    --var-mlp --lift-mlp --all-data
+fno_all_vl_s2.pth    --var-mlp --lift-mlp --all-data
+fno_all_vl_s3.pth    --var-mlp --lift-mlp --all-data
+fno_all_vl_s4.pth    --var-mlp --lift-mlp --all-data
+fno_all_vl_s5.pth    --var-mlp --lift-mlp --all-data
+fno_all_vl_m1220.pth --var-mlp --lift-mlp --all-data --modes-y 12 --modes-x 20
+fno_all_vl_w48.pth   --var-mlp --lift-mlp --all-data --width 48
+fno_all_vl_w64.pth   --var-mlp --lift-mlp --all-data --width 64
+# appended later if the held-out diversity arms win: all-data m0608/m1016; if WP-3 wins: unet_all
+unet_all_g1.pth      --arch unet --width 64 --lam-grad 0.3 --all-data

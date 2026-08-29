@@ -24,7 +24,7 @@ inv=$($PY - <<'EOF'
 import sys, glob
 sys.path.insert(0, "submit_fno")
 import _fno
-print(len(_fno.fuse([_fno.load(c, "cuda") for c in sorted(glob.glob("submit_fno/_package/fno*.pth"))])))
+print(len(_fno.fuse([_fno.load_any(c, "cuda") for c in sorted(glob.glob("submit_fno/_package/fno*.pth"))])))
 EOF
 )
 echo

@@ -59,8 +59,10 @@ import _fno  # noqa: E402  (must follow the sys.path insertion above)
 _BAND = os.path.join(_HERE, "band.npz")
 _BAND_LEGACY = os.path.join(_HERE, "band.npy")
 
-# fno.pth, then fno_2.pth, fno_3.pth ... as many as were packaged. Members are independent
-# seeds of the same recipe, averaged in raw field space inside _fno.predict_fno.
+# fno.pth, then fno_2.pth, fno_3.pth ... as many as were packaged, averaged in raw field space
+# inside _fno.predict_fno. The names are positional only -- build_zip.py numbers members in the
+# order it was given them and `_fno.load_any` reads each one's real architecture out of the
+# blob, so the list is a MIXED ensemble (FNO seeds, mode/width variants, and one U-Net).
 #
 # Ensembling looked NEGATIVE for four rounds (-0.07 / -0.10) because latency was accounted as
 # forward-pass-only, where a 2nd member nearly doubles the cost. End to end, the forward pass is
@@ -139,7 +141,11 @@ def _load():
     # +0.475 ms/window locally and is worth about -0.007. Favourable but not free, and the
     # real reason to take it is that it makes ADDITIONAL same-architecture members cost zero
     # invocations.
-    models = _fno.fuse([_fno.load(p, dev) for p in _CKPTS])
+    #
+    # load_any, not load: round 12's package is a MIXED ensemble (8 FNO + 1 U-Net) and the
+    # architecture is read off each checkpoint's own `arch` field, not off its packaged
+    # filename -- build_zip.py names every member fno*.pth regardless of family.
+    models = _fno.fuse([_fno.load_any(p, dev) for p in _CKPTS])
     # band.npz carries `base` (per-element half-widths), `sigma_ref` (the per-element mean of
     # the variance head's sigma over the fitting split) and `p`. The half-width actually used
     # is base * (sigma_i / sigma_ref)**p, i.e. a per-WINDOW interval: windows the model itself

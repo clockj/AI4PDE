@@ -39,3 +39,14 @@ fno_vstd.pth    --var-mlp --lift-mlp --var-in-std
 fno_ltke.pth    --var-mlp --lift-mlp --lam-v 0.05 --lam-t 1.0
 fno_ltke2.pth   --var-mlp --lift-mlp --lam-v 0.15 --lam-t 0.6
 fno_lv06.pth    --var-mlp --lift-mlp --lam-v 0.6
+fno_vl_s2.pth      --var-mlp --lift-mlp
+fno_fgn1.pth       --var-mlp --lift-mlp --fgn 4 --lam-crps 0.3
+fno_fgn1.pth       --var-mlp --lift-mlp --fgn 4 --lam-crps 0.3
+fno_vl_s3.pth      --var-mlp --lift-mlp
+fno_vl_s4.pth      --var-mlp --lift-mlp
+fno_vl_m1220.pth   --var-mlp --lift-mlp --modes-y 12 --modes-x 20
+fno_vl_w48.pth     --var-mlp --lift-mlp --width 48
+fno_vl_w64.pth     --var-mlp --lift-mlp --width 64
+unet_g1.pth        --arch unet --width 64 --lam-grad 0.3
+fno_m0608.pth        --var-mlp --lift-mlp --modes-y 6 --modes-x 8
+fno_m1016.pth        --var-mlp --lift-mlp --modes-y 10 --modes-x 16

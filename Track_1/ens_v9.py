@@ -76,7 +76,7 @@ def main() -> None:
         for c in names:
             if c not in cache:
                 p = c if os.path.isabs(c) else os.path.join(HERE, c)
-                cache[c] = _fno.load(p, dev)
+                cache[c] = _fno.load_any(p, dev)
         m = [cache[c] for c in names]
         Pf, Yf = infer(m, ds["x"], dev, args.alpha)[hi_s], ds["y"][hi_s]
         Pu, Yu = infer(m, du["x"], dev, args.alpha)[hi_u], du["y"][hi_u]

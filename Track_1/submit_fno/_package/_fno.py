@@ -1,9 +1,17 @@
-"""Self-contained FNO for the fallback path. No dependency on the training tree.
+"""Self-contained models for the submission path. No dependency on the training tree.
 
-Mirrors `Track_1/unet/models_alt.py:FNO2d` exactly -- same layer order, same parameter names --
-so `fno_div_hi.pth` loads into it unchanged. Copied rather than imported so the submission zip
-carries no path assumptions and no accidental h5py/scipy imports (neither is present in the
-Track 1 evaluation container).
+`FNO2d` mirrors `Track_1/unet/models_alt.py:FNO2d` and `UNetTwoHead` mirrors
+`Track_1/unet/model.py:UNetTwoHead` -- same layer order, same parameter names -- so a training
+checkpoint of either loads here with `strict=True`. Copied rather than imported so the
+submission zip carries no path assumptions and no accidental h5py/scipy imports (neither is
+present in the Track 1 evaluation container; `unet/model.py` imports h5py, lazily, and is
+therefore not importable material for a zip).
+
+Round 12 ships a MIXED ensemble: 8 FNO members plus one U-Net. Both classes expose the same
+`forward(prev, detach_var=False) -> (field, logstd)` contract, so `predict_fno` averages them
+without a special case and `fuse` gives the U-Net its own group (its state_dict keys differ
+from every FNO's, so it can never be folded into a StackedFNO). Use `load_any`, not `load`,
+anywhere a member list may contain one.
 """
 from __future__ import annotations
 
@@ -46,7 +54,7 @@ class FNO2d(nn.Module):
     def __init__(self, width=24, modes_y=8, modes_x=12, n_layers=4, var_head=True,
                  extra_ch=0, var_mlp=False, lift_mlp=False, point_mlp=False,
                  var_hidden=128, var_deep=False, var_in_std=False,
-                 var_pred_std=False):
+                 var_pred_std=False, fgn_dim=0):
         super().__init__()
         cin = CH + extra_ch + 2
         self.lift = (nn.Sequential(nn.Conv2d(cin, 128, 1), nn.GELU(), nn.Conv2d(128, width, 1))
@@ -69,6 +77,15 @@ class FNO2d(nn.Module):
                                              nn.Conv2d(var_hidden, C, 1))
         else:
             self.head_logstd = nn.Conv2d(var_cin, C, 1)
+        # FGN (round 12): checkpoints trained with --fgn carry per-block FiLM weights
+        # (film.i.weight, Linear(fgn_dim, 2*width, bias=False)). The deterministic predict
+        # path below never applies them -- it IS the z = 0 model, and film is zero-init and
+        # bias-free in training, so z = 0 and "film unused" are the same forward bit for bit.
+        # They are constructed here only so load_state_dict accepts the checkpoint; a sampling
+        # deployment (K draws per window) is a separate, verdict-gated change.
+        self.fgn_dim = fgn_dim
+        self.film = (nn.ModuleList([nn.Linear(fgn_dim, 2 * width, bias=False)
+                                    for _ in range(n_layers)]) if fgn_dim > 0 else None)
         yy, xx = torch.meshgrid(torch.linspace(-1, 1, H), torch.linspace(-1, 1, W),
                                 indexing="ij")
         self.register_buffer("grid", torch.stack([xx, yy])[None])
@@ -255,10 +272,59 @@ class StackedFNO(nn.Module):
         return field, logstd
 
 
-def fuse(models):
-    """Group `models` by architecture and fuse each group. Order-preserving by first sight.
+def block(cin: int, cout: int) -> nn.Sequential:
+    return nn.Sequential(
+        nn.Conv2d(cin, cout, 3, padding=1), nn.GroupNorm(8, cout), nn.GELU(),
+        nn.Conv2d(cout, cout, 3, padding=1), nn.GroupNorm(8, cout), nn.GELU(),
+    )
 
-    A package of 5x width-24 + w48 + m1220 + w64 goes from 8 invocations to 4.
+
+class UNetTwoHead(nn.Module):
+    """Copy of `Track_1/unet/model.py:UNetTwoHead` -- 1.91M parameters at width 64.
+
+    Kept byte-compatible with the training class (same submodule names inc/down1/down2/up1/up2/
+    head_field/head_logstd, same `block` composition) so `unet_all_g1.pth`'s state_dict loads
+    with strict=True and a silent architecture drift cannot masquerade as a working member. The
+    only thing left out is the training-time constant init of `head_logstd`, which exists to
+    keep the TKE loss off the clamp at step 0 and is overwritten by load_state_dict here.
+
+    Why a second family is in the package at all: on the gate-M battery, adding this one member
+    to the 7-FNO ensemble was worth +0.091 proxy / +0.123 full wfinal, against +0.019 for an
+    extra FNO seed -- round 8's "architecture beats seeds" replicating across families rather
+    than within one. It costs one invocation, since nothing here shares a shape with an FNO.
+    """
+
+    def __init__(self, width: int = 64, var_head: bool = True, extra_ch: int = 0):
+        super().__init__()
+        w1, w2, w3 = width, width * 2, width * 4
+        self.inc = block(CH + extra_ch, w1)
+        self.down1 = block(w1, w2)
+        self.down2 = block(w2, w3)
+        self.up1 = block(w3 + w2, w2)
+        self.up2 = block(w2 + w1, w1)
+        self.head_field = nn.Conv2d(w1, CH, 1)
+        self.head_logstd = nn.Conv2d(w1, C, 1) if var_head else None
+        self.pool = nn.AvgPool2d(2)
+
+    def forward(self, prev, detach_var: bool = False):
+        h1 = self.inc(prev)
+        h2 = self.down1(self.pool(h1))
+        h3 = self.down2(self.pool(h2))
+        u2 = self.up1(torch.cat([nn.functional.interpolate(h3, scale_factor=2), h2], 1))
+        u1 = self.up2(torch.cat([nn.functional.interpolate(u2, scale_factor=2), h1], 1))
+        logstd = None if self.head_logstd is None else \
+            self.head_logstd(u1.detach() if detach_var else u1)
+        return self.head_field(u1), logstd
+
+
+def fuse(models):
+    """Group `models` by architecture and fuse each FNO group. Order-preserving by first sight.
+
+    A package of 5x width-24 + w48 + m1220 + w64 goes from 8 invocations to 4, and the round-12
+    mixed package (8 FNO + 1 U-Net) from 9 to 4. Only FNO2d members are ever folded: StackedFNO
+    knows how to turn a member axis into `groups` for spectral blocks and 1x1 convs, and nothing
+    else. A U-Net's state_dict keys differ from every FNO's, so it lands in its own group and is
+    handed back untouched -- `predict_fno` then calls it as one more (field, logstd) module.
     """
     groups = {}
     for m in models:
@@ -271,12 +337,16 @@ def fuse(models):
         key = tuple((k, tuple(v.shape)) for k, v in m.state_dict().items()
                     if not (k.endswith(".w1") or k.endswith(".w2")))
         groups.setdefault(key, []).append(m)
-    return [g[0] if len(g) == 1 else StackedFNO(g).to(g[0].grid.device).eval()
-            for g in groups.values()]
+    out = []
+    for g in groups.values():
+        if len(g) == 1 or not isinstance(g[0], FNO2d):
+            out.extend(g)     # `extend`, not `append`: two U-Nets are two invocations, not one
+        else:
+            out.append(StackedFNO(g).to(g[0].grid.device).eval())
+    return out
 
 
-def load(path: str, device: str):
-    blob = torch.load(path, map_location=device)
+def _fno_from_blob(blob: dict, device: str):
     m = FNO2d(blob.get("width", 24), blob.get("modes_y", 8), blob.get("modes_x", 12),
               blob.get("n_layers", 4), blob.get("var_head", True),
               var_mlp=blob.get("var_mlp", False),
@@ -285,7 +355,36 @@ def load(path: str, device: str):
               var_hidden=blob.get("var_hidden", 128),
               var_deep=blob.get("var_deep", False),
               var_in_std=blob.get("var_in_std", False),
-              var_pred_std=blob.get("var_pred_std", False)).to(device)
+              var_pred_std=blob.get("var_pred_std", False),
+              fgn_dim=blob.get("fgn_dim", 0)).to(device)
+    m.load_state_dict(blob["model_state_dict"])
+    m.eval()
+    return m
+
+
+def load(path: str, device: str):
+    """FNO-only loader. Kept for the many analysis scripts that only ever see FNO members."""
+    return _fno_from_blob(torch.load(path, map_location=device), device)
+
+
+def load_any(path: str, device: str):
+    """Load an FNO **or** a U-Net member, dispatching on the checkpoint's own `arch` field.
+
+    train2.py stores `arch` in every blob it writes, and pre-round-12 checkpoints predate the
+    U-Net branch, so a missing key means FNO. This is the loader every member list goes
+    through -- the package, fit_band, and the endgame scripts -- because any of them may now be
+    handed the mixed list.
+    """
+    blob = torch.load(path, map_location=device)
+    if blob.get("arch", "fno") != "unet":
+        return _fno_from_blob(blob, device)
+    # extra_ch is 0 by construction: `--hist` and `--ctx > 20` both feed the trunk information
+    # from OUTSIDE the 20-frame window, which predict() never has and which would make the
+    # submission order-dependent. Refuse rather than build a model nothing can drive -- the
+    # strict load below would fail anyway, but on an unreadable shape error.
+    assert not blob.get("hist", False) and blob.get("ctx", T_IN) == T_IN, \
+        f"{path}: --hist/--ctx checkpoints are not deployable in predict()"
+    m = UNetTwoHead(blob.get("width", 64), blob.get("var_head", True)).to(device)
     m.load_state_dict(blob["model_state_dict"])
     m.eval()
     return m

@@ -80,7 +80,7 @@ def main():
     import torch
     import _fno
     dev = "cuda" if torch.cuda.is_available() else "cpu"
-    loaded = {k: _fno.load(os.path.join(HERE, v), dev) for k, v in POOL.items()}
+    loaded = {k: _fno.load_any(os.path.join(HERE, v), dev) for k, v in POOL.items()}
 
     ds = np.load(os.path.join(HERE, "val_seen.npz"))
     du = np.load(os.path.join(HERE, "val_unseen.npz"))
