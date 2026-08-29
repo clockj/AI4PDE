@@ -31,7 +31,7 @@ PROBE_X = [13, 21, 29, 37]
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", default="/home/clockj/RealPDE/train_real/train_real")
+    ap.add_argument("--data", default="/users/PAS1187/qwu/RealPDE/train_real/train_real")
     ap.add_argument("--epochs", type=int, default=150)
     ap.add_argument("--batch", type=int, default=32)
     ap.add_argument("--stride", type=int, default=5)
@@ -82,6 +82,32 @@ def main() -> None:
                          "by a quantity it never saw. --var-hidden 256 showed the head is not "
                          "capacity-limited (training `var` identical to baseline), so the "
                          "remaining lever is information, not width.")
+    ap.add_argument("--fgn", type=int, default=0,
+                    help="WP-1 (FGN, arXiv 2506.10772): number of NOISE SAMPLES drawn per step. "
+                         "0 is off and leaves training byte-for-byte as it was. Each sample is "
+                         "one extra forward pass through the SAME weights with a different z "
+                         "driving the per-block FiLM, i.e. one draw of a perturbed network -- "
+                         "noise in PARAMETER space, not output space, which is what makes the "
+                         "samples spatially coherent when the loss only sees marginals. The "
+                         "z = 0 pass is bit-identical to the plain FNO (film is zero-init and "
+                         "bias-free), so every existing loss is computed on it unchanged and "
+                         "this only ADDS the CRPS term. 4 is the screen value: the fair CRPS "
+                         "estimator needs K >= 2 and its variance falls slowly past 4.")
+    ap.add_argument("--fgn-dim", type=int, default=32,
+                    help="width of the FGN noise vector. 32 is the paper's. The FiLM maps are "
+                         "Linear(fgn_dim, 2*width, bias=False) -- 1 536 parameters per block at "
+                         "width 24 -- which is BOUNDARY capacity, the side of the "
+                         "boundary/trunk rule that has paid every time (lift +0.076, "
+                         "head_logstd +0.086, against --point-mlp -0.379).")
+    ap.add_argument("--lam-crps", type=float, default=0.3,
+                    help="weight on the fair (unbiased) CRPS of the K sample fields against the "
+                         "target, per element, in NORMALIZED units. CRPS is a proper scoring "
+                         "rule for exactly what sps measures -- whether an interval contains "
+                         "the truth -- and for the spread tke needs; log-MSE sigma is not. "
+                         "Round 11 showed lam_v REGULARIZES the TKE objective rather than "
+                         "competing with it (lam_v 0.05 / 0.3 / 0.6 -> held-out TKE 0.506 / "
+                         "0.482 / 0.487, a U-shape with the shipped value at the bottom), so "
+                         "the remaining lever is the objective's SHAPE, not its weight.")
     ap.add_argument("--loss", choices=["rel", "mse"], default="rel",
                     help="field loss. 'rel' = per-sample relative L2 in physical units (WP1.1); "
                          "'mse' = plain MSE in normalized units, as the original train.py. The "
@@ -184,7 +210,7 @@ def main() -> None:
                     help="re-weight the MSE field loss by (std_c/max std)^chan_pow. 0 is the "
                          "old behaviour, equal weight per channel in NORMALIZED units, which "
                          "weights v ~37x more than u per unit of physical error. 1 puts the "
-                         "loss in physical units, where u carries 86% of the scored error "
+                         "loss in physical units, where u carries 86%% of the scored error "
                          "energy. No effect on --loss rel, which is already physical.")
     ap.add_argument("--phases", type=int, default=1, choices=[1, 4],
                     help="number of ::2 decimation phases to train on. 1 is the scored grid "
@@ -211,6 +237,16 @@ def main() -> None:
                     help="train on ALL trajectories including the held-out ones. Submission "
                          "checkpoints only -- it makes local evaluation meaningless.")
     args = ap.parse_args()
+
+    # Store the AS-TRAINED noise width: 0 when no samples are drawn, so a checkpoint's own blob
+    # says whether it carries `film` weights and eval never has to infer it from --fgn.
+    if args.fgn <= 0:
+        args.fgn_dim = 0
+    elif args.fgn_dim <= 0:
+        raise SystemExit("--fgn > 0 needs --fgn-dim > 0; z would otherwise have no width")
+    elif args.arch != "fno":
+        # Only FNO2d takes a `z`; UNetTwoHead and DeepONetCh would raise deep inside the loop.
+        raise SystemExit(f"--fgn is implemented for --arch fno only (got {args.arch})")
 
     dev = "cuda"
     # Self-normalization needs raw physical trajectories: the per-window scale is only
@@ -270,7 +306,8 @@ def main() -> None:
                   point_mlp=args.point_mlp, var_hidden=args.var_hidden,
                   var_deep=args.var_deep,
                   var_in_std=args.var_in_std,
-                  var_pred_std=args.var_pred_std).to(dev)
+                  var_pred_std=args.var_pred_std,
+                  fgn_dim=args.fgn_dim).to(dev)
     print(f"params: {sum(p.numel() for p in model.parameters())/1e6:.2f}M", flush=True)
 
     if args.init:
@@ -316,7 +353,7 @@ def main() -> None:
         # steps over a differently-weighted pool rather than one pass over every window.
         perm = (torch.randperm(len(idx_t)) if w_samp is None else
                 torch.multinomial(w_samp, len(idx_t), replacement=True))
-        acc = np.zeros(7)
+        acc = np.zeros(9)
         n = 0
         for i in range(0, len(idx_t), args.batch):
             pos = perm[i:i + args.batch]
@@ -363,8 +400,10 @@ def main() -> None:
                 parts.append(ctx.permute(0, 1, 4, 2, 3).reshape(b, n_ctx * C, H, W))
             if hist is not None:
                 parts.append(hist)
-            raw, logstd = model(torch.cat(parts, 1) if len(parts) > 1 else parts[0],
-                                detach_var=args.detach_var)
+            # Hoisted out of the model call so the FGN sample passes below feed the network the
+            # identical tensor rather than rebuilding it K times.
+            inp = torch.cat(parts, 1) if len(parts) > 1 else parts[0]
+            raw, logstd = model(inp, detach_var=args.detach_var)
             raw = from_ch(raw)
 
             if args.var_head:
@@ -460,12 +499,43 @@ def main() -> None:
                 l_tke = rel_l2(ke_pred, tke(y, mul)).mean()
                 loss = loss + args.lam_v * l_var + args.lam_t * l_tke
 
+            l_crps = l_svar = torch.zeros((), device=dev)
+            if args.fgn > 0:
+                # K extra forwards, weights shared, z ~ N(0, I). Everything above used the
+                # z = 0 pass, which IS the plain FNO, so nothing here changes what the
+                # deterministic model optimizes -- CRPS is strictly added on top.
+                k_s = args.fgn
+                zs = torch.randn(k_s, b, args.fgn_dim, device=dev)
+                xs = torch.stack([from_ch(model(inp, detach_var=args.detach_var, z=zs[j])[0])
+                                  for j in range(k_s)])
+                # Fair (unbiased) CRPS per element:
+                #   mean_k |x_k - y| - 1/(2*K*(K-1)) * sum_{k != l} |x_k - x_l|
+                # The second sum runs over ORDERED pairs, so summing UNORDERED ones and
+                # dividing by K*(K-1) is the same number from half the tensors. Accumulating
+                # pair by pair also avoids the (K,K,B,T,H,W,C) broadcast, which is 4x the
+                # memory at K = 4 for identical arithmetic. Unbiased matters: the biased
+                # estimator rewards under-dispersion at small K, which is the exact failure
+                # mode this whole work package exists to fix.
+                spread = sum((xs[j] - xs[l]).abs().mean()
+                             for j in range(k_s) for l in range(j + 1, k_s))
+                l_crps = (xs - y).abs().mean() - spread / (k_s * (k_s - 1))
+                loss = loss + args.lam_crps * l_crps
+                with torch.no_grad():
+                    # The screen from plan_20260810: does the SAMPLE SPREAD track std_t(y)
+                    # better than the log-MSE head's sigma (rel-L2 0.358 on val_unseen)? This
+                    # is its training-curve form, so a failing arm is visible by epoch 50
+                    # instead of after a full eval -- the same cheap screen `var` provides for
+                    # the sigma head.
+                    sk = std_t(xs.detach().reshape(k_s * b, T_OUT, H, W, C))
+                    l_svar = rel_l2(sk.reshape(k_s, b, 1, H, W, C).mean(0), std_t(y)).mean()
+
             opt.zero_grad(set_to_none=True)
             loss.backward()
             opt.step()
             sched.step()
             acc += np.array([loss.item(), l_field.item(), l_var.item(), l_tke.item(),
-                             l_probe.item(), l_div.item(), l_spec.item()]) * b
+                             l_probe.item(), l_div.item(), l_spec.item(),
+                             l_crps.item(), l_svar.item()]) * b
             n += b
 
         if args.swa and ep >= args.epochs - args.swa:
@@ -483,9 +553,12 @@ def main() -> None:
 
         if ep % 5 == 0 or ep == args.epochs - 1:
             a = acc / n
+            # Existing field names and order are unchanged -- log scrapers depend on them; the
+            # two FGN columns are appended and stay 0.00000 when --fgn is off.
             print(f"  epoch {ep:3d}  loss {a[0]:.5f}  field {a[1]:.5f}  "
                   f"var {a[2]:.5f}  tke {a[3]:.5f}  probe {a[4]:.5f}  "
-                  f"div {a[5]:.5f}  spec {a[6]:.5f}  ({time.time()-t0:.0f}s)", flush=True)
+                  f"div {a[5]:.5f}  spec {a[6]:.5f}  crps {a[7]:.5f}  "
+                  f"svar {a[8]:.5f}  ({time.time()-t0:.0f}s)", flush=True)
 
     if swa_state is not None:
         print(f"SWA: averaged the last {swa_n} epochs", flush=True)
@@ -495,7 +568,7 @@ def main() -> None:
                 "width": args.width, "var_head": args.var_head, "var_mlp": args.var_mlp, "lift_mlp": args.lift_mlp, "point_mlp": args.point_mlp,
                 "var_hidden": args.var_hidden, "var_deep": args.var_deep,
                 "var_in_std": args.var_in_std, "var_pred_std": args.var_pred_std,
-                "hist": args.hist,
+                "fgn_dim": args.fgn_dim, "hist": args.hist,
                 "ctx": args.ctx, "arch": args.arch, "modes_y": args.modes_y,
                 "modes_x": args.modes_x, "n_layers": args.n_layers, "p": args.p,
                 "self_norm": self_norm_mode, "norm": args.norm,

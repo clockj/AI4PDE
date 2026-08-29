@@ -18,8 +18,8 @@ import numpy as np
 import torch
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-KIT = "/home/clockj/RealPDE/realpde_t1_starting_kit_v7/realpde_t1_starting_kit_v7"
-CKPT = "/home/clockj/RealPDE/baseline_checkpoints/sim_real_ft"
+KIT = "/users/PAS1187/qwu/RealPDE/realpde_t1_starting_kit_v7/realpde_t1_starting_kit_v7"
+CKPT = "/users/PAS1187/qwu/RealPDE/baseline_checkpoints/sim_real_ft"
 for p in (KIT, os.path.join(HERE, "deeponet"), os.path.join(HERE, "unet"),
           os.path.join(HERE, "diffusion")):
     sys.path.insert(0, p)

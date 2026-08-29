@@ -46,7 +46,7 @@ class FNO2d(nn.Module):
     def __init__(self, width=24, modes_y=8, modes_x=12, n_layers=4, var_head=True,
                  extra_ch=0, var_mlp=False, lift_mlp=False, point_mlp=False,
                  var_hidden=128, var_deep=False, var_in_std=False,
-                 var_pred_std=False):
+                 var_pred_std=False, fgn_dim=0):
         super().__init__()
         cin = CH + extra_ch + 2
         self.lift = (nn.Sequential(nn.Conv2d(cin, 128, 1), nn.GELU(), nn.Conv2d(128, width, 1))
@@ -69,6 +69,15 @@ class FNO2d(nn.Module):
                                              nn.Conv2d(var_hidden, C, 1))
         else:
             self.head_logstd = nn.Conv2d(var_cin, C, 1)
+        # FGN (round 12): checkpoints trained with --fgn carry per-block FiLM weights
+        # (film.i.weight, Linear(fgn_dim, 2*width, bias=False)). The deterministic predict
+        # path below never applies them -- it IS the z = 0 model, and film is zero-init and
+        # bias-free in training, so z = 0 and "film unused" are the same forward bit for bit.
+        # They are constructed here only so load_state_dict accepts the checkpoint; a sampling
+        # deployment (K draws per window) is a separate, verdict-gated change.
+        self.fgn_dim = fgn_dim
+        self.film = (nn.ModuleList([nn.Linear(fgn_dim, 2 * width, bias=False)
+                                    for _ in range(n_layers)]) if fgn_dim > 0 else None)
         yy, xx = torch.meshgrid(torch.linspace(-1, 1, H), torch.linspace(-1, 1, W),
                                 indexing="ij")
         self.register_buffer("grid", torch.stack([xx, yy])[None])
@@ -285,7 +294,8 @@ def load(path: str, device: str):
               var_hidden=blob.get("var_hidden", 128),
               var_deep=blob.get("var_deep", False),
               var_in_std=blob.get("var_in_std", False),
-              var_pred_std=blob.get("var_pred_std", False)).to(device)
+              var_pred_std=blob.get("var_pred_std", False),
+              fgn_dim=blob.get("fgn_dim", 0)).to(device)
     m.load_state_dict(blob["model_state_dict"])
     m.eval()
     return m

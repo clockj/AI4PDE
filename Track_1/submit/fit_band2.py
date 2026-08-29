@@ -21,7 +21,7 @@ import torch
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TRACK1 = os.path.dirname(HERE)
-KIT = "/home/clockj/RealPDE/realpde_t1_starting_kit_v7/realpde_t1_starting_kit_v7"
+KIT = "/users/PAS1187/qwu/RealPDE/realpde_t1_starting_kit_v7/realpde_t1_starting_kit_v7"
 sys.path.insert(0, TRACK1)
 
 spec = importlib.util.spec_from_file_location("sc", os.path.join(KIT, "scoring.py"))

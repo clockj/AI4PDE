@@ -1,110 +1,16 @@
-# -- Round 11 WP-D (GATING): sigma is the only large lever left. oracle_split_v9.py prices a
-#    perfect sigma field at +7.71 final and round 10 extracted ~0.15 of it. Both arms are pure
-#    BOUNDARY capacity -- the trunk is byte-for-byte unchanged -- which is the side of the
-#    boundary/trunk rule that has paid every time (lift +0.076, head_logstd +0.086, against
-#    --point-mlp -0.379 and every trunk-width change).
-#    These run BEFORE the remaining all-data members for the round-10 reason: if one wins,
-#    every all-data member has to be retrained with it and the seeds below are wasted.
-#    Baselines already on disk: fno_vmlp_lift 82.063, _s2 82.055, plus fno_vl_s3/s4. Seed
-#    sigma is 0.055, so anything under ~0.11 is not a result.
-# --var-in-std is the only one of the three that adds INFORMATION rather than capacity: the
-# input window's own per-pixel temporal std, which the log-std loss's target is the same
-# statistic of. `var 0.334` at convergence is a mean squared LOG error, i.e. sigma is typically
-# off by a factor of 1.8, so the head looks information-starved rather than capacity-starved.
-# Added after --var-hidden 256 came back null WITH AN IDENTICAL TRAINING `var` (0.36562 against
-# baselines 0.36708/0.36572/0.36698): the head is not capacity-limited, so the only remaining
-# lever on sigma is information. This is the strongest information arm -- compose() divides the
-# head's answer by the field head's own predicted std, and the head has never been shown it.
-# MOVED AHEAD of the information arms. --var-hidden 256 and --var-deep both left the training
-# `var` inside the baseline seed spread, i.e. the head predicts log-sigma about as well as it
-# can from this trunk no matter what it is given. That argument closes the CAPACITY arms and
-# weakens the INFORMATION ones -- but it says nothing about this one, which changes WHAT sigma
-# optimizes rather than how well. log-MSE is uniform over pixels; the scored TKE rel-L2 is
-# energy-weighted. Expect `var` to get WORSE and TKE to get better; that is the trade.
-# CANCELLED 2026-08-09 on evidence, not on time. --var-hidden 256, --var-deep and --var-in-std
-# all converged to a training `var` inside the baseline seed spread (0.36562 / 0.36801 / 0.36796
-# against 0.36708 / 0.36572 / 0.36698) and all scored inside 82.046 +- 0.017. `var` IS the
-# quantity sigma is judged on, so an arm that does not move it cannot move TKE. Feeding the head
-# the field head's own predicted std is one more input to a readout that is already at its
-# information floor, and sigma_blend_v9.py separately found the global log-linear blend of
-# exactly these estimators null out-of-sample. Running it would buy a fourth identical row.
-# fno_vpred.pth   --var-mlp --lift-mlp --var-pred-std
-# Held back: testing the COMBINATION before either component has won is wasteful. Uncomment
-# only if --var-in-std or --var-pred-std beats 82.046 + 2*0.017 = 82.08.
-# fno_vsp.pth     --var-mlp --lift-mlp --var-pred-std --var-in-std
-
-# -- Round 11 WP-D', the LOSS side of sigma rather than the architecture side.
-# sigma's gradient comes almost entirely from l_var = mean((log sigma - log s_true)^2) at weight
-# 0.3, against l_tke (the scored quantity, rel-L2 between TKE FIELDS) at 0.15. Those two weight
-# pixels completely differently: log-MSE is uniform, so it spends most of its gradient on
-# low-amplitude pixels, while TKE rel-L2 is energy-weighted and only cares about the wake. That
-# is why `var 0.334` -- a mean squared LOG error, sigma typically off by 1.78x -- coexists with
-# a TKE rel-L2 of only 0.47.
-# Round 10 tripled --lam-t and saw TKE move by 0.0001, but it left --lam-v at 0.3, so the term
-# it was adding to was still outvoted 2:1. Lowering lam_v is the experiment that was never run.
-# Risk, and what to look for: lam_v is also what keeps sigma sane where the TKE loss has no
-# gradient, and BOTH the band and compose() read sigma everywhere. Watch rel-L2 and sps, not
-# just TKE.
-# Milder version of the same trade -- two points on the loss axis beat one, and this is now
-# the only axis left that the information-floor argument does not already close.
-# Added mid-run: fno_ltke is doing exactly what it was meant to (training tke 0.4464 against the
-# baseline's 0.4709 at epoch 30) but its FIELD loss is 8% worse (0.1034 vs 0.0953). The variance
-# losses backprop into the shared trunk, so tripling l_tke reshapes the trunk away from the
-# field -- and rel_l2 is the highest-weighted subscore. --detach-var blocks exactly that path:
-# the head still READS the trunk, so the physical conditioning is kept, but the TKE loss can no
-# longer pull it. Round 10 tested --detach-var alone (best rel-L2, worst TKE 0.5625) with lam_t
-# at 0.15; the point of pairing it with lam_t 1.0 is that the head then optimizes the SCORED
-# quantity with the field trunk protected, which is the combination neither arm tested.
-# CANCELLED for the same reason: --detach-var protects the TRUNK, but the failure above is the
-# HEAD overfitting, which detaching does nothing about -- and round 10 measured detaching as
-# costing TKE outright (0.5625, the worst of that round).
-# fno_ltked.pth   --var-mlp --lift-mlp --lam-v 0.05 --lam-t 1.0 --detach-var
-
-# -- The direction the evidence actually points. If l_var regularizes sigma's generalization,
-#    the untested question is whether there is MORE of that to have. lam_v has only ever been
-#    moved DOWN (0.05 tonight) or moved together with lam_t (1.0/0.5 in round 2, which lost 0.34
-#    because the trunk went 10:1 to the variance objective and MVPE paid). Raising lam_v ALONE,
-#    with lam_t left at the shipped 0.15, is genuinely untested. Watch MVPE: that is what the
-#    1.0/0.5 experiment broke, and it is the second-heaviest subscore.
-
-# -- Round 11 WP-A: undo the round-10 member cut. The board charged rel_l2 -0.058 and mvpe
-#    -0.122 for going 8 -> 7 members on an AoA 15-20 proxy margin of 0.001. These are extra
-#    all-data w24 seeds; they add ZERO invocations (same fusion group), only local time.
-#    Retrain with the WP-D flag if WP-D wins.
-# DEPRIORITIZED 2026-08-09: an extra fused member costs ~0.006 final in forward time (measured)
-# and round 8's curve was worth ~+0.012 per member at 8->9, so three of these are ~+0.018 for an
-# hour of GPU. A second seed of a winning WP-D arm, or a WP-E mode variant, is worth more. Left
-# here as filler only.
-# fno_all_vl_s6.pth   --var-mlp --lift-mlp --all-data
-# fno_all_vl_s7.pth   --var-mlp --lift-mlp --all-data
-# fno_all_vl_s8.pth   --var-mlp --lift-mlp --all-data
-
-# -- Round 11 WP-E, STAGED (uncomment once the WP-D recipe is settled; add the winning flag).
-# Architecture diversity is round 8's most reliable ensemble lever (+0.05..0.07 per new
-# architecture, against +0.01..0.03 per extra seed) and mode-padded fusion just made it nearly
-# free: any member with modes <= (12,20) joins the width-24 group without adding an invocation
-# AND without raising the group's mode maximum, so it costs only its own forward share
-# (~0.006 final) instead of w64's 0.026. Two variants, both strictly inside (12,20):
-# fno_m0608.pth       --var-mlp --lift-mlp --modes-y 6 --modes-x 8
-# fno_m1016.pth       --var-mlp --lift-mlp --modes-y 10 --modes-x 16
-# fno_all_vl_m0608.pth --var-mlp --lift-mlp --all-data --modes-y 6 --modes-x 8
-# fno_all_vl_m1016.pth --var-mlp --lift-mlp --all-data --modes-y 10 --modes-x 16
-
-# -- STAGED: the full rebuild, to be uncommented ONLY if fno_ltke (or fno_ltke2) clears
-#    82.046 + 2*0.017 = 82.08 on the AoA proxy and does not lose rel-L2 or sps.
-#    Replace LTKE below with the winning flags. ~5.8 h total on this GPU.
-#    Held-out counterparts FIRST -- fit_band's --err-ckpt must match the shipped architecture,
-#    and if something is wrong with the recipe they are where it shows.
-# fno_L_s2.pth          LTKE
-# fno_L_m1220.pth       LTKE --modes-y 12 --modes-x 20
-# fno_L_w48.pth         LTKE --width 48
-# fno_L_w64.pth         LTKE --width 64
-# fno_L_s3.pth          LTKE
-# fno_all_L_s1.pth      LTKE --all-data
-# fno_all_L_s2.pth      LTKE --all-data
-# fno_all_L_s3.pth      LTKE --all-data
-# fno_all_L_s4.pth      LTKE --all-data
-# fno_all_L_s5.pth      LTKE --all-data
-# fno_all_L_m1220.pth   LTKE --all-data --modes-y 12 --modes-x 20
-# fno_all_L_w48.pth     LTKE --all-data --width 48
-# fno_all_L_w64.pth     LTKE --all-data --width 64
+# Round-12 campaign queue, 2026-08-29 (OSC A100). See plan/campaign_20260829.md.
+# fno_vl_s1 is being trained directly by the setup agent; everything else drains here.
+# Rebuild (R) and the FGN screen (F) interleaved so the verdict lands early.
+fno_vl_s2.pth      --var-mlp --lift-mlp
+fno_fgn1.pth       --var-mlp --lift-mlp --fgn 4 --lam-crps 0.3
+fno_vl_s3.pth      --var-mlp --lift-mlp
+fno_vl_s4.pth      --var-mlp --lift-mlp
+fno_vl_m1220.pth   --var-mlp --lift-mlp --modes-y 12 --modes-x 20
+fno_vl_w48.pth     --var-mlp --lift-mlp --width 48
+fno_vl_w64.pth     --var-mlp --lift-mlp --width 64
+# WP-3: second family. Overrides BASE via argparse last-wins: arch, width, and the U-Net's
+# own lam-grad optimum (0.3, round 4). var/lift-mlp are FNO-only and are simply ignored
+# by build() for unet, so they are left off the line.
+unet_g1.pth        --arch unet --width 64 --lam-grad 0.3
+# fno_fgn2 (--lam-crps 0.1) gets inserted here mid-run only if fgn1's training curve is not a
+# clear fail (svar must move toward ~0.36 by epoch 50; see campaign notes).

@@ -8,9 +8,9 @@
 #   SEED2 a second field net, for a 2-model ensemble at 2x latency (-0.1 final on sim).
 source ~/miniconda3/etc/profile.d/conda.sh 2>/dev/null || source /opt/conda/etc/profile.d/conda.sh
 conda activate realpde
-cd /home/clockj/RealPDE/AI4PDE/Track_1/unet
+cd /users/PAS1187/qwu/workspace/realpde/main/Track_1/unet
 while pgrep -f 'train2[.]py --out wpC' > /dev/null; do sleep 60; done
-SIM=/home/clockj/RealPDE/train_sim/train_sim
+SIM=/users/PAS1187/qwu/RealPDE/train_sim/train_sim
 BASE="--epochs 150 --stride 8 --alpha-train 0 --loss mse --norm sim --data $SIM"
 echo "### SWA  wpS0_swa40  (sim field-only, weights averaged over last 40 epochs)" >> wp_train.log
 python train2.py --out wpS0_swa40.pth $BASE --swa 40 2>&1 | tee -a wp_train.log

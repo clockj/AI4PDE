@@ -10,7 +10,7 @@ import torch
 
 from deeponet_baseline import MEAN, STD, DeepONet
 
-SCORING = "/home/clockj/RealPDE/realpde_t1_starting_kit_v7/realpde_t1_starting_kit_v7/scoring.py"
+SCORING = "/users/PAS1187/qwu/RealPDE/realpde_t1_starting_kit_v7/realpde_t1_starting_kit_v7/scoring.py"
 spec = importlib.util.spec_from_file_location("sc", SCORING)
 sc = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sc)

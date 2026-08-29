@@ -31,7 +31,7 @@ import numpy as np
 import torch
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-KIT9 = "/home/clockj/RealPDE/realpde_t1_starting_kit_v9/realpde_t1_starting_kit_v9"
+KIT9 = "/users/PAS1187/qwu/RealPDE/realpde_t1_starting_kit_v9/realpde_t1_starting_kit_v9"
 
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, "submit_fno"))

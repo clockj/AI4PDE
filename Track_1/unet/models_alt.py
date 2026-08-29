@@ -59,7 +59,7 @@ class FNO2d(nn.Module):
                  n_layers: int = 4, var_head: bool = True, extra_ch: int = 0,
                  var_mlp: bool = False, lift_mlp: bool = False, point_mlp: bool = False,
                  var_hidden: int = 128, var_deep: bool = False, var_in_std: bool = False,
-                 var_pred_std: bool = False):
+                 var_pred_std: bool = False, fgn_dim: int = 0):
         super().__init__()
         # The default lift is a single 1x1 conv: a LINEAR map from 42 channels (20 frames x
         # u,v, plus the coordinate grid) down to width=24. The whole input window is
@@ -114,31 +114,64 @@ class FNO2d(nn.Module):
             last = self.head_logstd[-1] if var_mlp else self.head_logstd
             nn.init.zeros_(last.weight)
             nn.init.constant_(last.bias, float(np.log(0.3)))
+        # FGN (arXiv 2506.10772, the engine behind WeatherNext 2): sample the WEIGHTS, not the
+        # output. One draw of z in R^fgn_dim drives a per-block FiLM on the normalized
+        # activation, i.e. one draw of a conditionally-normalized network, and a sample costs
+        # exactly ONE forward pass -- the only reason a generative head is admissible in a
+        # latency-scored task (PDE-Refiner's denoising chain scored 82.53 against its own MSE
+        # control's 83.83 at 4x compute).
+        #
+        # bias=False and the zero init are both load-bearing, not cosmetic: film(0) is then
+        # identically 0 for the whole of training, so the z = 0 (and z = None) forward is
+        # BIT-IDENTICAL to the plain FNO at every point in training. The centre of the sample
+        # distribution IS the baseline model, the existing losses are computed on it unchanged,
+        # and a CRPS term can only add spread on top. It also means an fgn checkpoint scored
+        # with z = None reproduces its own deterministic control exactly.
+        self.fgn_dim = fgn_dim
+        self.film = (nn.ModuleList([nn.Linear(fgn_dim, 2 * width, bias=False)
+                                    for _ in range(n_layers)]) if fgn_dim > 0 else None)
+        if self.film is not None:
+            for lin in self.film:
+                nn.init.zeros_(lin.weight)
         yy, xx = torch.meshgrid(torch.linspace(-1, 1, H), torch.linspace(-1, 1, W),
                                 indexing="ij")
         self.register_buffer("grid", torch.stack([xx, yy])[None])
 
-    def forward(self, prev: torch.Tensor, detach_var: bool = False):
+    def forward(self, prev: torch.Tensor, detach_var: bool = False,
+                z: torch.Tensor | None = None):
+        """`z` is the FGN noise vector, (B, fgn_dim). None (or fgn_dim = 0) is the plain FNO."""
         h = self.lift(torch.cat([prev, self.grid.expand(len(prev), -1, -1, -1)], 1))
+        # One (scale, shift) pair per block, computed once outside the loop: it is a
+        # (B, fgn_dim) x (fgn_dim, 2*width) matmul against a loop body that is spectral.
+        films = ([f(z).chunk(2, -1) for f in self.film]
+                 if z is not None and self.film is not None else None)
         hs = []
-        for s, p, n in zip(self.spec, self.point, self.norm):
-            h = h + torch.nn.functional.gelu(n(s(h) + p(h)))
+        for i, (s, p, n) in enumerate(zip(self.spec, self.point, self.norm)):
+            a = n(s(h) + p(h))
+            if films is not None:
+                # Conditional normalization: the noise enters where the activation statistics
+                # are set, so a draw of z perturbs the whole spatial field coherently rather
+                # than adding independent per-pixel noise. That coherence is what lets
+                # marginal-only training (CRPS per element) produce usable joint samples.
+                dg, db = films[i]
+                a = (1.0 + dg[:, :, None, None]) * a + db[:, :, None, None]
+            h = h + torch.nn.functional.gelu(a)
             hs.append(h)
         field = self.head_field(h)
         logstd = None
         if self.head_logstd is not None:
-            z = torch.cat(hs, 1) if self.var_deep else h
+            zv = torch.cat(hs, 1) if self.var_deep else h
             if detach_var:
-                z = z.detach()
+                zv = zv.detach()
             if self.var_in_std:
                 # prev's first CH channels are the 20 input frames x (u, v), time-major.
                 s_in = prev[:, :CH].reshape(len(prev), CH // C, C, *prev.shape[-2:]).std(1)
-                z = torch.cat([z, s_in], 1)
+                zv = torch.cat([zv, s_in], 1)
             if self.var_pred_std:
                 # head_field is (B, T_OUT*C, H, W) time-major, same layout as to_ch/from_ch.
                 sp = field.detach().reshape(len(prev), T_OUT, C, *field.shape[-2:]).std(1)
-                z = torch.cat([z, sp], 1)
-            logstd = self.head_logstd(z)
+                zv = torch.cat([zv, sp], 1)
+            logstd = self.head_logstd(zv)
         return field, logstd
 
 
@@ -267,15 +300,20 @@ def build(arch: str, width: int, var_head: bool, extra_ch: int, modes_y: int = 1
           modes_x: int = 16, n_layers: int = 4, p: int = 256, var_mlp: bool = False,
           lift_mlp: bool = False, point_mlp: bool = False,
           var_hidden: int = 128, var_deep: bool = False, var_in_std: bool = False,
-          var_pred_std: bool = False):
-    """Factory shared by train2.py and eval_wp.run so both build identical objects."""
+          var_pred_std: bool = False, fgn_dim: int = 0):
+    """Factory shared by train2.py and eval_wp.run so both build identical objects.
+
+    `fgn_dim` defaults to 0, which builds no `film` module at all -- so a state_dict saved
+    before FGN existed still loads with strict=True and every pre-round-12 checkpoint is
+    unaffected.
+    """
     from model import UNetTwoHead
     if arch == "unet":
         return UNetTwoHead(width, var_head=var_head, extra_ch=extra_ch)
     if arch == "fno":
         return FNO2d(width, modes_y, modes_x, n_layers, var_head, extra_ch, var_mlp, lift_mlp,
                      point_mlp, var_hidden, var_deep, var_in_std,
-                     var_pred_std)
+                     var_pred_std, fgn_dim)
     if arch == "deeponet":
         return DeepONetCh(p, trunk_width=width * 2, branch_width=width,
                           var_head=var_head, extra_ch=extra_ch)

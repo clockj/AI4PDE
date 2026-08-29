@@ -5,7 +5,7 @@
 # queue.txt: one arm per line, "<out.pth>  <extra train2.py flags>". Blank lines and # ignored.
 # A line is moved to done.txt as soon as it starts, so a restart never repeats an arm.
 set -u
-PY=/home/clockj/miniconda3/envs/realpde/bin/python
+PY=/users/PAS1187/qwu/.conda/envs/realpde/bin/python
 cd "$(dirname "$0")"
 # The SHIPPED recipe, read back off fno_grad.pth's stored config -- not train2.py's argparse
 # defaults, which differ on three flags that all matter:

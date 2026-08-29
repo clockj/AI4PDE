@@ -9,8 +9,8 @@
 # at 7.3 sigma.
 source ~/miniconda3/etc/profile.d/conda.sh 2>/dev/null || source /opt/conda/etc/profile.d/conda.sh
 conda activate realpde
-cd /home/clockj/RealPDE/AI4PDE/Track_1/unet
-SIM=/home/clockj/RealPDE/train_sim/train_sim
+cd /users/PAS1187/qwu/workspace/realpde/main/Track_1/unet
+SIM=/users/PAS1187/qwu/RealPDE/train_sim/train_sim
 BASE="--epochs 150 --stride 8 --alpha-train 0 --loss mse --norm sim --data $SIM"
 
 echo "### S0  wpS0_field  (sim, field-only, no variance head)" >> wp_train.log

@@ -27,7 +27,7 @@ import os
 
 import numpy as np
 
-KIT9 = "/home/clockj/RealPDE/realpde_t1_starting_kit_v9/realpde_t1_starting_kit_v9"
+KIT9 = "/users/PAS1187/qwu/RealPDE/realpde_t1_starting_kit_v9/realpde_t1_starting_kit_v9"
 _spec = importlib.util.spec_from_file_location("sc9", os.path.join(KIT9, "scoring.py"))
 sc = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(sc)

@@ -9,7 +9,7 @@
 # The script refuses to run if anything is training.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-PY=/home/clockj/miniconda3/envs/realpde/bin/python
+PY=/users/PAS1187/qwu/.conda/envs/realpde/bin/python
 
 if pgrep -f "train2\.py" > /dev/null; then
   echo "REFUSING: train2.py is running. The timing would be inflated by ~1.6x and the recorded"

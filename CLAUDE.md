@@ -77,7 +77,7 @@ NACA4418 airfoil, paired real PIV + matched CFD. Filenames are `{Re}_{AoA}.h5`.
 | | trajectories | frames | datasets in the h5 | dtype |
 |---|---|---|---|---|
 | `train_sim` | 100 (Re 3750…27975 × AoA 0,5,10,15,20) | 1000 | `u,v,p (T,64,128)`, `x,y,t`, scalars `re,aoa` | float32 |
-| `train_real` | 82 (18 Re × 5 AoA, incomplete grid) | 868 | `u,v (T,64,128)`, `x,y,t`, scalars `re,aoa` | float64 |
+| `train_real` | 82 (18 Re × 5 AoA, incomplete grid) | 607 | `u,v (T,64,128)`, `x,y,t`, scalars `re,aoa` | float64 |
 
 * Real data has **no pressure** — `p` is zero-filled and **not scored** (`measured_channels()`
   returns 2). Channel order is always `[u, v, p]`.

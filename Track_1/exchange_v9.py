@@ -4,7 +4,7 @@ Held-out 6-member ensemble on the AoA 15-20 proxy, errors synthetically scaled b
 (P' = Y + k*(P-Y)), board tail inflation 1.39x applied, band refit at every k.
 """
 import os, sys, numpy as np
-HERE="/home/clockj/RealPDE/AI4PDE/Track_1"
+HERE="/users/PAS1187/qwu/workspace/realpde/main/Track_1"
 sys.path.insert(0, HERE); sys.path.insert(0, os.path.join(HERE,"submit_fno"))
 import torch, _fno, sps9
 from sps9 import sc, prep, optimal_band, sps_score

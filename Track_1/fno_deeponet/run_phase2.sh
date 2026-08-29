@@ -11,8 +11,8 @@
 set -u
 source ~/miniconda3/etc/profile.d/conda.sh 2>/dev/null || source /opt/conda/etc/profile.d/conda.sh
 conda activate realpde
-cd /home/clockj/RealPDE/AI4PDE/Track_1/unet || exit 1
-L=/home/clockj/RealPDE/AI4PDE/Track_1/fno_deeponet/phase2_train.log
+cd /users/PAS1187/qwu/workspace/realpde/main/Track_1/unet || exit 1
+L=/users/PAS1187/qwu/workspace/realpde/main/Track_1/fno_deeponet/phase2_train.log
 
 echo "=== fno_div ===" >> "$L"
 python train2.py --out fno_div.pth --epochs 150 --stride 5 --var-head --alpha-train 0 --loss mse --lam-v 0.3 --lam-t 0.15 --arch fno --width 24 --modes-y 8 --modes-x 12 --n-layers 4 --lam-div 0.3 >> "$L" 2>&1

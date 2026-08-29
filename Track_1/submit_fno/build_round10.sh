@@ -15,7 +15,7 @@
 # quietly produce a package built from the wrong members.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-PY=/home/clockj/miniconda3/envs/realpde/bin/python
+PY=/users/PAS1187/qwu/.conda/envs/realpde/bin/python
 
 # All-data members: 5 x w24 + m1220 + w64. w48 is deliberately absent -- under fusion it earns
 # back its own invocation group and nothing more (78.667 with it, 78.668 without).

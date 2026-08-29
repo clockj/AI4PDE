@@ -106,7 +106,7 @@ def main() -> None:
     import importlib.util
     import sys
     spec = importlib.util.spec_from_file_location(
-        "sc", "/home/clockj/RealPDE/realpde_t1_starting_kit_v7/realpde_t1_starting_kit_v7/"
+        "sc", "/users/PAS1187/qwu/RealPDE/realpde_t1_starting_kit_v7/realpde_t1_starting_kit_v7/"
               "scoring.py")
     sc = importlib.util.module_from_spec(spec)
     sys.modules["sc"] = sc

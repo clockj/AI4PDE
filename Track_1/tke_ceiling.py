@@ -26,7 +26,7 @@ import sys
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-KIT = "/home/clockj/RealPDE/realpde_t1_starting_kit_v7/realpde_t1_starting_kit_v7"
+KIT = "/users/PAS1187/qwu/RealPDE/realpde_t1_starting_kit_v7/realpde_t1_starting_kit_v7"
 spec = importlib.util.spec_from_file_location("sc", os.path.join(KIT, "scoring.py"))
 sc = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sc)

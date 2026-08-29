@@ -34,7 +34,7 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TRACK1 = os.path.dirname(HERE)
-KIT = "/home/clockj/RealPDE/realpde_t1_starting_kit_v9/realpde_t1_starting_kit_v9"
+KIT = "/users/PAS1187/qwu/RealPDE/realpde_t1_starting_kit_v9/realpde_t1_starting_kit_v9"
 MISSING = ["scipy", "h5py", "einops", "matplotlib", "pandas"]
 
 # Imported up front and the path entry removed again: the point of this script is that the
