@@ -945,6 +945,45 @@ Round 11's `lam_v` U-shape says log-MSE is a **misaligned surrogate**, not a har
 is partly unpredictable (`diag_spectral.py`: only ~31% of fluctuation energy is coherently
 predictable) and we model it with a log-MSE sigma head instead of a proper scoring rule.
 
+### Round 12 (2026-08-29) — ported to an OSC A100, FGN and phase closed, U-Net joins the package
+
+Full detail: `Track_1/report/report_20260829_round12.md`; raw rows in
+`Track_1/plan/campaign_20260829.md`. One ~20 h autonomous session on a Slurm A100-40G (the
+4060 box is gone); every binary artifact rebuilt from scratch. Git branch: `qwu/dev`.
+
+* **Environment**: data at `/users/PAS1187/qwu/RealPDE/`, env `realpde` recreated (torch
+  2.2.2+cu121). The kit `scoring.py` on this machine is a verified RECONSTRUCTION (Codabench
+  is auth-walled from the cluster; agrees with `sps9.py` to 6.5e-8; MVPE is rel-L2 per probe
+  COLUMN, mean over the 4 x-stations — a pooled-36-probe variant read −0.097 wfinal until the
+  persistence/time-mean anchors caught it). Fetch the official kit v9 with a Codabench login
+  to retire the last risk; TKE ddof=0 is the one remaining assumption. Recipe reproduces at
+  +1σ (82.063 vs 82.046±0.017); 18.4 min/run; **the 12-core cpuset, not the GPU, binds** —
+  never time anything while training runs, and don't judge liveness by nvidia-smi (reads 0%).
+* **WP-1 FGN/CRPS probabilistic head: FAILED its pre-registered screen, closed.**
+  FiLM-from-noise sample spread predicts the flow's σ at rel-L2 0.4507/0.4691 against the
+  log-MSE head's 0.3293; every spread-σ composition loses ~0.7 wfinal. The CRPS term is
+  harmless (its z=0 model ties the baseline seeds) but adds nothing. Parameter-space noise
+  cannot manufacture amplitude information the trunk does not carry — round 11's information
+  floor, measured a third way. Do not revisit generative σ without new information sources.
+* **WP-2 phase/advection: DEAD.** Fluctuation-only re-registration (whose synthetic control
+  recovers a planted (1,3) roll 100.0%) recovers 0.2% on the real model; zero shift preferred
+  in 92% of windows. The fluctuation error is decorrelation/amplitude, not misregistration —
+  no phase co-training, no phase-aligned frames, ever.
+* **WP-3 mixed family: the U-Net member WINS — +0.091 proxy / +0.123 full wfinal on the 7-FNO
+  ensemble, 4.5× the value of an extra FNO seed.** Round 8's "architecture beats seeds"
+  replicates across families. Mode-diversity arms (m0608/m1016) are null once the set spans
+  m1220+w48+w64+U-Net; composition closed. α=0.90 re-confirmed on the final member set.
+* **Package (round 12): 11 members / 4 invocations** — 7×w24 all-data seeds + m1220 (one
+  mode-padded StackedFNO group) + w48 + w64 + `unet_all_g1`, loading through `_fno.load_any`
+  (dispatches on the blob's `arch`; `UNetTwoHead` vendored into `_fno.py`). Two latent
+  `fuse()` bugs found and fixed: crash on a 2nd non-FNO member, and silent member DROPPING
+  (`append` for `extend`). 82.6 MB, SUBMITTABLE, 1.208 ms/win on the A100 = 2.235 ms
+  4060-equivalent (conversion r = 1.850, measured by re-timing the round-11 shape: 1.082 A100
+  vs 2.002 recorded 4060).
+* **Predicted board, recorded pre-submission**: rel 94.521 / tke 79.869 / mvpe 93.782 / time
+  91.248 / sps 39.628 → **final 80.707 (+0.195)**, delta-based off round 10's confirmed
+  80.512. TKE carries the round. **Not yet submitted** — submission is the user's call.
+
 ### Physics losses: rejected, measured
 
 `rms(∇·u)/rms(|∇u|)` is **0.42–0.49 on real PIV and 0.28–0.34 even on the CFD**, and unchanged

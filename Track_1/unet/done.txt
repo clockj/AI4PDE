@@ -50,3 +50,14 @@ fno_vl_w64.pth     --var-mlp --lift-mlp --width 64
 unet_g1.pth        --arch unet --width 64 --lam-grad 0.3
 fno_m0608.pth        --var-mlp --lift-mlp --modes-y 6 --modes-x 8
 fno_m1016.pth        --var-mlp --lift-mlp --modes-y 10 --modes-x 16
+fno_all_vl_s1.pth    --var-mlp --lift-mlp --all-data
+fno_all_vl_s2.pth    --var-mlp --lift-mlp --all-data
+fno_all_vl_s3.pth    --var-mlp --lift-mlp --all-data
+fno_all_vl_s4.pth    --var-mlp --lift-mlp --all-data
+fno_all_vl_s5.pth    --var-mlp --lift-mlp --all-data
+fno_all_vl_m1220.pth --var-mlp --lift-mlp --all-data --modes-y 12 --modes-x 20
+fno_all_vl_w48.pth   --var-mlp --lift-mlp --all-data --width 48
+fno_all_vl_w64.pth   --var-mlp --lift-mlp --all-data --width 64
+unet_all_g1.pth      --arch unet --width 64 --lam-grad 0.3 --all-data
+fno_all_vl_s6.pth    --var-mlp --lift-mlp --all-data
+fno_all_vl_s7.pth    --var-mlp --lift-mlp --all-data

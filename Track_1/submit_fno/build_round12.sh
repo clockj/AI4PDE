@@ -5,10 +5,14 @@
 #
 # What changed from round 11 (build_round11.sh):
 #
-#   * The package is MIXED: 8 all-data FNO members plus one all-data U-Net. Gate M measured the
-#     U-Net member at +0.091 proxy / +0.123 full wfinal on the 7-FNO ensemble, against +0.019
-#     for an extra FNO seed -- round 8's "architecture beats seeds" replicating across families.
-#     It costs one invocation (nothing here shares a shape with an FNO) and ~0.4 local ms.
+#   * The package is MIXED: 10 all-data FNO members plus one all-data U-Net -- 11 members,
+#     4 invocations (s1-s7+m1220 mode-pad into one StackedFNO group; w48; w64; unet).
+#     Gate M measured the U-Net member at +0.091 proxy / +0.123 full wfinal on the 7-FNO
+#     ensemble, against +0.019 for an extra FNO seed -- round 8's "architecture beats seeds"
+#     replicating across families. It costs one invocation and ~0.4 local ms.
+#   * s6/s7 joined when the queue drained. Round 10's board lesson: member count is not the
+#     proxy's call (w48 was dropped on a +0.001 proxy margin and cost the board -0.06); w24
+#     seeds are ~+0.019 proxy each and free in invocations under fusion.
 #   * Members load through `_fno.load_any`, which dispatches on each blob's own `arch` field.
 #     build_zip.py still names every member fno*.pth; the name is positional, not a type.
 #   * ALPHA 0.90 and band p 0.45 / smooth 3 are unchanged and re-confirmed on the final member
@@ -26,13 +30,15 @@ ALPHA=0.90
 
 # SHIPPED members, in the order build_zip.py names them fno.pth, fno_2.pth, ... fno_9.pth.
 A="unet/fno_all_vl_s1.pth unet/fno_all_vl_s2.pth unet/fno_all_vl_s3.pth \
-   unet/fno_all_vl_s4.pth unet/fno_all_vl_s5.pth \
+   unet/fno_all_vl_s4.pth unet/fno_all_vl_s5.pth unet/fno_all_vl_s6.pth \
+   unet/fno_all_vl_s7.pth \
    unet/fno_all_vl_m1220.pth unet/fno_all_vl_w48.pth unet/fno_all_vl_w64.pth \
    unet/unet_all_g1.pth"
 # HELD-OUT counterparts of the same recipes, for the ERROR FIELD only. fit_band's sigma_ref
 # comes from $A but |error| comes from $M: a band fitted to the all-data models' own memorized
-# errors is what produced sps 36.94 in round 6. One-to-one with $A except the fifth w24 seed,
-# which has no held-out twin -- the error STRUCTURE is what has to match, not the member count.
+# errors is what produced sps 36.94 in round 6. One-to-one with $A except the fifth..seventh
+# w24 seeds, which have no held-out twins -- the error STRUCTURE is what has to match, not the
+# member count.
 M="unet/fno_vl_s1.pth unet/fno_vl_s2.pth unet/fno_vl_s3.pth unet/fno_vl_s4.pth \
    unet/fno_vl_m1220.pth unet/fno_vl_w48.pth unet/fno_vl_w64.pth unet/unet_g1.pth"
 

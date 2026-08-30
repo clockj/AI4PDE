@@ -2,13 +2,4 @@
 # architecture is worth +0.05..0.07 at the ensemble, and both fuse into the w24 invocation
 # group for free), then the 8 all-data package members (recipe unchanged: WP-1 and WP-2 both
 # closed by measurement today; names match build_round11.sh's $A list).
-fno_all_vl_s1.pth    --var-mlp --lift-mlp --all-data
-fno_all_vl_s2.pth    --var-mlp --lift-mlp --all-data
-fno_all_vl_s3.pth    --var-mlp --lift-mlp --all-data
-fno_all_vl_s4.pth    --var-mlp --lift-mlp --all-data
-fno_all_vl_s5.pth    --var-mlp --lift-mlp --all-data
-fno_all_vl_m1220.pth --var-mlp --lift-mlp --all-data --modes-y 12 --modes-x 20
-fno_all_vl_w48.pth   --var-mlp --lift-mlp --all-data --width 48
-fno_all_vl_w64.pth   --var-mlp --lift-mlp --all-data --width 64
 # appended later if the held-out diversity arms win: all-data m0608/m1016; if WP-3 wins: unet_all
-unet_all_g1.pth      --arch unet --width 64 --lam-grad 0.3 --all-data
