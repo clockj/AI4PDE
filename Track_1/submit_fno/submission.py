@@ -87,7 +87,7 @@ _CKPTS = [p for p in [os.path.join(_HERE, "fno.pth")]
 #
 # If this changes, fit_band.py --alpha MUST change with it: both sigma_ref and the error field
 # the band is solved against have to be measured at the alpha the package actually deploys.
-ALPHA = 0.60
+ALPHA = 0.90
 
 
 def _pick_batch(models, dev):

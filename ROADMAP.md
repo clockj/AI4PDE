@@ -280,8 +280,42 @@ model per fold and scores each only on the fold it excluded: **3 383 out-of-fold
 the full grid** instead of 336 over eight arbitrary points. `--paired` compares two arms on
 identical windows and bootstraps **trajectories** (windows tile a trajectory at stride 20 and
 are not exchangeable), which replaces comparing a delta to a borrowed seed σ. It does **not**
-fix the board's distribution shift; `re_split.py` is the instrument for that. Cost is K
-trainings per arm — screen on the AoA proxy, confirm here.
+fix the board's distribution shift; **`--split re` does**, see §1.14. Cost is K trainings per
+arm — screen on the AoA proxy, confirm here.
+
+### 1.14 `kfold.py --split re` IS THE BOARD PROXY — the first local number that matches a LEVEL
+
+Five contiguous Reynolds bands held out in turn, so every one of the 3383 out-of-fold windows
+is a transfer test. The shipped recipe, single model:
+
+| | Re-band k-fold | board R12 | |
+|---|---|---|---|
+| rel-L2 | 0.12613 | 0.116626 | 1.08× |
+| TKE | 0.58788 | 0.526278 | 1.12× |
+| **predicted `final`** | **80.562** | **80.516** | **+0.046** |
+
+The AoA 15–20 proxy is *precise but not accurate* (§1.8, §19); the standard split sits 28 %
+below the board on rel-L2. This lands within **0.05 `final`**. It is a **confirmation**
+instrument at ~2.5 GPU-h per arm pair, not a screen — and the level agreement is one point,
+partly two errors cancelling (single model vs an 11-member board ensemble, ~66 training
+trajectories vs 82). Do not over-read it; do use it before shipping.
+
+**Always read the per-band breakdown, never the pool alone.** Dropout's pooled −18.4 % rel-L2
+is **entirely band 0** (Re 3750–7575, extrapolating below the training range, baseline 0.250);
+bands 1–4 give −2.6 % and TKE +0.1 % (`report_20260831_round13.md` §28.2).
+
+### 1.15 THE TEST FOR ANY ARM: does it remove SHARED error or INDEPENDENT error?
+
+Round 13 measured both cases at matched ensemble size and they behave completely differently:
+
+| arm | per model | at the ensemble | why |
+|---|---|---|---|
+| `ozdo` (osc + dropout 0.05) | +0.108 wfinal, **+3.84σ over 7 seeds**, replicated 4-for-4 | **−0.012**, TKE worse (§27) | removes error that is *independent* across members, which an 8-member average already removes |
+| `--dropout 0.15` | `relo` −7 % single (§15) | ×3 vs ×3: `relo` **−10.2 %**, `rehi` −2.4 % (§17.2) | removes error the members **share** — they all train on the same in-range Re and extrapolate out of it the same way |
+
+Three rounds of per-model deltas have now been diluted or reversed by ensembling (round 11's
+members, round 12's U-Net, round 13's `ozdo`). **`ens_v9.py` is two minutes on a GPU. A
+per-model screen that skips it is not evidence about the package.**
 
 ### 1.13 AN ARM CAN FAIL BECAUSE THE SCORER DOES NOT IMPLEMENT IT
 
@@ -509,12 +543,28 @@ four runs** (`report_20260831_round13.md` §22): fluctuation part **0.0695–0.0
 full split with a spread *tighter than the baseline seeds*. It is the first change in the
 project to move either quantity.
 
-**It still fails the §1.8 bar** — rel-L2 −1.13 % on the proxy against ~2 % — so it is not a
-package change on its own, and four tight replicates do not fix that (they buy precision;
-§1.8's failure is bias). **What it is: the first evidence that the fluctuation is reachable
-at all, and a direction with two independent measured signatures to steer by.** Pull on the
-thread — more zero-mean modes, the constraint without dropout at a larger J, the basis itself
-— rather than shipping this point on it.
+**IT IS WORTH ZERO AT ENSEMBLE SCALE, and the thread is now closed** (§27, §30).
+
+* **§27 — 4-vs-4 at matched member count: `ozdo` 78.318 against the baseline's 78.330, i.e.
+  −0.012 `final`, with TKE worse.** The per-model +3.84σ, replicated four times with a tighter
+  spread than the baseline's seven seeds, is *entirely gone* at four members. This is round
+  10's dilution mechanism (`--var-mlp`'s 3.9 % fixed-field TKE cut → +0.08 ensembled).
+* **§30 — `--tbasis 4` matches `ozdo` to −0.55 baseline σ.** Four fixed zero-mean temporal
+  profiles shared by every window score identically to two window-adaptive sinusoids, so §23's
+  striking unsupervised ω(U) correlation (+0.98…+0.995) is **decoration**. The operative
+  constraint is *low-rank, zero-mean, smooth in time* — and that constraint's whole value is
+  error the ensemble already removes.
+
+**What the thread leaves behind is the sharper statement of the problem.** The fluctuation
+carries 69 % of the squared error; a rank-4 zero-mean temporal branch removes ~1 % of rel-L2
+per model; and the part it removes is exactly the part ensembling was already removing.
+**Whatever remains in the fluctuation is error the members SHARE** — every model trained on
+these 74 trajectories makes it — so by §1.15 it is the only part worth attacking, and neither
+branch touches it. No arm in thirteen rounds has moved shared fluctuation error.
+
+Do not spend more on this branch: not more modes, not a different band, not an input-derived
+basis. The next arm on the fluctuation has to be aimed at *shared* error, and must be screened
+with `ens_v9.py` at four members before anything else is measured.
 
 Round 12's phase/advection null still stands and constrains the *form* of any attack: the
 fluctuation error is decorrelation, not misregistration, so no re-registration, no phase

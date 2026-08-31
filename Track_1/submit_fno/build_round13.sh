@@ -21,17 +21,41 @@ PY=/users/PAS1187/qwu/.conda/envs/realpde/bin/python
 U=Track_1/unet
 SUB=../sub_candidates
 
-# SHIPPED: 8 all-data members, one fused invocation (7 w24 seeds + m1220, mode-padded).
-A="$U/fno_all_vl_s1.pth $U/fno_all_vl_s2.pth $U/fno_all_vl_s3.pth $U/fno_all_vl_s4.pth \
-   $U/fno_all_vl_s5.pth $U/fno_all_vl_s6.pth $U/fno_all_vl_s7.pth $U/fno_all_vl_m1220.pth"
-# HELD-OUT twins of the same recipes, for the ERROR FIELD only. A band fitted to the all-data
-# models' own memorized errors is what produced sps 36.94 in round 6.
-M="$U/fno_vl_s1.pth $U/fno_vl_s2.pth $U/fno_vl_s3.pth $U/fno_vl_s4.pth $U/fno_vl_m1220.pth"
+# The member set. `A` is what SHIPS (all-data); `M` is the HELD-OUT twins of the same recipes,
+# used for the ERROR FIELD only -- a band fitted to the all-data models' own memorized errors
+# is what produced sps 36.94 in round 6.
+#
+# Both are overridable from the environment so a new package does not need this file edited:
+#   RPDE_A="..." RPDE_M="..." bash Track_1/submit_fno/build_round13.sh 0.90
+# The defaults are the round-13 shipped set: 7 w24 seeds + m1220, one fused invocation.
+A="${RPDE_A:-$U/fno_all_vl_s1.pth $U/fno_all_vl_s2.pth $U/fno_all_vl_s3.pth \
+   $U/fno_all_vl_s4.pth $U/fno_all_vl_s5.pth $U/fno_all_vl_s6.pth $U/fno_all_vl_s7.pth \
+   $U/fno_all_vl_m1220.pth}"
+M="${RPDE_M:-$U/fno_vl_s1.pth $U/fno_vl_s2.pth $U/fno_vl_s3.pth $U/fno_vl_s4.pth \
+   $U/fno_vl_m1220.pth}"
+echo "members  (A, ships):  $A"
+echo "twins    (M, band):   $M"
 
-if pgrep -f "train2\.py" > /dev/null; then
-  echo "REFUSING: train2.py is running -- validate_strict's ms/window would be inflated and"
-  echo "the recorded board prediction would be wrong. Wait for the queue to drain."
-  exit 1
+# `validate_strict.py` TIMES the package, and that number sets the recorded `time_score`
+# prediction. Anything else on the same cpuset inflates it -- CLAUDE.md: "the 12-core cpuset,
+# not the GPU, binds".
+#
+# The old guard was `pgrep -f train2.py`, which was right on the single-machine setup and is
+# VESTIGIAL on a cluster: training runs on a compute node, so a login-node pgrep sees nothing.
+# Ask Slurm instead, and only refuse for jobs that could share this node.
+if command -v squeue > /dev/null 2>&1; then
+  OTHER=$(squeue -M ascend -u "$USER" -h -o "%i %j %T" 2>/dev/null           | grep -c "rp_.* RUNNING" || true)
+  MINE="${SLURM_JOB_ID:-none}"
+  if [ "${OTHER:-0}" -gt "$([ "$MINE" = none ] && echo 0 || echo 1)" ]; then
+    echo "REFUSING: other realpde Slurm jobs are RUNNING. validate_strict's ms/window would be"
+    echo "inflated by cpuset contention and the recorded board prediction would be wrong."
+    squeue -M ascend -u "$USER" -h -o "  %i %j %T %M" 2>/dev/null | grep "rp_"
+    echo "Wait for the queue to drain, or pass RPDE_FORCE=1 to build anyway (the timing, and"
+    echo "therefore the time_score prediction, will NOT be trustworthy)."
+    [ "${RPDE_FORCE:-0}" = "1" ] || exit 1
+  fi
+elif pgrep -f "train2\.py" > /dev/null; then
+  echo "REFUSING: train2.py is running on this machine."; exit 1
 fi
 for c in $A $M; do [ -f "$c" ] || { echo "MISSING $c"; exit 1; }; done
 
@@ -53,8 +77,9 @@ $PY Track_2/validate_t2.py --zip Track_2/submission_t2.zip
 
 echo "=== 5/5  stage for upload =============================================="
 mkdir -p "$SUB"
-cp Track_1/submit_fno/submission8.zip "$SUB/track1_r13_8memb_1inv.zip"
-cp Track_2/submission_t2.zip          "$SUB/track2_r01_8memb_1inv.zip"
+TAG="${RPDE_TAG:-r13_8memb_1inv}"
+cp Track_1/submit_fno/submission8.zip "$SUB/track1_$TAG.zip"
+cp Track_2/submission_t2.zip          "$SUB/track2_$TAG.zip"
 ls -la "$SUB"
 echo
 echo "NEXT: record the predicted board subscores in $SUB/README.md BEFORE uploading."

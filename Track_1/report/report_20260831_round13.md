@@ -1559,6 +1559,22 @@ the arm is decisively worse (rel-L2 +1.89 % at 4× the control spread). **Do not
 verdict through a broken instrument, which does not make it retroactively right — the reasons
 are entirely different, and "catastrophic" was wrong.
 
+### 26.4 The standard-split control, with 74 trajectories instead of 56
+
+§26's in-distribution penalty could have been a small-data artifact — the Re split trains on 56
+trajectories, and round 2's "locally neutral (86.00 vs 86.07)" was measured on 74. Two seeds on
+the standard split settle it:
+
+| | AoA 15–20 proxy rel-L2 | proxy wfinal | full-split rel-L2 | full wfinal |
+|---|---|---|---|---|
+| baseline (7 / 4 seeds) | 0.11297 ± 0.00031 | **81.7506 ± 0.0282** | 0.08513 ± 0.00053 | **83.4275 ± 0.0502** |
+| `--norm self` ×2 | 0.1159 / 0.1160 | 81.485 / 81.462 | 0.0871 / 0.0876 | 83.312 / 83.164 |
+
+**−0.28 wfinal on the proxy (≈ −10σ) and −0.19 on the full split (≈ −3.8σ)**, with *more* data
+than the Re split had. It is not a small-data artifact, and round 2's neutrality does not
+reproduce under the current recipe. `--norm self` is closed on both splits, with replicates on
+each.
+
 The hybrid §26.2 suggests — self-normalize the field, keep σ physical — was priced before
 running it. Give it the field gain *and* the control's TKE: `relo` `rel_l2_score` 94.46 → 94.89
 is **+0.23 wfinal on `relo`**, which §7.3's dilution (the board sits ~2.7 % outside the training
@@ -1568,3 +1584,284 @@ systems. The self-normalization family is done.
 
 *(`osc_ablate.py` handles either temporal branch — `head_osc` and `head_tb` — since the
 question and the ablation are identical for both.)*
+
+## 27. `ozdo` at ensemble scale: the gain is gone
+
+The number the package decision needed and §22 did not measure. 4-vs-4 at matched member count,
+AoA 15–20 proxy, band refit per set at the board's 1.39×:
+
+| set | n | rel-L2 | TKE | MVPE | sps | final |
+|---|---|---|---|---|---|---|
+| baseline ×4 | 4 | 0.1089 | **0.4531** | 0.0936 | 36.18 | **78.330** |
+| `ozdo` ×4 | 4 | **0.1086** | 0.4573 | 0.0942 | 36.22 | 78.318 |
+| baseline ×4 + `ozdo` ×4 | 8 | 0.1078 | 0.4523 | 0.0931 | 36.53 | 78.439 |
+
+**−0.012 `final`.** The per-model +0.108 (§22, +3.84σ over seven seeds, replicated 4-for-4 with
+a tighter spread than the baseline) is **entirely gone at four members**, and TKE is *worse*.
+rel-L2 goes from −1.13 % per model to **−0.3 %** ensembled.
+
+The mixed 8-member row is better than either 4, but that is the member-count effect (§8's
+curve), not the family effect — it is not a controlled comparison and should not be read as one.
+
+### 27.1 This is round 10's dilution mechanism, and it was predictable
+
+§10 measured it for `--var-mlp`: *"the gain is diluted twice, structurally… that is why a 3.9 %
+fixed-field TKE cut becomes +0.08 at the ensemble."* An ensemble already averages away error
+that is independent across members; a per-model improvement only survives ensembling if it
+removes error the members share. `ozdo`'s does not.
+
+**So `ozdo` is not a package change**, and §24.2's framing — *"+0.10 against 0.00, free upside"*
+— is withdrawn. Fusing the osc head (§24) was still worth doing: it removes a −0.11 `final`
+latency penalty that would have made the family unshippable, and it is a precondition for any
+future arm on this branch. But the arm as it stands buys nothing at the operating point that
+ships.
+
+### 27.2 What survives, and what it costs to find out
+
+The **mechanism** results stand — Γ² +1.66 % and the fluctuation part 0.0707 → 0.0697, the only
+change in the project to move either (§22.2), on a branch measured to be load-bearing (§25).
+What §27 adds is that moving the fluctuation *by 1.4 % per model* is not enough to survive an
+8-member average.
+
+**Standing rule this earns: measure the arm at the ENSEMBLE SIZE THAT SHIPS before believing a
+per-model delta.** Three rounds of per-model deltas (round 11's members, round 12's U-Net,
+round 13's `ozdo`) have now been diluted or reversed by ensembling. `ens_v9.py` is two minutes
+on a GPU; a per-model screen that skips it is not evidence about the package.
+
+## 28. The Re-band k-fold on dropout — the largest measured effect, and where it lives
+
+`kfold.py --split re`, five contiguous Reynolds bands held out in turn, 3383 out-of-fold
+windows over all 82 trajectories. Every fold is a transfer test, which the stratified k-fold
+structurally cannot be (§20).
+
+### 28.1 The baseline is the best board proxy this project has produced
+
+| | Re-band k-fold, single model | board R12, 11-member ensemble | ratio |
+|---|---|---|---|
+| rel-L2 | 0.12613 | 0.116626 | 1.08× |
+| TKE | 0.58788 | 0.526278 | 1.12× |
+| MVPE | 0.11555 | 0.140914 | 0.82× |
+| **predicted `final`** | **80.562** | **80.516** | **+0.046** |
+
+Against the AoA 15–20 proxy, which §19 called *precise but not accurate*, and the standard
+split, which sits 28 % below the board on rel-L2. This one lands **within 0.05 `final`**. It
+costs 10 trainings (~2.5 GPU-h) per arm pair, so it is a confirmation instrument, not a screen.
+
+Caveat that matters: the proxy is a **single model** and the board is an 11-member ensemble, so
+the level agreement is partly a cancellation of two errors (the proxy trains on ~66
+trajectories, not 82; the board averages members). Do not over-read one point of agreement.
+
+### 28.2 The paired result, and then where it actually lives
+
+| metric | baseline | `--dropout 0.15` | SE | z | % |
+|---|---|---|---|---|---|
+| rel-L2 | 0.12613 | 0.10292 | 0.00651 | **−3.57** | **−18.42** |
+| TKE | 0.58788 | 0.54822 | 0.01381 | **−2.88** | **−6.77** |
+| MVPE | 0.11555 | 0.08088 | — | — | −30.01 |
+
+Both clear |z| > 2 **and** the ~2 % board transfer bar, which no arm this round had done. But
+the pooled number is not what it looks like:
+
+| band | Re range | n | base rel-L2 | do15 | Δ | base TKE | do15 | Δ |
+|---|---|---|---|---|---|---|---|---|
+| **0** | 3750–7575 | 798 | **0.25034** | 0.15932 | **−36.4 %** | 0.87305 | 0.70274 | −19.5 % |
+| 1 | 8850–12675 | 827 | 0.07917 | 0.07856 | −0.8 % | 0.47580 | 0.47551 | −0.1 % |
+| 2 | 13950–17775 | 588 | 0.07831 | 0.07668 | −2.1 % | 0.47250 | 0.47067 | −0.4 % |
+| 3 | 19050–22875 | 737 | 0.08582 | 0.08421 | −1.9 % | 0.49720 | 0.49862 | +0.3 % |
+| 4 | 24150–26700 | 433 | 0.12046 | 0.11299 | −6.2 % | 0.58741 | 0.59205 | +0.8 % |
+| **bands 1–4** | | 2585 | **0.08779** | **0.08551** | **−2.6 %** | 0.49985 | 0.50052 | **+0.1 %** |
+
+**The entire −18.4 % is band 0** — extrapolation *below* the training range by a factor of 2.4
+in Reynolds number, where the baseline is catastrophic at 0.250 and dropout nearly halves it.
+Strip that one band and dropout is −2.6 % on rel-L2 and **exactly neutral on TKE**.
+
+### 28.3 How much of the board is band 0? Not identified, and the two subscores disagree
+
+Fit the board as a two-component mixture of band-0-like and band-1-4-like windows:
+
+* from **rel-L2**: `0.1166 = f·0.2503 + (1−f)·0.0878` ⇒ **f ≈ 0.18**
+* from **TKE**: `0.5263 = f·0.8731 + (1−f)·0.4999` ⇒ **f ≈ 0.07**
+
+No single `f` fits both — the board is harder on rel-L2 than its TKE implies and easier on TKE
+than its rel-L2 implies. That is `CLAUDE.md`'s standing open question ("the board's TKE
+elevation is not explained by AoA at all") restated in Reynolds terms, and this measurement
+does not close it either.
+
+**Honest bracket for dropout on the board: −2.6 % (no band-0 content) to −18 % (all of it),
+i.e. +0.13 to +1.7 `final`.** The mixture puts it near −9 … −15 %, but the mixture is not
+identified.
+
+### 28.4 Why dropout is a package change where `ozdo` (§27) is not
+
+The distinction is not "one is bigger". It is **which error each removes**:
+
+* **`ozdo`** removes error that is *independent across members* — so an 8-member average
+  already removes it, and §27 measures the gain at −0.012 `final`.
+* **`--dropout`** removes error the members **share**: they all train on the same in-range
+  Reynolds numbers and all extrapolate out of it the same way. Averaging cannot touch that.
+  §17.2 measured it directly at matched ensemble size — dropout ×3 against control ×3, `relo`
+  **−10.2 %**, `rehi` −2.4 %, `rein` +0.5 % — so it **survives ensembling**.
+
+That is the whole reason one ships and the other does not, and it is the mechanism to test any
+future arm against: **does it remove shared error or independent error?**
+
+`jobs/alldata_dropout.sbatch` queued (job 7107395): 8 all-data members, 4 at dropout 0.05 and
+4 at 0.15, hedging a rate the evidence cannot resolve at 82 trajectories. The `ozdo` variant of
+that job (`alldata_ozdo.sbatch`) is **not** queued — §27.
+
+## 29. Re-read of the Re-split arms against FOUR controls — and `--aug-scale` is null
+
+§5 compared each arm to two controls whose `relo` results were 1.42 `wfinal` apart. With the
+four controls `re_var` added, the same table reads very differently:
+
+| arm | `rein` | `relo` | `rehi` |
+|---|---|---|---|
+| control mean ± sd | 0.07537 ± 0.00005 | 0.12498 ± **0.01092** | 0.12290 ± 0.00068 |
+| `--aug-scale 0.25` | +1.0 % | **−0.2 %** | −1.5 % |
+| `--wd 1e-2` | −0.4 % | +4.1 % | +0.9 % |
+| **`--dropout 0.15`** | −0.5 % | **−14.6 %** | **−4.0 %** |
+| `--norm self` (3 seeds) | +1.9 % | −11.1 % | +0.7 % |
+
+**`--aug-scale` is the augmentation built specifically for Reynolds shift — rescale the
+freestream in training so the model sees a wider range of mean speeds — and it does nothing on
+the low-Re set.** −0.2 % against a control σ of 8.7 %. The *untargeted* regularizer does
+−14.6 % on the same windows, and `--norm self`, the *principled* fix, does −11.1 % but pays for
+it in TKE (§26).
+
+That ordering is worth stating plainly because it is the opposite of what the mechanism stories
+predicted: **the targeted fix is null, the principled fix is a wash, and the generic one wins.**
+A reading consistent with all three: the failure at low Re is not a missing invariance the
+model could have been taught (aug-scale supplies it and gains nothing) and not purely an input
+normalization problem (self-norm fixes that and the TKE cost eats the gain) — it is
+**over-fitting to the training Reynolds range**, which is what a capacity regularizer treats.
+That is the same diagnosis rounds 8 and 10b reached from the capacity ladder, arrived at from
+the distribution-shift side.
+
+`--aug-scale` is closed on this evidence. `--wd` was already closed by mechanism (§1) and this
+table agrees (+4.1 % on `relo`).
+
+## 30. `--tbasis` — the frequency adaptivity is decoration
+
+The pre-registered A/B from §25's conclusion. `--tbasis 4 --dropout 0.05` against
+`ozdo` (= `--osc-modes 2 --osc-global --osc-zeromean --dropout 0.05`): same rank in time (4),
+same zero-mean constraint, same dropout. The **only** difference is that `--tbasis`'s four
+temporal profiles are learned once and shared by every window, where the osc head synthesizes
+them per window from two frequencies.
+
+| arm | rel-L2 | TKE | wfinal | vs baseline |
+|---|---|---|---|---|
+| baseline ×7 | 0.11297 | 0.46750 | 81.7506 ± 0.0282 | — |
+| `ozdo` ×4 | 0.11170 | 0.46780 | 81.8590 ± 0.0237 | −1.13 %, **+3.84σ** |
+| **`tb4` ×3** | 0.11197 | 0.46760 | **81.8433 ± 0.0057** | −0.89 %, **+3.28σ** |
+
+**`tb4` − `ozdo` = −0.016 wfinal, −0.55 baseline σ. They are the same arm.**
+
+It replicates on the full split too: `tb4` ×3 = 83.650 mean against `ozdo`'s 83.6668 and the
+baseline's 83.4275 ± 0.0502 (+4.4σ), rel-L2 0.08387 against 0.08348 and 0.08513.
+
+And on the **mechanism**, not just the score:
+
+| | Γ² | fluctuation part |
+|---|---|---|
+| baseline | 0.3641 | 0.0707 |
+| `ozdo` ×4 | 0.37035 ± 0.00066 | 0.0697 |
+| **`tb4` ×3** | **0.3682 ± 0.0023** | **0.06997** |
+
+Γ² **+1.13 %** against `ozdo`'s +1.66 %, a difference of **z ≈ 1.6 — not significant**. The
+fixed shared basis reproduces the coherence gain and the fluctuation reduction, both of which
+§22 established as the only such movement in the project.
+
+### 30.1 What that settles
+
+§23 measured that the osc head learns a frequency correlated **+0.98…+0.995** with the window's
+own mean speed, with no supervision — a striking result that looked like the model discovering
+the flow's convective scaling. **It buys nothing.** Replace the two window-adaptive sinusoids
+with four fixed profiles shared across every window and the score is identical to half a
+baseline sigma.
+
+So the operative constraint on the branch is **low-rank, zero-mean and smooth in time** — not
+adaptivity, not frequency, not anything the ω(U) relation encodes. §13's "the value is in the
+CONSTRAINT, monotonically" is right, and this identifies *which* constraint.
+
+`--tbasis` is also the simpler object: 4 034 parameters against the osc head's ~5 100, no
+frequency MLP, no sigmoid, no band, no per-window spatial pooling — and a seed spread **4×
+tighter** (0.0057 against 0.0237).
+
+And on §25's ablation, the third readout:
+
+| | with `tb` | `tb` OFF | time-mean |
+|---|---|---|---|
+| `tb4_a` | rel-L2 0.08428, fluc 0.06995 | 0.10541, fluc 0.09438 | 0.04650 → **0.04650** |
+| `tb4_b` | 0.08340, fluc 0.06997 | 0.10161, fluc 0.09079 | 0.04495 → **0.04495** |
+
+Load-bearing exactly as the osc branch is — zeroing it takes the model well past the 0.0851
+baseline — and the time-mean is **bit-unchanged**, as the zero-mean constraint requires by
+construction. **A simpler object reproduces every measured property of the osc head**: score,
+Γ², fluctuation error, load-bearing-ness, and time-mean neutrality.
+
+### 30.2 What it does NOT change
+
+§27 measured this family at **−0.012 `final`** once ensembled, and §1.15's test says why: the
+branch removes error that is *independent across members*, which an 8-member average already
+removes. `--tbasis` matching `ozdo` per-model is a reason to believe it dilutes the same way,
+not a reason to ship it. **Neither is a package change.**
+
+What the pair leaves behind is a sharper statement of the open problem: the fluctuation carries
+69 % of the squared error, a rank-4 zero-mean temporal branch removes ~1 % of rel-L2 per model,
+and the part it removes is the part ensembling was already removing. **Whatever is left in the
+fluctuation is error the members SHARE**, and neither branch touches it.
+
+## 31. Dropout at matched ensemble size — it passes, and §28's bracket comes down
+
+The gate that killed `ozdo` (§27), applied to dropout. Six held-out dropout models (3 at 0.05,
+3 at 0.15) against six baseline seeds, band refit per set:
+
+| split | baseline ×6 | dropout ×6 | Δ `final` |
+|---|---|---|---|
+| AoA 15–20 proxy | rel 0.1083, TKE 0.4515, sps 36.36 → **78.397** | rel 0.1092, TKE 0.4583, sps 36.14 → 78.277 | **−0.120** |
+| full val_unseen | rel 0.0813, TKE 0.4728, sps 42.46 → 80.396 | rel 0.0817, TKE **0.4662**, sps **42.51** → **80.434** | **+0.038** |
+
+**The two splits disagree in sign**, and the rel-L2 gap (+0.8 % proxy, +0.5 % full) is below
+§1.8's ~2 % resolution. In distribution, at the ensemble size that ships, **dropout is a wash**
+— which is what the pre-registered condition allowed (*"a wash here is acceptable, the case is
+out-of-distribution; a LOSS is not"*). It passes.
+
+The six twins fuse to **1 invocation**, so the band's error field comes from a twin set of the
+same shape as the deployed one.
+
+### 31.1 The value estimate, redone with ENSEMBLED numbers — §28's +1.7 was an artifact
+
+§28 bracketed dropout at **+0.13 … +1.7 `final`** from single-model band numbers. That upper
+end does not survive: the in-distribution component measured **−2.6 % rel-L2 as single models**
+and **≈ 0 ensembled**, because part of what dropout removed was independent error the ensemble
+removes anyway.
+
+Redo it with §17.2's matched-ensemble deltas (dropout ×3 vs control ×3): `rein` **+0.5 %**,
+`rehi` **−2.4 %**, `relo` **−10.2 %**. For a board that is a mixture of those regimes:
+
+| board composition | Δ rel-L2 | Δ `final` |
+|---|---|---|
+| 93 % interior, 7 % `relo`-like | −0.25 % | +0.02 |
+| 82 % interior, 18 % `relo`-like | −1.43 % | +0.13 |
+| 60 % interior, 25 % `rehi`, 15 % `relo` | −1.83 % | +0.17 |
+
+**Honest estimate: +0.05 … +0.20 `final`** — which lands exactly on §17.3's conservative
+pre-registration (*"the honest bracket is nearer `rehi`'s −2.4…−4 %… roughly +0.1 … +0.2"*),
+made before any of this round's measurements. That prediction was right and §28's was not; the
+difference is entirely single-model versus ensembled.
+
+### 31.2 Ship it, for a small number and a clean reason
+
++0.1 … +0.2 is small. It is also **free** (no parameters, no extra invocation, no latency), it
+is the **only positive change available** after §26, §27, §29 and §30 closed everything else
+this round, and its downside is bounded near zero by the in-distribution wash. Against the
+board's own ±0.07 `time_score` noise it will not be *readable* in one round — which is a reason
+to keep it and stop measuring it, not a reason to skip it.
+
+**Two rules this round has now paid for twice:**
+
+1. **Measure at the ensemble size that ships.** `ozdo` +3.84σ per model → −0.012 ensembled;
+   dropout −2.6 % per model in distribution → ≈ 0 ensembled. Neither survived the per-model
+   reading.
+2. **A per-band or per-split pool can hide the whole effect.** Dropout's −18.4 % was one band;
+   its in-distribution sign flips between two local splits.

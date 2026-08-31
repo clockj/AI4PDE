@@ -62,7 +62,7 @@ _STD_TGT = np.array([0.09681040793657303, 0.015963643789291382], dtype=np.float6
 _A = (_fno.STD.astype(np.float64) / _STD_TGT).astype(np.float32)
 _B = ((_fno.MEAN.astype(np.float64) - _MEAN_TGT) / _STD_TGT).astype(np.float32)
 
-ALPHA = 0.60
+ALPHA = 0.90
 
 
 class FrozenEnsemble:
