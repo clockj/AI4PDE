@@ -233,12 +233,64 @@ extrapolation set** against the control's 0.1147, and **−7.8 `wfinal` on the i
 itself** against a same-split, same-data control. Whatever `--norm self` is doing, it is worse
 everywhere and catastrophic exactly where it was supposed to help.
 
-Two readings, and the measurement does not separate them: the *idea* is wrong, or the
-*implementation* breaks when the window's own mean speed is small (at Re 3750 the mean `u` is
-~0.04 m/s, so dividing by it amplifies everything, including the zero-filled out-of-FOV
-region). Either way: **do not ship `--norm self`, and do not cite Strategy item 5 as untested
-— it is tested and negative.** Round 2's "neutral" was measured with 74 training trajectories
-against this split's 56, so it is not a clean contradiction; the same-split control is.
+~~Two readings, and the measurement does not separate them: the *idea* is wrong, or the
+*implementation* breaks when the window's own mean speed is small. Either way: do not ship
+`--norm self`, and do not cite Strategy item 5 as untested — it is tested and negative.~~
+
+### 5.3b RETRACTED — the instrument was broken, and §5.3 measured it rather than the arm
+
+There was a third reading and it is the right one. **`_fno.predict_fno` hard-coded the global
+`MEAN`/`STD`.** A `--norm self` checkpoint divides each window by its own mean streamwise speed
+*before* standardizing, so it was fed an input it had never seen and its output was
+denormalized with the wrong affine. Only the retired `eval_wp.py` ever read the `self_norm`
+flag; `eval_v9.infer`, `compare_v9.py`, `re_split.py`, `kfold.py` and the package all go
+through `predict_fno`, which did not.
+
+The arithmetic identifies it beyond argument. Take a model whose self-normalized output is
+**exactly the target** and score it through the old path:
+
+| set | perfect self-norm model, scored through the old path | the arm actually measured |
+|---|---|---|
+| `rein` | 0.198 | 0.147 |
+| `relo` | **2.224** | **1.144** |
+| `rehi` | 0.349 | 0.299 |
+
+**The arm beat a perfect model on all three sets, in the same order.** That is impossible for
+a model and diagnostic of an instrument. The error scales with how far the window's own mean
+speed sits from the global mean, which is precisely why the failure presented as a
+Reynolds-extrapolation failure — `relo` is the low-Re set where the two affines diverge most.
+
+**Nothing shipped is affected**: 81 of the 82 checkpoints on disk are `--norm real`, for which
+the old constants are correct. `re_self.pth` is the only one, i.e. the bug touched exactly the
+arm it invalidated.
+
+Fixed in `_fno.py` (commit `ecd1aa6`), gated on the checkpoint's own flag and verified
+bit-identical for `--norm real` by `Track_1/verify/selfnorm_path.py`. **`--norm self` has
+never been measured with the current recipe.** Whether it helps is open; §5.3's verdict is
+withdrawn, and Strategy item 5 returns to untested rather than closed. Round 2's "locally
+neutral" stands as the only valid reading of it, and it was taken on an in-distribution split
+that §1.12 says cannot see what self-normalization is for.
+
+### 5.3c The same checkpoint, re-scored through the fixed path
+
+No retraining — `re_self.pth` is the arm §5.3 condemned, run again after `ecd1aa6`:
+
+| set | `re_self` rel-L2 | ctrl1 | `re_self` TKE | ctrl1 | `re_self` wfinal | ctrl1 |
+|---|---|---|---|---|---|---|
+| `rein` | 0.0766 | 0.0754 | 0.4696 | 0.4682 | 83.885 | 83.989 |
+| `relo` | **0.1104** | 0.1147 | **0.7553** | 0.6031 | 81.596 | 82.345 |
+| `rehi` | 0.1236 | 0.1219 | **0.5688** | 0.6035 | 79.170 | 78.911 |
+
+It was never catastrophic — it is an ordinary model. rel-L2 goes 1.1436 → **0.1104** on `relo`
+and 0.1468 → **0.0766** on `rein`, which confirms the diagnosis empirically rather than by
+arithmetic alone.
+
+What it now says, with the caveat that this is **one run against a `relo` seed σ of 0.71
+wfinal** and therefore not yet readable: rel-L2 is **−3.7 % against the better control** exactly
+on the low-Re extrapolation set (and −11.7 % against the 4-seed control mean of 0.12498, which
+is inside the control spread), roughly neutral on the interior control, and **TKE is 25 %
+worse on `relo`** — which is what sinks `wfinal` there despite the better field. Replicates are
+queued (`jobs/selfnorm.sbatch`, two seeds per split from the start, per §1.11b).
 
 ### 5.4 The pre-registered pass condition, honestly
 
@@ -1251,3 +1303,268 @@ Five arms this round cleared the first and none transferred.
 If it holds at ~−1.5 % rel-L2 it is still under the transfer bar on its own — but combined with
 whatever `kfold_re` says about dropout out of distribution, it is the first candidate of the
 round with a mechanism, a replicated component, and two independent effects that stack.
+
+## 22. `ozdo` replicated: the mechanism holds 4-for-4, the SCORE falls short of the bar
+
+Three more runs of `--osc-modes 2 --osc-global --osc-zeromean --dropout 0.05`, judged against
+the pre-registered condition from §21.3 — *the four-run mean must clear +2σ against the 7-seed
+floor **AND** the rel-L2 move must clear the ~2 % board transfer bar.*
+
+| | AoA 15–20 proxy (7 base vs 4 ozdo) | full val_unseen (4 vs 4) |
+|---|---|---|
+| rel-L2 | 0.11297 ± 0.00031 → 0.11170 | **−1.13 %** | 0.08513 ± 0.00053 → 0.08348 | **−1.94 %** |
+| TKE | 0.46750 ± 0.00206 → 0.46780 | +0.06 % | 0.49123 ± 0.00434 → 0.48008 | **−2.27 %** |
+| MVPE | 0.09783 → 0.09675 | −1.10 % | 0.07318 → 0.07107 | −2.87 % |
+| sps | 42.129 ± 0.072 → 42.515 | +0.386 | 47.633 ± 0.138 → 48.298 | +0.665 |
+| **wfinal** | 81.7506 ± 0.0283 → **81.8590** | **+3.84σ** | 83.4275 ± 0.0502 → **83.6668** | **+4.77σ** |
+
+### 22.1 The replication test passes, and it is the first arm this round to do so
+
+Four runs at 81.860 / 81.835 / 81.891 / 81.850 — a spread of 0.056, *tighter than the seven
+baseline seeds* (σ 0.0237 against 0.0283). Contrast §21.1, where `oscz2`'s +3.14σ became
++1.31σ on its single replicate. This is not that.
+
+### 22.2 The mechanism claim replicates exactly, and the fluctuation finally moved
+
+`diag_spectral.py` on all four, against the baseline's Γ² 0.3641 / mean 0.0470 / fluc 0.0707:
+
+| run | Γ² | time-mean part | fluctuation part |
+|---|---|---|---|
+| `ozdo` | 0.3701 | 0.0457 | 0.0699 |
+| `ozdo_b` | 0.3699 | 0.0457 | 0.0697 |
+| `ozdo_c` | 0.3713 | 0.0450 | 0.0695 |
+| `ozdo_d` | 0.3701 | 0.0457 | 0.0697 |
+| **mean** | **0.37035 ± 0.00066 (+1.66 %)** | **0.04553 (−3.1 %)** | **0.0697 (−1.4 %)** |
+
+**This is the first change in the project to move the fluctuation part of the error.** `ROADMAP`
+P3 records that every decomposition of this round — baseline, `--w-mean 0.3` with 3.3× the
+gradient on it, `oscg2`, `osc2` — left it pinned at 0.0704–0.0707 while 69 % of the squared
+error lives there. Four runs at 0.0695–0.0699 is outside that band, and Γ² moves with it at a
+σ of 0.0007 across four seeds.
+
+### 22.3 …and the score still fails the second half of the condition
+
+**−1.13 % on the AoA 15–20 proxy against a bar of ~2 %.** The bar is not arbitrary and it is
+not about noise: §1.8 calibrated it on three board rounds, where proxy deltas of −0.87 % and
++1.78 % predicted the board's *sign* wrongly. §19 measured the same thing from the other side —
+the proxy resolves ~18× finer than the board can distinguish, so it is **precise but not
+accurate**, and four tight replicates buy precision, which is not the failing quantity.
+
+**Verdict, by the rule as written: `ozdo` does not qualify as a package change on its own.**
+The full split reads −1.94 %, but the bar was calibrated on the proxy and moving to whichever
+instrument gives the friendlier number is how five arms got shipped in rounds 9–12.
+
+What it does qualify as is a **replicated mechanism with a measured, independent signature**
+(Γ², the fluctuation part) that no previous arm has touched — which is a reason to keep
+pulling on the osc/zero-mean thread, not a reason to rebuild the package around it.
+
+## 23. What the oscillatory head actually learned — and it closes both physics arms
+
+`Track_1/osc_probe.py` reads ω and the mode amplitudes straight out of the head over all 336
+`val_unseen` windows. Four `ozdo` seeds plus `oscz2`, J = 2, `--osc-global`:
+
+| | ω (slow mode) | ω (fast mode) | period | corr(ω, U) | in shedding band |
+|---|---|---|---|---|---|
+| `ozdo` | 0.204 ± 0.066 | 0.397 ± 0.118 | 31 / 16 fr | **+0.995 / +0.992** | **0.00** |
+| `ozdo_b` | 0.248 ± 0.081 | 0.438 ± 0.119 | 25 / 14 fr | +0.991 / +0.978 | 0.00 |
+| `ozdo_c` | 0.246 ± 0.081 | 0.433 ± 0.122 | 26 / 15 fr | +0.992 / +0.980 | 0.00 |
+| `ozdo_d` | 0.240 ± 0.083 | 0.433 ± 0.122 | 26 / 15 fr | +0.994 / +0.982 | 0.00 |
+| `oscz2` | 0.214 ± 0.071 | 0.412 ± 0.122 | 29 / 15 fr | +0.995 / +0.989 | 0.00 |
+
+Both modes carry real amplitude (0.13–0.26 against a normalized field of order 1), the two
+always separate by a factor ≈ 1.75, and every number above replicates across five independent
+runs.
+
+### 23.1 The head tracks the freestream speed with no supervision — and it is NOT Strouhal
+
+`corr(ω, U) = +0.98…+0.995` on every mode of every seed. That looks like the shedding law
+`St = f·c/U∞ = const`. It is not. Fitting the two forms:
+
+| model | R² (slow mode) | R² (fast mode) |
+|---|---|---|
+| `ω = b·U` (Strouhal, zero intercept) | 0.69 / 0.70 | **0.52 / 0.35** |
+| `ω = a + b·U` | **0.991 / 0.984** | **0.984 / 0.960** |
+| `ω = b(AoA)·U`, own constant per angle | 0.82 / 0.78 | 0.73 / 0.71 |
+
+The intercept is large and positive (a = +0.078…+0.205 against a slope term spanning
+0.04–0.31 over the observed U range), and giving each angle of attack its own Strouhal constant
+fits **worse** than one affine law — so AoA is not the missing variable either.
+
+### 23.2 Both physics-motivated arms are therefore closed before being run
+
+* **Narrow the band to the shedding band.** Wrong: **not one window of 336 lands in
+  [0.0838, 0.1047]** on any seed. The head runs at 2.5–4.5× the shedding frequency, at periods
+  of 14–31 frames. The reason is structural — a 20-frame output window spans only 0.27–0.33 of
+  a 60–75 frame shedding cycle, so the fundamental is **not identifiable in-window**, and the
+  head picks periods that fit about one cycle inside the data it has.
+* **Lock ω = c·U (Strouhal).** Wrong: it is the zero-intercept model, and imposing it drops R²
+  from 0.99 to 0.52–0.70.
+
+The band ceiling binds only marginally — `2π/10 = 0.628`, and one mode of one seed has 12.5 %
+of its windows within 1 % of it, the other seven mode-seeds 0.0 %. Widening the band is a real
+but small arm, not the one the correlation suggested.
+
+**What the head is doing, stated at the confidence the measurement supports:** it emits a
+smooth, near-affine function of the window's own mean speed, in a frequency range the 20-frame
+window can actually resolve, and the resulting term improves Γ² and the fluctuation error
+(§22.2) across four seeds. Whether that is physics or a useful reparameterization is not
+determined here — but the two things it is *not* are now measured, which is worth the 2 GPU-h
+they would each have cost.
+
+## 24. The osc head could not be shipped at all — `fuse()` refused it, at −0.11 `final`
+
+§22 priced `ozdo` at roughly +0.10 `final` if it transfers, and recommended against shipping it
+on the proxy delta. That recommendation was made without checking what it would have cost, and
+the cost turns out to dominate the question.
+
+`_fno.fuse` grouped members by their `state_dict` shape signature and then **passed any member
+with a `head_osc` through unfused**, alongside `head_mean`, because `StackedFNO` enumerates its
+heads explicitly and would silently drop one it did not know about. Measured:
+
+```
+4 ozdo members      -> 4 invocations
+4 baseline members  -> 1 invocation
+```
+
+An eight-member `ozdo` package is therefore **8 sequential invocations**. At §1.5's board-time
+model (`board ms = 4.447 + 0.324·inv + 0.431·local ms`, 1 board ms ≈ 0.05 `final`) that is
+**+2.3 board ms ≈ −0.11 `final`** — larger than the arm's entire measured gain. Round 12 paid
+0.973 `time_score` for one extra group and is the empirical anchor for that slope.
+
+**So the only change this round that moved the fluctuation error was not shippable in any
+configuration**, and no amount of further held-out evidence would have made it so.
+
+### 24.1 Fusing it — everything the head does is linear in the member axis
+
+`head_osc` is two 1×1 convs and groups exactly like `head_field`. `osc_w` is an MLP on the
+**spatially pooled** trunk, i.e. a per-member `width → 64 → J` matmul, so stacking its weights
+along a member axis and using `einsum("bki,koi->bko")` is the same block-diagonal map a grouped
+conv would give without reshaping to 1×1 spatial. The cos/sin synthesis, the zero-meaning and
+the sum over modes are all linear, so adding the per-member `osc` to `f_all` **before** the
+member mean is identical to the sequential loop's add-then-average.
+
+`Track_1/verify/fuse_osc.py`: 4 members → **1 invocation**, fused against sequential
+`predict_fno` to **3e-7** at α = 0.0 / 0.60 / 0.90, sigma (which drives the SPS band) to
+**1e-8**. TF32 must be off — it turns the spectral einsum's 1e-8 agreement into 1e-3 with
+neither path being wrong.
+
+**A repeat of the `self_norm` trap, caught this time.** `osc_zeromean` is a bool with no
+parameters, so the shape signature cannot see it and two members disagreeing on it would have
+fused into one module that can only be right for some of them. It is now part of the group key,
+with `osc_modes` and `osc_global` (which *do* show up in the shapes, but are keyed explicitly
+rather than left to that coincidence).
+
+### 24.2 What this changes about §22's verdict
+
+Nothing about the evidence; everything about the option set. Before: `ozdo` was +0.10 accuracy
+against −0.11 latency, i.e. **not shippable at any confidence**. After: it is +0.10 against
+**0.00**, judged against a proxy that §1.8 says gets the sign right about two thirds of the
+time at this effect size. That is a different decision, and it is the one the round-14 package
+faces. The proxy delta still does not clear the bar and the arm still should not be claimed as
+a win — but "free upside with a replicated mechanism" and "upside that pays for itself twice
+over in latency" are not the same proposition.
+
+## 25. The oscillatory TERM is load-bearing — an inference-time ablation
+
+`Track_1/osc_ablate.py` runs identical weights with `head_osc`'s output conv zeroed, which is
+exactly the branch's own initialization. Two `ozdo` seeds, α = 0.90, all 336 `val_unseen`
+windows:
+
+| checkpoint | branch | rel-L2 | time-mean part | fluctuation part | TKE |
+|---|---|---|---|---|---|
+| `ozdo` | with osc | **0.08370** | 0.04568 | **0.06985** | 0.47839 |
+| `ozdo` | osc OFF | 0.10091 | 0.04568 | 0.08975 | 0.48930 |
+| `ozdo_c` | with osc | **0.08305** | 0.04501 | **0.06951** | 0.48122 |
+| `ozdo_c` | osc OFF | 0.09352 | 0.04501 | 0.08167 | 0.49339 |
+| *(4-seed baseline, §22)* | — | *0.08513* | *0.0470* | *0.0707* | *0.49123* |
+
+**Two things fall out, and the second was not the question being asked.**
+
+### 25.1 It is the TERM, not a regularizer — so the follow-up is about its form
+
+Zeroing the branch does not return the model to baseline; it takes it **well past** baseline, to
+rel-L2 0.101 / 0.094 against 0.085 and a fluctuation part of 0.0898 / 0.0817 against 0.0707.
+The trunk has genuinely offloaded part of the fluctuation onto the oscillatory branch and no
+longer predicts it itself. **The branch is load-bearing.**
+
+That settles the §13.4 / §18 question that has been reopened twice in this round, and it
+decides the next arm: the head belongs with the **fluctuation** work, not next to `--dropout`,
+and the productive direction is the term's *form* — a free learned temporal basis, more modes,
+a different band — rather than treating it as one more regularizer.
+
+**The honest limit of this ablation.** It shows the branch is used; it does **not** show the
+branch is uniquely good. The right control for "is this a good idea" is a model trained without
+it, which is §22's baseline, and against that the fluctuation gain is only −1.4 %. What the
+ablation adds is that the −1.4 % comes from a component doing real work, not from noise or from
+a training-time side effect.
+
+### 25.2 `--osc-zeromean` does exactly what it claims, to five decimals
+
+The time-mean part is **identical with and without the branch** — 0.04568 vs 0.04568, 0.04501
+vs 0.04501. The whole point of §18's zero-mean constraint was that the un-constrained head was
+suspected of being a mean-head in disguise (`mean_t cos(ωt) = 0.511` over a 20-frame window at
+the learned period). It now contributes **nothing** to the time-mean, by construction and by
+measurement, while carrying 18–28 % of the fluctuation error. The "phase idea is untested"
+worry from §13.4 is closed.
+
+## 26. `--norm self`, measured correctly at last — and honestly closed
+
+Three seeds on the Re split, scored through the fixed path (§5.3b), against the four controls.
+
+| | control (4 seeds) | `--norm self` (3 seeds) | Δ | σ ratio |
+|---|---|---|---|---|
+| `rein` rel-L2 | 0.07537 ± 0.00005 | 0.07680 ± 0.00020 | **+1.89 %** | 0.2× |
+| **`relo` rel-L2** | 0.12498 ± **0.01092** | **0.11107 ± 0.00083** | **−11.13 %** | **13.1×** |
+| `rehi` rel-L2 | 0.12290 ± 0.00068 | 0.12377 ± 0.00076 | +0.71 % | 0.9× |
+| **`relo` TKE** | 0.63155 ± 0.07251 | **0.76300 ± 0.00678** | **+20.81 %** | 10.7× |
+| `rein` wfinal | 83.999 ± 0.012 | 83.859 ± 0.023 | −0.140 | |
+| `relo` wfinal | 81.647 ± **0.707** | 81.521 ± **0.065** | −0.126 | **10.8×** |
+
+And as 2-member ensembles, which is how it would actually ship:
+
+| | `rein` rel | `relo` rel | `rehi` rel | `relo` TKE | `relo` wfinal |
+|---|---|---|---|---|---|
+| control ×2 | **0.0739** | 0.1170 | 0.1199 | **0.5650** | **82.495** |
+| self-norm ×2 | 0.0752 | **0.1077** | 0.1213 | 0.7188 | 81.996 |
+
+### 26.1 It does exactly what Strategy item 5 promised — for the FIELD
+
+rel-L2 on the low-Re extrapolation set is **−11.1 %** single-model and **−7.9 %** at two
+members, below even the best of the four controls. And the variance collapses: the controls
+scatter σ = 0.0109 in rel-L2 and **0.707 in `wfinal`** across seeds on `relo`, where the
+self-normalized models scatter **0.00083 and 0.065** — a **13× / 11× reduction** in exactly the
+quantity §5.5 identified as the reason no local number has transferred since 2026-08-08, and
+exactly what §17.1 showed ensembling was buying. The control's `relo` `wfinal` spans 1.419
+across four seeds; self-normalization's spans **0.124** across three.
+
+The mechanism is the one the strategy note gave: at Re 3750 the mean `u` is ~0.04 m/s against a
+global normalizer centred on 0.155, so the absolute-units model is asked to extrapolate its
+input distribution and every seed extrapolates differently. Dividing by the window's own mean
+speed removes that axis, and the models stop disagreeing.
+
+### 26.2 And it pays for it in TKE, reliably
+
+`relo` TKE is **+20.8 %** single-model and **+27 %** ensembled, with a seed σ of 0.0068 — it is
+*consistently* worse, not variably worse. The mechanism is structural, not a bug: under
+self-normalization the variance head predicts σ in **self-normalized units**, so the deployed
+physical σ is `σ̂ · s`. That hard-codes a **Reynolds-independent relative turbulence intensity**,
+which the data does not have. The field pathway benefits from removing the Re scale; the
+variance pathway is harmed by it.
+
+### 26.3 Verdict: closed, and the obvious hybrid is not worth running either
+
+`wfinal` is a wash single-model (−0.13) and a **loss ensembled (−0.50)**, and in distribution
+the arm is decisively worse (rel-L2 +1.89 % at 4× the control spread). **Do not ship
+`--norm self`. Strategy item 5 is now closed on a valid measurement.** §5.3 reached the same
+verdict through a broken instrument, which does not make it retroactively right — the reasons
+are entirely different, and "catastrophic" was wrong.
+
+The hybrid §26.2 suggests — self-normalize the field, keep σ physical — was priced before
+running it. Give it the field gain *and* the control's TKE: `relo` `rel_l2_score` 94.46 → 94.89
+is **+0.23 wfinal on `relo`**, which §7.3's dilution (the board sits ~2.7 % outside the training
+range against `relo`'s 12 %) cuts to roughly **+0.05**, against a *certain* in-distribution cost
+of about −0.04. **Not worth a GPU-hour**, and it would need `compose()` to carry two unit
+systems. The self-normalization family is done.
+
+*(`osc_ablate.py` handles either temporal branch — `head_osc` and `head_tb` — since the
+question and the ablation are identical for both.)*

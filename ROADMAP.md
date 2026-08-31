@@ -195,6 +195,31 @@ mean are all measured and null. It makes it **open**, where the map said closed.
 
 ---
 
+### 1.11b AT THESE EFFECT SIZES, ONE RUN IS NOT A MEASUREMENT
+
+Round 13 ran ~30 arms and produced **four** cases where a single run at 2–3σ regressed once
+replicated or measured with a larger instrument:
+
+| claim | first reading | after |
+|---|---|---|
+| the osc "constrainedness" ordering | monotone in constraint | the two extremes **swap** on the second split |
+| out-of-distribution seed variance | ~1400× | **58×** (a range-of-2 is a poor σ estimator) |
+| `--dropout` buys TKE | −3.1 % (336 unpaired windows) | **+0.95 % WORSE** (3 383 paired, z +2.74) |
+| `--osc-zeromean` score | +3.14σ (1 run) | **+1.60σ** (4 runs) |
+
+Every one of those was corrected only because the check was built. **This is a property of the
+setup, not luck.** Two rules follow:
+
+* **Replicates belong in the first job, not the follow-up.** A single arm at 2σ costs 18 min to
+  replicate and is worth nothing without it.
+* **The 126- and 336-window splits cannot resolve anything under ~2σ.** Use `kfold.py --paired`
+  (3 383 windows, trajectory bootstrap) for any claim that will change a package.
+
+Combined with §1.11's measurement — the proxy resolves σ = 0.028 `wfinal` while the board's
+transfer resolution is ≈ 0.5 — **the proxy is precise but not accurate, ~18× finer than the
+board can distinguish.** More seeds cannot fix that; the missing quantity is distribution
+shift, not variance.
+
 ### 1.12 In-distribution fit does not determine out-of-distribution behaviour
 
 `re_split.py`, six arms on the same 56 training trajectories. **Two runs of the identical
@@ -258,6 +283,42 @@ are not exchangeable), which replaces comparing a delta to a borrowed seed σ. I
 fix the board's distribution shift; `re_split.py` is the instrument for that. Cost is K
 trainings per arm — screen on the AoA proxy, confirm here.
 
+### 1.13 AN ARM CAN FAIL BECAUSE THE SCORER DOES NOT IMPLEMENT IT
+
+`--norm self` was closed on 2026-08-31 as *"not neutral — it is broken"*, on rel-L2 1.1436
+against a control's 0.1147. It was the **instrument**. `_fno.predict_fno` — which every
+evaluation path and the package itself run through — hard-coded the global `MEAN`/`STD`, so a
+checkpoint that divides each window by its own mean speed before standardizing was fed an
+input it had never seen and denormalized with the wrong affine. Only the retired `eval_wp.py`
+ever read the flag.
+
+**The tell was available before any debugging, and it is general.** Score a model whose
+self-normalized output is *exactly the target* through the old path: rel-L2 **0.198 / 2.224 /
+0.349** on `rein` / `relo` / `rehi`. The arm measured 0.147 / 1.144 / 0.299 — **it beat a
+perfect model on all three sets, in the same order.** No model can do that. When an arm scores
+worse than the theoretical worst case for its own hypothesis, suspect the harness, not the
+idea.
+
+> **Standing check.** Before believing that an arm which changes the *representation* — the
+> normalizer, the output parameterization, the target space — is bad, confirm the scoring path
+> implements the change. A tuning knob is safe (the same code runs either way); a
+> representation change is not. `Track_1/verify/selfnorm_path.py` is the pattern: assert
+> bit-identity against the committed reference for the default, assert the new affine
+> round-trips, and refuse to mix the two conventions in one ensemble.
+
+Fixed in `ecd1aa6`; nothing shipped moves (81 of 82 checkpoints are `--norm real`). See
+`report_20260831_round13.md` §5.3b/§5.3c.
+
+**The arm was then measured properly and is closed** (§26, three seeds on the Re split). It
+does what Strategy item 5 promised *for the field* — `relo` rel-L2 **−11.1 %**, and it collapses
+the low-Re seed variance **13×** (σ 0.0109 → 0.00083; `wfinal` 0.707 → 0.065), which is the
+exact quantity §5.5 blamed for local numbers not transferring. It pays **+20.8 % TKE** on the
+same set, reliably (seed σ 0.0068), because the variance head then predicts σ in
+self-normalized units and so hard-codes a Reynolds-*independent* relative turbulence intensity.
+Net: wash single-model, **−0.50 `wfinal` ensembled**, decisively worse in distribution.
+**Do not ship it**, and do not run the field/σ hybrid either — priced at ~+0.05 after §7.3's
+dilution against a certain −0.04.
+
 ## Part 2 — Closed. Do not re-propose without new evidence.
 
 Everything here was closed by measurement, with the file that measured it. The list exists so a
@@ -284,6 +345,12 @@ new session does not spend a week re-deriving a negative.
   measured three ways including FGN (round 11–12).
 * **FGN / CRPS probabilistic head.** Sample spread predicts σ at 0.451–0.469 against the
   log-MSE head's 0.329 (round 12, `eval_fgn.py`).
+* **Self-normalization (`--norm self`), i.e. Strategy item 5.** Three seeds on the Re split
+  through a scoring path that finally implements it (§1.13). It delivers the promised field
+  gain — `relo` rel-L2 −11.1 %, seed σ down 13× — and pays +20.8 % TKE there because the σ head
+  then predicts in self-normalized units. Wash single-model, **−0.50 `wfinal` ensembled**,
+  worse in distribution. The field/σ hybrid is priced at ~+0.05 and not worth running
+  (round 13, §26).
 * **Phase / advection.** Fluctuation re-registration recovers 0.2 % on the real model where its
   synthetic control recovers 100 %. The error is decorrelation, not misregistration (round 12).
 * **4× phase augmentation (`--phases 4`).** −0.009 at matched compute, **−0.369 at 4× steps
@@ -429,11 +496,25 @@ Two independent corrections landed on the same square this round.
   not its amplitude — so the residual is decorrelation, matching round 12's phase/advection
   null.
 
-**Round 13 tried, and moved it by nothing.** Every decomposition of the round leaves the
-fluctuation part at **0.0704–0.0707** — baseline, `--w-mean 0.3` (3.3× more of the loss),
-`oscg2`, `osc2` alike — while **69 % of the squared error lives there**. The loss-weight family
-cannot reach it (§12), the regularization family does not touch it (§14.1), and the one arm
-built specifically for it was improving the time-mean instead (§13.4).
+**Round 13 moved it, at the very end, and by less than the transfer bar.** For most of the
+round every decomposition left the fluctuation part pinned at **0.0704–0.0707** — baseline,
+`--w-mean 0.3` (3.3× more of the loss), `oscg2`, `osc2` alike — while **69 % of the squared
+error lives there**. The loss-weight family cannot reach it (§12), the regularization family
+does not touch it (§14.1), and the one arm built specifically for it was improving the
+time-mean instead (§13.4).
+
+**`ozdo` (`--osc-modes 2 --osc-global --osc-zeromean --dropout 0.05`) is the exception, over
+four runs** (`report_20260831_round13.md` §22): fluctuation part **0.0695–0.0699**, Γ²
+**0.37035 ± 0.00066 against 0.3641 (+1.66 %)**, wfinal +3.84σ on the proxy and +4.77σ on the
+full split with a spread *tighter than the baseline seeds*. It is the first change in the
+project to move either quantity.
+
+**It still fails the §1.8 bar** — rel-L2 −1.13 % on the proxy against ~2 % — so it is not a
+package change on its own, and four tight replicates do not fix that (they buy precision;
+§1.8's failure is bias). **What it is: the first evidence that the fluctuation is reachable
+at all, and a direction with two independent measured signatures to steer by.** Pull on the
+thread — more zero-mean modes, the constraint without dropout at a larger J, the basis itself
+— rather than shipping this point on it.
 
 Round 12's phase/advection null still stands and constrains the *form* of any attack: the
 fluctuation error is decorrelation, not misregistration, so no re-registration, no phase
@@ -497,9 +578,11 @@ REORDERS something the AoA 15–20 proxy gets wrong.** If every arm ranks the sa
 interior control as on the extrapolation sets, it is one more local number that does not
 predict the board, and it should be abandoned rather than trusted.
 
-Arms: control ×2 seeds, `--norm self` (measured −0.20 on the old split, but that split is
-structurally blind to what self-normalization is for), `--aug-scale 0.25`, `--wd 1e-2`,
-`--dropout 0.15`.
+Arms: control ×2 seeds, `--norm self`, `--aug-scale 0.25`, `--wd 1e-2`, `--dropout 0.15`.
+(The `--norm self` row is void — see §1.13. Both readings of it in the literature here are
+now wrong: round 2's "−0.20 on the old split" used the U-Net-era `eval_wp.py`, which *did*
+implement self-normalization but measured it on a split blind to what it is for; round 13's
+"broken" used `predict_fno`, which did not implement it at all.)
 
 ### Explicitly NOT recommended
 
@@ -526,8 +609,13 @@ structurally blind to what self-normalization is for), `--aug-scale 0.25`, `--wd
 | Track-2 honest local eval | `Track_2/stream_eval.py` (real trajectories, official scoring), `Track_2/submit_ho/` |
 | Ready-to-submit archives + recorded predictions | `../sub_candidates/README.md` |
 | Round-13 plan and submission strategy | `Track_1/plan/plan_20260831.md` |
+| Round-13 evidence, §1–§23 | `Track_1/report/report_20260831_round13.md` |
 | Re-extrapolation split | `Track_1/re_split.py` |
+| Out-of-fold local eval over all 82 trajectories | `Track_1/kfold.py` (`--split re` for Re bands) |
 | Proxy-vs-board calibration | `Track_1/proxy_calib.py` |
+| What a submission is WORTH as information | `Track_1/sub_value.py` |
+| Normalizer-path gate | `Track_1/verify/selfnorm_path.py` |
+| What the oscillatory head learned | `Track_1/osc_probe.py` |
 
 **Machine.** OSC; data at `/users/PAS1187/qwu/RealPDE/`, env `realpde` (torch 2.2.2+cu121).
 Training needs an A100 Slurm allocation — the login/OnDemand node has no GPU. The **12-core
@@ -551,3 +639,15 @@ anything while training runs, and do not judge liveness by `nvidia-smi` (it read
    reused staging buffer makes every stored prediction equal to the last one, scores rel-L2
    0.67 instead of 0.074, and passes every harness that copies out on the same line —
    `Track_2/validate_t2.py` caught exactly that on its first GPU run.
+7. **Before believing an arm that changes the REPRESENTATION is bad, confirm the scoring path
+   implements it.** §1.13: `--norm self` was closed on a number produced by a `predict_fno`
+   that had no self-normalization branch at all. A tuning knob is safe — the same code runs
+   either way — but a normalizer, an output parameterization or a target-space change is not.
+   The alarm is free and general: **if an arm scores worse than the theoretical worst case for
+   its own hypothesis, suspect the harness.**
+8. **Replicates belong in the FIRST job, not the follow-up.** §1.11b: four single-run 2–3σ
+   results regressed on replication in one round. Out of distribution the seed σ is 0.71
+   `wfinal`, 58× the interior control's, so a one-run OOD number is unreadable by construction.
+9. **A held-out list is DERIVED, never typed.** The (Re, AoA) grid is incomplete — there is no
+   `3750_15`, and `5025` has all five angles — so a hand-written `--exclude` silently trains on
+   a held-out trajectory. Call `re_split.excluded()` / `kfold.py --folds` and assert the count.

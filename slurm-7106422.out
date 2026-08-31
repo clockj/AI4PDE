@@ -1,0 +1,65 @@
+host=a0338.ten.osc.edu job=7106422 gpu=NVIDIA A100-PCIE-40GB cpus=12
+(A) skipped: no reference copy of the pre-patch _fno.py given as argv[1]
+(B) self_norm round trip on 8 real windows: max err 5.588e-09   OK
+(B) predict_fno's affine == model.self_norm: max err 4.768e-07   OK
+(C) mixed ensemble refused: predict_fno: cannot mix --norm self and --norm real members   OK
+
+PASS
+held out (214 chars): 12675_0 12675_10 12675_15 12675_20 12675_5 19050_0 19050_10 19050_15 19050_20 19050_5 25425_0 25425_10 25425_15 25425_20 26700_0 26700_10 26700_15 3750_0 3750_10 3750_20 3750_5 5025_0 5025_10 5025_15 5025_20 5025_5
+===== sn_re_a  (Re split, 56 traj, --norm self) =====
+  epoch 149  loss 0.57486  field 0.06813  var 0.37369  tke 0.37404  probe 0.00000  div 0.33851  spec 0.00000  crps 0.00000  svar 0.00000  (777s)
+saved unet/re_self_a.pth
+  exit 0
+===== sn_re_b  (Re split, 56 traj, --norm self) =====
+  epoch 149  loss 0.57988  field 0.06957  var 0.37470  tke 0.38078  probe 0.00000  div 0.34078  spec 0.00000  crps 0.00000  svar 0.00000  (761s)
+saved unet/re_self_b.pth
+  exit 0
+===== Re split: 4 controls, the old self arm, dropout, and the two new self seeds =====
+checkpoint             set      relL2     TKE    MVPE    sps |  wfinal
+----------------------------------------------------------------------
+re_ctrl1.pth           rein    0.0754  0.4682  0.0586  48.37 |  83.989
+                       relo    0.1147  0.6027  0.1098  48.60 |  82.349
+                       rehi    0.1219  0.6034  0.1062  32.60 |  78.912
+
+re_ctrl2.pth           rein    0.0754  0.4658  0.0590  48.30 |  83.990
+                       relo    0.1404  0.6206  0.1566  45.12 |  80.930
+                       rehi    0.1234  0.5801  0.1130  32.42 |  78.957
+
+re_ctrl3.pth           rein    0.0753  0.4636  0.0592  48.35 |  84.015
+                       relo    0.1217  0.7352  0.1284  46.70 |  81.157
+                       rehi    0.1231  0.5940  0.1080  31.79 |  78.766
+
+re_ctrl4.pth           rein    0.0754  0.4649  0.0594  48.34 |  84.002
+                       relo    0.1231  0.5677  0.1178  47.76 |  82.151
+                       rehi    0.1232  0.5801  0.1085  33.14 |  79.108
+
+re_do15.pth            rein    0.0750  0.4660  0.0586  48.62 |  84.061
+                       relo    0.1067  0.5916  0.0980  49.88 |  82.857
+                       rehi    0.1180  0.5897  0.0932  35.06 |  79.575
+
+re_self.pth            rein    0.0766  0.4696  0.0593  48.04 |  83.884
+                       relo    0.1104  0.7553  0.1066  47.95 |  81.595
+                       rehi    0.1236  0.5688  0.1080  33.20 |  79.170
+
+re_self_a.pth          rein    0.0768  0.4728  0.0598  47.94 |  83.840
+                       relo    0.1120  0.7656  0.1082  47.76 |  81.471
+                       rehi    0.1246  0.5773  0.1054  33.11 |  79.081
+
+re_self_b.pth          rein    0.0770  0.4700  0.0602  47.94 |  83.852
+                       relo    0.1108  0.7681  0.1073  47.80 |  81.497
+                       rehi    0.1231  0.5852  0.1033  33.17 |  79.092
+
+===== and as a 2-member ensemble, the way it would actually ship =====
+checkpoint             set      relL2     TKE    MVPE    sps |  wfinal
+----------------------------------------------------------------------
+ens x2                 rein    0.0752  0.4628  0.0584  48.68 |  84.087
+                       relo    0.1077  0.7188  0.1033  48.78 |  81.996
+                       rehi    0.1213  0.5701  0.1007  33.93 |  79.366
+
+checkpoint             set      relL2     TKE    MVPE    sps |  wfinal
+----------------------------------------------------------------------
+ens x2                 rein    0.0739  0.4593  0.0574  49.10 |  84.227
+                       relo    0.1170  0.5650  0.1204  48.66 |  82.495
+                       rehi    0.1199  0.5767  0.1067  33.34 |  79.246
+
+===== sn_std_a  (standard split, 74 traj, --norm self) =====

@@ -274,6 +274,14 @@ def main() -> None:
                          "the gain survives the phase claim is real, if it vanishes the head "
                          "was a mean-head in disguise. Note --mean-head already zero-means "
                          "everything head_field emits, so it implies this.")
+    ap.add_argument("--tbasis", type=int, default=0,
+                    help="J free zero-mean temporal profiles, SHARED across windows, with "
+                         "per-pixel coefficients. The discriminating control for --osc-modes: "
+                         "same rank and same zero-mean constraint, but the basis does not "
+                         "adapt to the window. report_20260831_round13.md §23 measured that "
+                         "the osc head's omega is an affine function of the window's own mean "
+                         "speed at R^2 0.99, and §25 that the branch is load-bearing -- this "
+                         "asks whether that adaptivity is the mechanism or decoration.")
     ap.add_argument("--dropout", type=float, default=0.0,
                     help="Dropout2d probability between spectral blocks. Adds no parameters, "
                          "so a checkpoint trained with it still loads into the submission's "
@@ -365,6 +373,7 @@ def main() -> None:
                   var_pred_std=args.var_pred_std, dropout=args.dropout,
                   mean_head=args.mean_head, osc_modes=args.osc_modes,
                   osc_global=args.osc_global, osc_zeromean=args.osc_zeromean,
+                  tbasis=args.tbasis,
                   fgn_dim=args.fgn_dim).to(dev)
     print(f"params: {sum(p.numel() for p in model.parameters())/1e6:.2f}M", flush=True)
 
@@ -640,6 +649,7 @@ def main() -> None:
                 # keys -- but only at scoring time, after the training had been paid for).
                 "mean_head": args.mean_head, "osc_modes": args.osc_modes,
                 "osc_global": args.osc_global, "osc_zeromean": args.osc_zeromean,
+                "tbasis": args.tbasis,
                 "ctx": args.ctx, "arch": args.arch, "modes_y": args.modes_y,
                 "modes_x": args.modes_x, "n_layers": args.n_layers, "p": args.p,
                 "self_norm": self_norm_mode, "norm": args.norm,

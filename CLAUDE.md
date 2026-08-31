@@ -110,9 +110,13 @@ intensity matches within ±40%. In self-normalized units sim and real are the sa
 
 **Consequence for the normalizer.** The official GaussianNormalizer z-scores with a global
 mean 0.155 / std 0.0968 from train_real. At the test Re of 2968 real mean `u` ≈ 0.033, i.e.
-−1.26σ — far off-distribution. **Prefer per-window self-normalization by the input's own mean
-speed, predict in non-dimensional space, rescale on output.** This fixes Re extrapolation and
-puts sim and real in one space for pretraining.
+−1.26σ — far off-distribution. ~~**Prefer per-window self-normalization by the input's own mean
+speed.** This fixes Re extrapolation and puts sim and real in one space for pretraining.~~
+**MEASURED AND REJECTED, round 13 §26 — see Strategy item 5.** The diagnosis of the *problem*
+stands and the fix is real for the FIELD (`relo` rel-L2 −11.1 %, seed σ 13× tighter), but
+`--norm self` costs +20.8 % TKE at low Re because the variance head then predicts σ in
+self-normalized units, and it is **−0.50 `wfinal` once ensembled**. Every shipped model uses
+the global normalizer. Re extrapolation is real; this is not the way to fix it.
 
 ### Official windowing (identical for both tracks)
 
@@ -360,7 +364,9 @@ variance head transfers; something costs MVPE.
   ~10:1 by the variance objective. 0.3/0.15 fixes it (MVPE 0.088 → 0.081, final 85.73 → 86.07).
 - **Self-normalization (`--norm self`) is locally neutral (86.00 vs 86.07).** That is the pass
   condition, not a failure: both val sets are inside the training Re range, so the thing it fixes
-  is invisible locally. It can only be tested on the board.
+  is invisible locally. ~~It can only be tested on the board.~~ **It was tested on
+  `re_split.py`'s Re-extrapolation sets in round 13 and REJECTED (§26)** — it fixes the field
+  at low Re and costs more in TKE than it gains. See Strategy item 5.
 
 ### Round 3 (2026-07-31) — 86.39, and the forecasting ceiling is now measured
 
@@ -1198,11 +1204,28 @@ training, which scores 69.0 — below free persistence).
    RMSE map scaled by per-window magnitude, +1.3 final over the default.** This item is now closed
    — an oracle that picks every width knowing the actual error scores only 64.9, so ≤+0.6 remains
    and no legal rule captures it. Do not spend more time on band forms.
-5. **Self-normalize before anything else.** Divide each input window by its own mean speed,
-   work non-dimensionally, rescale on output. This is what makes Re extrapolation work (test
-   Re 2968 is 1.26σ outside the global normalizer) *and* what makes sim pretraining transfer.
-   See the units section above.
-6. **Sim2real.** Pretrain on `train_sim` in self-normalized space (has `p`, 1000 frames, denser
+5. ~~**Self-normalize before anything else.**~~ **CLOSED, round 13 §26 — do not ship
+   `--norm self`.** The idea is half right and the half that is right is not enough. Measured
+   properly for the first time (the scoring path did not implement it until commit `ecd1aa6`
+   — `ROADMAP.md` §1.13), three seeds on the Re-extrapolation split:
+
+   * It **does** fix the field at low Re, as this item claimed: `relo` rel-L2 **−11.1 %**,
+     below even the best of four controls, and it collapses the low-Re **seed variance 13×**
+     (σ 0.0109 → 0.00083; `wfinal` 0.707 → 0.065) — the quantity round 13 §5.5 identified as
+     why local numbers stopped transferring.
+   * It **costs** `relo` TKE **+20.8 %**, reliably (seed σ 0.0068). Structural: the variance
+     head then predicts σ in self-normalized units, so the deployed physical σ is `σ̂ · s`,
+     which hard-codes a Reynolds-*independent* relative turbulence intensity that the data
+     does not have.
+   * Net: wash single-model, **−0.50 `wfinal` as a 2-member ensemble**, and decisively worse
+     in distribution (`rein` rel-L2 +1.89 % at 4× the control spread).
+
+   The field/σ hybrid this suggests was **priced, not run**: ≈ +0.05 after the board's
+   dilution against a certain −0.04. Note that an ensemble already averages down the variance
+   self-normalization removes, which is most of why the arm loses once ensembled.
+6. **Sim2real.** ~~Pretrain in self-normalized space~~ — item 5 is closed, so this route's
+   stated mechanism is gone; round 5 also measured sim-norm → real-norm at **+0.00**. Pretrain
+   on `train_sim` (has `p`, 1000 frames, denser
    Re grid including the two Re missing from real), fine-tune on `train_real`. Use `p` as an
    auxiliary pretraining target and drop the head. Augment sim with PIV-like noise/dropout so
    the encoder is not surprised by real measurement artifacts. Validate on **held-out (Re, AoA)

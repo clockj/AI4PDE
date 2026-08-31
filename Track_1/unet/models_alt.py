@@ -69,7 +69,8 @@ class FNO2d(nn.Module):
                  var_hidden: int = 128, var_deep: bool = False, var_in_std: bool = False,
                  var_pred_std: bool = False, fgn_dim: int = 0, dropout: float = 0.0,
                  mean_head: bool = False, osc_modes: int = 0,
-                 osc_global: bool = False, osc_zeromean: bool = False):
+                 osc_global: bool = False, osc_zeromean: bool = False,
+                 tbasis: int = 0):
         super().__init__()
         # Channel dropout between spectral blocks -- the one classical regularizer the project
         # never tried, against a diagnosis that is the project's own: with 74 trajectories the
@@ -152,6 +153,25 @@ class FNO2d(nn.Module):
             self.osc_w = (nn.Sequential(nn.Linear(width, 64), nn.GELU(),
                                         nn.Linear(64, osc_modes)) if osc_global else None)
             self.register_buffer("osc_t", torch.arange(T_OUT, dtype=torch.float32))
+
+        # A FREE zero-mean temporal basis, the discriminating control for the osc head. The
+        # osc term is rank-2J in time on a basis the window CHOOSES (omega is an affine
+        # function of the window's own mean speed, R^2 0.99 -- report §23). This is the same
+        # rank and the same zero-mean constraint on a basis SHARED by every window. If it
+        # matches, the head's value is "low-rank, zero-mean, smooth in time" and the frequency
+        # adaptivity is decoration; if it loses, the adaptivity is the mechanism. Either answer
+        # decides where the fluctuation work goes next, and report §25's ablation says the
+        # branch is load-bearing rather than a regularizer, so the question is worth asking.
+        self.tbasis = tbasis
+        self.head_tb = None
+        if tbasis:
+            self.head_tb = nn.Sequential(nn.Conv2d(width, 128, 1), nn.GELU(),
+                                         nn.Conv2d(128, tbasis * C, 1))
+            # Zero-init the READOUT, exactly as head_osc does, so the branch starts inert and
+            # the model is the baseline at step 0. The PROFILES must NOT be zero-init'd or
+            # both factors of the product have zero gradient and the branch is dead.
+            nn.init.zeros_(self.head_tb[2].weight); nn.init.zeros_(self.head_tb[2].bias)
+            self.tb = nn.Parameter(torch.randn(tbasis, T_OUT) * 0.5)
 
         # The default logstd readout is a single 1x1 conv -- a LINEAR probe on a 24-channel
         # trunk, against the field head's 128-wide MLP. var_mlp gives the two heads the same
@@ -260,6 +280,15 @@ class FNO2d(nn.Module):
                 # a mean-head in disguise and the phase idea is UNTESTED.
                 osc = osc - osc.mean(1, keepdim=True)
             field = field + osc.reshape(b, CH, Hh, Ww)
+        if self.head_tb is not None:
+            b, Hh, Ww = len(prev), field.shape[-2], field.shape[-1]
+            a = self.head_tb(h).reshape(b, self.tbasis, C, Hh, Ww)
+            # Zero-mean the profiles rather than the product: it is the same thing (the
+            # coefficients are constant in t) and it keeps the constraint on 20 numbers per
+            # mode instead of on every pixel, so nothing can drift into the time-mean.
+            prof = self.tb - self.tb.mean(1, keepdim=True)
+            tb = torch.einsum("bjchw,jt->btchw", a, prof)
+            field = field + tb.reshape(b, CH, Hh, Ww)
         if self.head_mean is not None:
             b = len(prev)
             fl = field.reshape(b, T_OUT, C, H, W)
@@ -433,7 +462,7 @@ def build(arch: str, width: int, var_head: bool, extra_ch: int, modes_y: int = 1
           var_pred_std: bool = False, fgn_dim: int = 0, dropout: float = 0.0,
           mean_head: bool = False, osc_modes: int = 0,
           osc_global: bool = False,
-          osc_zeromean: bool = False):
+          osc_zeromean: bool = False, tbasis: int = 0):
     """Factory shared by train2.py and eval_wp.run so both build identical objects.
 
     `fgn_dim` defaults to 0, which builds no `film` module at all -- so a state_dict saved
@@ -446,7 +475,8 @@ def build(arch: str, width: int, var_head: bool, extra_ch: int, modes_y: int = 1
     if arch == "fno":
         return FNO2d(width, modes_y, modes_x, n_layers, var_head, extra_ch, var_mlp, lift_mlp,
                      point_mlp, var_hidden, var_deep, var_in_std,
-                     var_pred_std, fgn_dim, dropout, mean_head, osc_modes, osc_global, osc_zeromean)
+                     var_pred_std, fgn_dim, dropout, mean_head, osc_modes, osc_global,
+                     osc_zeromean, tbasis)
     if arch == "deeponet":
         return DeepONetCh(p, trunk_width=width * 2, branch_width=width,
                           var_head=var_head, extra_ch=extra_ch)

@@ -31,6 +31,33 @@ CH = T_IN * C
 MEAN = np.array([0.154960856, -0.000513992854], dtype=np.float32)
 STD = np.array([0.0968056545, 0.015960684], dtype=np.float32)
 
+# The same two statistics after each window is divided by its own mean streamwise speed
+# (`unet/model.py:MEAN_SN/STD_SN`). A `--norm self` checkpoint was trained against THESE, and
+# feeding it MEAN/STD instead is not a small error: see `_self_norm_of` below.
+MEAN_SN = np.array([1.0, 0.0], dtype=np.float32)
+STD_SN = np.array([0.526024, 0.102182], dtype=np.float32)
+
+
+def _self_norm_of(blob: dict) -> bool:
+    """Did this checkpoint train under `--norm self`?
+
+    Until 2026-08-31 nothing downstream of training asked. `predict_fno` hard-coded MEAN/STD,
+    so a self-normalized checkpoint was fed an input it had never seen and its output was
+    denormalized with the wrong affine -- and the only arm ever trained that way was scored
+    through exactly that path. The damage is proportional to how far the window's own mean
+    speed sits from the global mean, which is why it read as a Reynolds-extrapolation failure:
+    a model whose self-normalized output is EXACTLY RIGHT scores rel-L2 0.198 / 2.224 / 0.349
+    on val_rein / val_relo / val_rehi through the old path, against the arm's measured
+    0.147 / 1.144 / 0.299. The arm beat a perfect model on all three sets, which is only
+    possible if the instrument, not the model, was broken.
+
+    `train2.py` writes `self_norm` at the top level and `norm` under `config`; older blobs have
+    neither and are `--norm real` by construction.
+    """
+    if "self_norm" in blob:
+        return bool(blob["self_norm"])
+    return blob.get("norm", blob.get("config", {}).get("norm", "real")) == "self"
+
 
 class SpectralConv2d(nn.Module):
     def __init__(self, width: int, modes_y: int, modes_x: int):
@@ -60,7 +87,7 @@ class FNO2d(nn.Module):
                  extra_ch=0, var_mlp=False, lift_mlp=False, point_mlp=False,
                  var_hidden=128, var_deep=False, var_in_std=False,
                  var_pred_std=False, fgn_dim=0, mean_head=False, osc_modes=0,
-                 osc_global=False, osc_zeromean=False):
+                 osc_global=False, osc_zeromean=False, tbasis=0):
         super().__init__()
         cin = CH + extra_ch + 2
         self.lift = (nn.Sequential(nn.Conv2d(cin, 128, 1), nn.GELU(), nn.Conv2d(128, width, 1))
@@ -98,6 +125,15 @@ class FNO2d(nn.Module):
             self.osc_w = (nn.Sequential(nn.Linear(width, 64), nn.GELU(),
                                         nn.Linear(64, osc_modes)) if osc_global else None)
             self.register_buffer("osc_t", torch.arange(T_OUT, dtype=torch.float32))
+        # J free zero-mean temporal profiles SHARED across windows, with per-pixel
+        # coefficients -- the discriminating control for the osc head. See
+        # unet/models_alt.py for the argument; here it only has to load and run.
+        self.tbasis = tbasis
+        self.head_tb = None
+        if tbasis:
+            self.head_tb = nn.Sequential(nn.Conv2d(width, 128, 1), nn.GELU(),
+                                         nn.Conv2d(128, tbasis * C, 1))
+            self.tb = nn.Parameter(torch.zeros(tbasis, T_OUT))
         self.var_deep, self.var_in_std, self.var_pred_std = var_deep, var_in_std, var_pred_std
         var_cin = ((width * n_layers if var_deep else width)
                    + (C if var_in_std else 0) + (C if var_pred_std else 0))
@@ -156,6 +192,11 @@ class FNO2d(nn.Module):
                 # a mean-head in disguise and the phase idea is UNTESTED.
                 osc = osc - osc.mean(1, keepdim=True)
             field = field + osc.reshape(b, CH, Hh, Ww)
+        if self.head_tb is not None:
+            b, Hh, Ww = len(prev), field.shape[-2], field.shape[-1]
+            a = self.head_tb(h).reshape(b, self.tbasis, C, Hh, Ww)
+            prof = self.tb - self.tb.mean(1, keepdim=True)
+            field = field + torch.einsum("bjchw,jt->btchw", a, prof).reshape(b, CH, Hh, Ww)
         if self.head_mean is not None:
             b = len(prev)
             fl = field.reshape(b, T_OUT, C, H, W)
@@ -281,6 +322,39 @@ class StackedFNO(nn.Module):
         self.var_deep = getattr(first, "var_deep", False)
         self.var_in_std = getattr(first, "var_in_std", False)
         self.var_pred_std = getattr(first, "var_pred_std", False)
+        # The oscillatory head, fused. `head_osc` is two 1x1 convs, so it groups exactly like
+        # `head_field`. `osc_w` is an MLP on the SPATIALLY POOLED trunk, i.e. a per-member
+        # (width -> 64 -> J) matmul; stacking its weights along a member axis and using einsum
+        # is the same block-diagonal map a grouped conv would give, without reshaping to 1x1
+        # spatial. Everything the head does downstream (cos/sin synthesis, the zero-meaning,
+        # the sum over modes) is LINEAR in the member axis, so adding per-member `osc` to
+        # `f_all` before the mean is identical to the sequential loop's add-then-average.
+        self.osc_modes = getattr(first, "osc_modes", 0)
+        self.osc_global = getattr(first, "osc_global", False)
+        self.osc_zeromean = getattr(first, "osc_zeromean", False)
+        self.head_osc = None
+        if getattr(first, "head_osc", None) is not None:
+            self.head_osc = nn.Sequential(grouped([m.head_osc[0] for m in members]), nn.GELU(),
+                                          grouped([m.head_osc[2] for m in members]))
+            if self.osc_global:
+                for li, name in ((0, "ow0"), (2, "ow1")):
+                    self.register_parameter(name + "_w", nn.Parameter(torch.stack(
+                        [m.osc_w[li].weight.data for m in members])))
+                    self.register_parameter(name + "_b", nn.Parameter(torch.stack(
+                        [m.osc_w[li].bias.data for m in members])))
+            self.register_buffer("osc_t", first.osc_t.clone())
+
+        # The free temporal basis fuses the same way: `head_tb` is two 1x1 convs, and the
+        # profiles are a per-member (J, T_OUT) matrix, so an einsum over a member axis is the
+        # block-diagonal map. The zero-meaning and the contraction are both linear.
+        self.tbasis = getattr(first, "tbasis", 0)
+        self.head_tb = None
+        if getattr(first, "head_tb", None) is not None:
+            self.head_tb = nn.Sequential(grouped([m.head_tb[0] for m in members]), nn.GELU(),
+                                         grouped([m.head_tb[2] for m in members]))
+            self.register_parameter("tb", nn.Parameter(
+                torch.stack([m.tb.data for m in members])))       # (K, J, T_OUT)
+
         h0 = first.head_logstd
         if h0 is None:
             self.head_logstd = None
@@ -303,6 +377,28 @@ class StackedFNO(nn.Module):
                                                  ft[:, :, :, sl, :mx], wc)
         return torch.fft.irfft2(out.reshape(b, k * wid, h, w // 2 + 1), s=(h, w))
 
+    def _osc(self, h, b, k, hw):
+        """Per-member oscillatory term, (b, k, CH, H, W). Mirrors FNO2d.forward exactly."""
+        j = 2 if self.osc_global else 3
+        o = self.head_osc(h).reshape(b, k, self.osc_modes, j, C, *hw)
+        if self.osc_global:
+            hm = h.mean((-2, -1)).reshape(b, k, self.width)
+            a = torch.nn.functional.gelu(
+                torch.einsum("bki,koi->bko", hm, self.ow0_w) + self.ow0_b)
+            w = torch.einsum("bki,koi->bko", a, self.ow1_w) + self.ow1_b       # (b, k, J)
+            om = (OSC_W_LO + (OSC_W_HI - OSC_W_LO)
+                  * torch.sigmoid(w))[:, :, :, None, None, None]
+        else:
+            om = OSC_W_LO + (OSC_W_HI - OSC_W_LO) * torch.sigmoid(o[:, :, :, 2])
+        ph = om.unsqueeze(3) * self.osc_t.view(1, 1, 1, T_OUT, 1, 1, 1)
+        osc = (o[:, :, :, 0].unsqueeze(3) * torch.cos(ph)
+               - o[:, :, :, 1].unsqueeze(3) * torch.sin(ph)).sum(2)
+        if self.osc_zeromean:
+            # osc is (b, k, T_OUT, C, H, W) after the sum over modes, so the TIME axis is 2 --
+            # one further right than FNO2d's, which has no member axis and zero-means on 1.
+            osc = osc - osc.mean(2, keepdim=True)
+        return osc.reshape(b, k, CH, *hw)
+
     def forward(self, prev, detach_var: bool = False):
         b, k = len(prev), self.n_members
         x = torch.cat([prev, self.grid.expand(b, -1, -1, -1)], 1)
@@ -313,6 +409,13 @@ class StackedFNO(nn.Module):
             hs.append(h)
         hw = h.shape[-2:]
         f_all = self.head_field(h).reshape(b, k, CH, *hw)      # per member, before averaging
+        if self.head_osc is not None:
+            f_all = f_all + self._osc(h, b, k, hw)
+        if self.head_tb is not None:
+            a = self.head_tb(h).reshape(b, k, self.tbasis, C, *hw)
+            prof = self.tb - self.tb.mean(2, keepdim=True)         # (K, J, T_OUT)
+            f_all = f_all + torch.einsum("bkjchw,kjt->bktchw",
+                                         a, prof).reshape(b, k, CH, *hw)
         field = f_all.mean(1)
         logstd = None
         if self.head_logstd is not None:
@@ -398,8 +501,20 @@ def fuse(models):
         # exact, so a modes-(12,20) member joins its width-matched (8,12) siblings instead of
         # buying its own invocation. Width and every other shape still separate, because they
         # appear in lift / point / norm / the heads.
-        key = tuple((k, tuple(v.shape)) for k, v in m.state_dict().items()
-                    if not (k.endswith(".w1") or k.endswith(".w2")))
+        # `self_norm` is an ATTRIBUTE, not a parameter, so it does not appear in the shape
+        # signature -- two members trained under different normalizers would otherwise fuse
+        # into one StackedFNO whose input affine can only be right for one of them, and the
+        # fused module would carry no flag at all. Keying on it makes that impossible.
+        # `self_norm` and `osc_zeromean` are ATTRIBUTES, not parameters, so they do not appear
+        # in the shape signature -- members that disagree on either would otherwise fuse into
+        # one module that can only be right for some of them. `osc_modes` and `osc_global` DO
+        # show up (they set head_osc's out_channels and osc_w's out_features), but they are
+        # keyed explicitly rather than left to that coincidence.
+        key = (bool(getattr(m, "self_norm", False)),
+               getattr(m, "osc_modes", 0), bool(getattr(m, "osc_global", False)),
+               bool(getattr(m, "osc_zeromean", False)), getattr(m, "tbasis", 0),
+               tuple((k, tuple(v.shape)) for k, v in m.state_dict().items()
+                     if not (k.endswith(".w1") or k.endswith(".w2"))))
         groups.setdefault(key, []).append(m)
     out = []
     for g in groups.values():
@@ -408,11 +523,19 @@ def fuse(models):
         # `head_mean` would be silently DROPPED and the member would emit a zero-mean field.
         # Losing an invocation costs latency; losing a head is a wrong answer, and it would
         # not show up as a crash.
-        if (len(g) == 1 or not isinstance(g[0], FNO2d)
-                or g[0].head_mean is not None or g[0].head_osc is not None):
+        # `head_mean` is still passed through UNFUSED: StackedFNO enumerates lift / point /
+        # norm / head_field / head_logstd / head_osc explicitly, so a `head_mean` would be
+        # silently DROPPED and the member would emit a zero-mean field. Losing an invocation
+        # costs latency; losing a head is a wrong answer that does not show up as a crash.
+        # `head_osc` used to be in this list for the same reason and no longer is -- it is
+        # implemented above, and `verify/fuse_osc.py` checks the fused path against the
+        # sequential one.
+        if (len(g) == 1 or not isinstance(g[0], FNO2d) or g[0].head_mean is not None):
             out.extend(g)     # `extend`, not `append`: two U-Nets are two invocations, not one
         else:
-            out.append(StackedFNO(g).to(g[0].grid.device).eval())
+            st = StackedFNO(g).to(g[0].grid.device).eval()
+            st.self_norm = bool(getattr(g[0], "self_norm", False))
+            out.append(st)
     return out
 
 
@@ -445,9 +568,11 @@ def _fno_from_blob(blob: dict, device: str):
               mean_head=cfg("mean_head", False),
               osc_modes=cfg("osc_modes", 0),
               osc_global=cfg("osc_global", False),
-              osc_zeromean=cfg("osc_zeromean", False)).to(device)
+              osc_zeromean=cfg("osc_zeromean", False),
+              tbasis=cfg("tbasis", 0)).to(device)
     m.load_state_dict(blob["model_state_dict"])
     m.eval()
+    m.self_norm = _self_norm_of(blob)
     return m
 
 
@@ -484,6 +609,7 @@ def load_any(path: str, device: str):
     m = UNetTwoHead(blob.get("width", 64), blob.get("var_head", True)).to(device)
     m.load_state_dict(blob["model_state_dict"])
     m.eval()
+    m.self_norm = _self_norm_of(blob)
     return m
 
 
@@ -503,13 +629,28 @@ def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
       * the whole contiguous window is uploaded and sliced on the GPU. Slicing [..., :2] on the
         host first makes a non-contiguous view that ascontiguousarray must copy.
     """
-    mean = torch.from_numpy(MEAN).to(device)
-    std = torch.from_numpy(STD).to(device)
     models = list(model) if isinstance(model, (list, tuple)) else [model]
+    # A `--norm self` member divides each window by its own mean streamwise speed before the
+    # standardization, so its affine is per-WINDOW. Mixing the two conventions in one ensemble
+    # would average fields that were never in the same space; refuse rather than average.
+    sn = [bool(getattr(m, "self_norm", False)) for m in models]
+    if any(sn) and not all(sn):
+        raise ValueError("predict_fno: cannot mix --norm self and --norm real members")
+    sn = sn[0] if sn else False
+    mean = mean_c = torch.from_numpy(MEAN_SN if sn else MEAN).to(device)
+    std = std_c = torch.from_numpy(STD_SN if sn else STD).to(device)
     n = len(x_raw)
     dst = np.empty((n, T_OUT, H, W, C), dtype=np.float32) if out is None else out
     for i in range(0, n, batch):
         xb = torch.from_numpy(x_raw[i:i + batch]).to(device, non_blocking=True)[..., :2].float()
+        # `mean`/`std` are (2,) and broadcast over the channel axis. Under self-normalization
+        # they additionally carry the window's own scale, which makes them (B,1,1,1,2) -- the
+        # SAME two lines then serve both conventions, in and out, including sigma. `s` is only
+        # computed when it is needed, so the scored path is untouched for a `--norm real`
+        # package (verified bit-identical).
+        if sn:
+            s = xb[..., 0].mean(dim=(1, 2, 3)).clamp(min=1e-3).reshape(-1, 1, 1, 1, 1)
+            mean, std = mean_c * s, std_c * s
         prev = ((xb - mean) / std).permute(0, 1, 4, 2, 3).reshape(len(xb), CH, H, W)
 
         # Members are averaged HERE, on the GPU, in raw field and sigma space -- before the
