@@ -69,7 +69,7 @@ class FNO2d(nn.Module):
                  var_hidden: int = 128, var_deep: bool = False, var_in_std: bool = False,
                  var_pred_std: bool = False, fgn_dim: int = 0, dropout: float = 0.0,
                  mean_head: bool = False, osc_modes: int = 0,
-                 osc_global: bool = False):
+                 osc_global: bool = False, osc_zeromean: bool = False):
         super().__init__()
         # Channel dropout between spectral blocks -- the one classical regularizer the project
         # never tried, against a diagnosis that is the project's own: with 74 trajectories the
@@ -136,6 +136,7 @@ class FNO2d(nn.Module):
         # The last conv is zero-initialized, so training starts exactly at the plain FNO.
         self.osc_modes = osc_modes
         self.osc_global = osc_global
+        self.osc_zeromean = osc_zeromean
         self.head_osc = None
         if osc_modes:
             # With a per-pixel omega the head can fit each pixel's 20-frame trace on its own,
@@ -248,6 +249,16 @@ class FNO2d(nn.Module):
             ph = om.unsqueeze(2) * self.osc_t.view(1, 1, T_OUT, 1, 1, 1)
             osc = (o[:, :, 0].unsqueeze(2) * torch.cos(ph)
                    - o[:, :, 1].unsqueeze(2) * torch.sin(ph)).sum(1)
+            if self.osc_zeromean:
+                # The decisive test of what this head is actually doing. The learned period is
+                # 64.5 frames against a 20-frame output window, so the oscillator spans 0.31 of
+                # a cycle and mean_t cos(omega t) = +0.511 -- it carries a large non-zero
+                # time-mean BY CONSTRUCTION, and the measured gain turned out to be entirely
+                # in the time-mean (-2.6%) with coherence and the fluctuation error unmoved.
+                # Subtracting the term's own time-mean leaves only its oscillatory content.
+                # If the gain survives, the phase claim is real; if it vanishes, this head was
+                # a mean-head in disguise and the phase idea is UNTESTED.
+                osc = osc - osc.mean(1, keepdim=True)
             field = field + osc.reshape(b, CH, Hh, Ww)
         if self.head_mean is not None:
             b = len(prev)
@@ -421,7 +432,8 @@ def build(arch: str, width: int, var_head: bool, extra_ch: int, modes_y: int = 1
           var_hidden: int = 128, var_deep: bool = False, var_in_std: bool = False,
           var_pred_std: bool = False, fgn_dim: int = 0, dropout: float = 0.0,
           mean_head: bool = False, osc_modes: int = 0,
-          osc_global: bool = False):
+          osc_global: bool = False,
+          osc_zeromean: bool = False):
     """Factory shared by train2.py and eval_wp.run so both build identical objects.
 
     `fgn_dim` defaults to 0, which builds no `film` module at all -- so a state_dict saved
@@ -434,7 +446,7 @@ def build(arch: str, width: int, var_head: bool, extra_ch: int, modes_y: int = 1
     if arch == "fno":
         return FNO2d(width, modes_y, modes_x, n_layers, var_head, extra_ch, var_mlp, lift_mlp,
                      point_mlp, var_hidden, var_deep, var_in_std,
-                     var_pred_std, fgn_dim, dropout, mean_head, osc_modes, osc_global)
+                     var_pred_std, fgn_dim, dropout, mean_head, osc_modes, osc_global, osc_zeromean)
     if arch == "deeponet":
         return DeepONetCh(p, trunk_width=width * 2, branch_width=width,
                           var_head=var_head, extra_ch=extra_ch)

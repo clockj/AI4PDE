@@ -595,6 +595,22 @@ Facts worth not re-deriving:
   subset (0.1082) is the only local proxy in the right neighbourhood, and it is 5% from the
   board where the full split is 46% away. Evaluate there: `compare_v9.py --aoa 15 20`.
 
+  > **TRUE OF `rel_l2` ONLY — corrected round 13** with `kfold.py`, 3 383 out-of-fold windows
+  > over all 82 trajectories (569–756 per angle, against the one or two trajectories per cell
+  > the numbers above came from). rel-L2 **0.0520 / 0.0532 / 0.0855 / 0.1061 / 0.1207** spans
+  > **2.32×** and is monotone from 5° up; **TKE 0.4445 / 0.4691 / 0.4686 / 0.4571 / 0.4874
+  > spans 1.10× and is not monotone.** AoA does NOT govern TKE. Two sub-corrections: **0° and
+  > 5° are equal**, not 0.057 vs 0.044; and **20° is the worst angle**, not tied with 15°.
+  >
+  > Consequence for the proxy: restricting to 15–20 inflates rel-L2 **1.343×** and TKE
+  > **1.014×**. With `proxy_calib.py`'s board ratios (rel 1.078, tke 1.150), the board's
+  > `rel_l2` elevation is mostly an AoA-hard mix — but **its TKE elevation is not explained by
+  > AoA at all**, and the AoA proxy structurally cannot see whatever causes it. Open question.
+  >
+  > The proxy is nonetheless **unbiased** for the angles it selects: k-fold pools to 0.11304 on
+  > AoA 15-20 against the standard split's 0.11303, from a different training set and 10× the
+  > windows. It is noisy, not skewed.
+
 Nulls, measured, do not retry: **ALPHA is still 0.75** under v9 (re-swept with the band refitted
 at every point; SPS peaks at α=0.45 but not enough to outrun TKE). **Blending the predicted
 time-mean toward the input window's mean** makes MVPE monotonically worse, 0.0698 → 0.1240 —

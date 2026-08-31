@@ -466,3 +466,325 @@ The falsifier is clean: **if the mean part degrades sharply at `--w-mean 0.3`, t
 gradient-limited after all** and §8.1's "information floor" reading is wrong — which would
 also mean `--w-mean 3`'s null had a different cause than stated. Read the mean/fluctuation
 split at the end of the job, not `wfinal`.
+
+## 9. The k-fold baseline — and AoA does NOT govern TKE
+
+`kfold.py --score`, five stratified folds, every one of the 82 trajectories scored by a model
+that never saw it. **3 383 out-of-fold windows** against the 336 every previous local number
+came from.
+
+```
+rel-L2 0.08416 ± 0.00337   TKE 0.46481 ± 0.00819   MVPE 0.07156
+scores rel 95.962  tke 81.142  mvpe 96.545  time 96.394  sps 47.854   (sps LOFO over folds)
+```
+
+| AoA | n | rel-L2 | TKE |
+|---|---|---|---|
+| 0 | 701 | 0.05195 | 0.44445 |
+| 5 | 569 | 0.05324 | 0.46908 |
+| 10 | 756 | 0.08547 | 0.46861 |
+| 15 | 714 | 0.10612 | 0.45706 |
+| 20 | 643 | 0.12073 | 0.48738 |
+
+### 9.1 "Error is governed by AoA and by almost nothing else" is true of `rel_l2` only
+
+Across the five angles **rel-L2 spans 2.32×** (0.0520 → 0.1207, monotone from 5° up) while
+**TKE spans 1.10×** (0.4445 → 0.4874, and not monotone). `CLAUDE.md`'s round-6 statement was
+made from per-trajectory numbers with one or two trajectories per cell; with **569–756 windows
+per angle** it needs splitting in two: **AoA governs `rel_l2`. It does not govern TKE.**
+
+Two corrections to the round-6 table fall out of the better statistics. AoA 0 and 5 are
+**equal** (0.0520 vs 0.0532) where round 6 had 0° much worse than 5° (0.057 vs 0.044); and AoA
+20 is now clearly the worst angle (0.1207) rather than tied with 15°.
+
+### 9.2 What that does to the AoA 15-20 proxy, quantitatively
+
+On the same out-of-fold population, restricting to 15° and 20° **inflates rel-L2 by 1.343× and
+TKE by 1.014×.** The proxy is a `rel_l2` stress test and is essentially neutral on TKE.
+
+Combine with `proxy_calib.py`'s measured board/proxy ratios (rel **1.078**, tke **1.150**):
+
+* the board's `rel_l2` elevation over the full split is **mostly explained** by an AoA-hard
+  mix — 1.343 of the total 1.448 is the mix, leaving 1.078 unexplained;
+* the board's TKE elevation is **not explained by AoA at all** — the proxy contributes 1.014
+  and the board still sits 1.150 above it.
+
+So whatever makes the hidden set's TKE harder than ours is **not** its angle-of-attack
+distribution. That is a genuinely open question and the AoA proxy cannot see it.
+
+### 9.3 The two instruments agree to five decimals
+
+k-fold on AoA 15-20 pools to rel-L2 **0.11304**; the standard split's four-seed baseline on its
+126-window AoA subset is **0.11303**. Different training sets (65–66 trajectories against 74),
+different windows (1 357 against 126), same answer. The 8-trajectory proxy is **unbiased for
+the AoA 15-20 population** — it is noisy, not skewed, which is exactly the failure mode
+`kfold.py` was built to fix and the one that `--paired` removes.
+
+**Read the ±0.00337 correctly.** It is the trajectory-bootstrap SE of the *level* (4.0 % of
+rel-L2), dominated by between-trajectory spread — 0.052 at AoA 0 against 0.121 at 20. It is
+**not** the resolution for comparing two arms: on identical windows the trajectory effect
+cancels, which is what `--paired` measures and what `kfold_do15` will report.
+
+## 10. `--lam-tgrad` is a mild regularizer with a plateau at 0.3–1.0
+
+Matching the target's temporal derivative — the time analogue of `--lam-grad`, the only
+auxiliary loss that has ever worked here. AoA 15-20 proxy against the four held-out seeds
+(81.748 ± 0.034, rel-L2 0.11303):
+
+| λ_tgrad | training `field` | rel-L2 | Δ rel-L2 | `wfinal` | Δ | z |
+|---|---|---|---|---|---|---|
+| 0 (4 seeds) | — | 0.11303 | — | 81.748 ± 0.034 | — | — |
+| **0.3** | 0.06600 | 0.1122 | −0.7 % | **81.806** | +0.058 | +1.7 |
+| **1.0** | 0.06744 | **0.1118** | **−1.1 %** | **81.804** | +0.056 | +1.6 |
+| 3.0 | 0.06994 | 0.1135 | +0.4 % | 81.618 | −0.130 | −3.8 |
+
+**An inverted U with a plateau at 0.3–1.0 and a sharp fall at 3.0, while the training loss
+degrades monotonically throughout.** Worse training fit with better held-out score is a
+regularizer's signature, and the shape mirrors `--lam-grad`'s own shallow plateau (1–3, worse
+at 10) with the optimum about 3× lower.
+
+**Real, and not shippable on its own.** +1.7σ clears the seed spread, but −1.1 % of rel-L2 is
+under the board's ~2 % transfer resolution (`proxy_calib.py`). It earns a place in a
+combination and a `kfold --paired` confirmation, not a package by itself.
+
+### 10.1 Correcting a mechanism I proposed before the result
+
+Watching the training losses degrade, I argued that `--lam-tgrad` *should* fail: `--lam-grad`
+works because it constrains what a mode-truncated spectral operator does **between** its
+retained modes, and there is no analogous truncation in time — `head_field` emits all 20 frames
+directly with no temporal basis. That predicted a null-to-negative arm and concluded the time
+axis needs a basis before a temporal constraint can act on it.
+
+**The prediction is wrong: it works, mildly, with no temporal basis at all.** The training-loss
+degradation I read as "competing for capacity without adding signal" was regularization, which
+is the same signature. The `--osc-modes` arm's motivation stands on its own — the shedding
+period is 60–75 frames against a 20-frame window, and coherence at k = 2–6 is 0.55–0.79 — and
+must not be propped up with the argument above, which is now falsified.
+
+### 10.2 Replicated on the full split, compressed
+
+Same three checkpoints, 336 windows instead of 126 (baselines 83.428 ± 0.050, rel-L2 0.08513):
+
+| λ | `wfinal` | Δ | z | rel-L2 | Δ rel-L2 |
+|---|---|---|---|---|---|
+| 0.3 | 83.480 | +0.053 | +1.0 | 0.0843 | −1.0 % |
+| 1.0 | 83.455 | +0.028 | +0.6 | 0.0849 | −0.3 % |
+| 3.0 | 83.387 | −0.041 | −0.8 | 0.0850 | −0.1 % |
+
+**The inverted U replicates in shape on both splits, compressed on the full one** — peak at
+0.3, declining monotonically to 3.0. Two independent window sets agreeing on the shape is the
+evidence that this is a real effect rather than the AoA subset's noise; the size, roughly
++0.05 `wfinal` and ~1 % of rel-L2, is the honest number and it is under the board's ~2 %
+transfer resolution.
+
+**Verdict: `--lam-tgrad 0.3` is a small real regularizer.** Combination candidate and a
+`kfold --paired` subject; not a package on its own.
+
+## 11. The oscillatory head is being USED — a zero-init diagnostic
+
+Before any score: `head_osc`'s final conv is **zero-initialized**, so its weight norm after
+training measures whether the optimizer found the oscillatory path worth using at all. On
+`fno_osc2` (per-pixel ω, J = 2):
+
+| tensor | ‖w‖ |
+|---|---|
+| `head_field.2.weight` (the 40-frame readout) | 7.300 |
+| `head_osc.2.weight` (the (p, q, ω) readout) | **1.715** |
+
+**Ratio 0.235 from a standing start.** The path is not inert — the head carries roughly a
+quarter of the field readout's output weight norm, which is a lot for 4.7k parameters against
+the field head's ~5k output weights, and it means gradient descent preferred spending there
+rather than leaving it at zero.
+
+Training `field` came out at 0.06581, mid-range among the baseline seeds (0.0617–0.0667), so
+the head is used **without** improving the training fit — the same regularizer signature as
+§10. Whether that converts to held-out score, and specifically whether it moves **coherence at
+k = 2–6**, is what the rest of the job measures. Recording the diagnostic separately because it
+is the one that distinguishes "the idea failed" from "the idea was never exercised", and those
+need different follow-ups.
+
+### 11.1 The global-ω head recovered the shedding frequency, unsupervised
+
+`--osc-global` pools the trunk and emits J frequencies for the whole field. Nothing in the loss
+mentions a frequency — the head is trained only through the 20-frame field error, from a
+zero-initialized start — so what it converges to is a test of whether the parameterization
+means what it was designed to mean. Replaying the trunk on 48 `val_unseen` windows and reading
+ω off `fno_oscg1`:
+
+```
+band            omega 0.0314 - 0.6283 rad/frame   (periods 200 down to 10 frames)
+learned omega   mean 0.0974   std 0.0001   min 0.0973   max 0.0976
+=> period       64.5 frames    (range 64.4 - 64.6)
+at the low rail 0%   at the high rail 0%   inside the 60-75 frame shedding band 100%
+```
+
+**The head placed itself at a 64.5-frame period — the middle of the documented 60–75 frame
+vortex-shedding band — from a 20-frame input window, i.e. a third of a cycle, with no
+supervision on frequency and no prior beyond the band edges.** It is nowhere near either rail,
+so the band is not what is holding it there.
+
+**And the σ of 0.0001 is the second finding: the frequency it learned is a CONSTANT.** It does
+not vary window to window. That is physically consistent rather than a failure — the documented
+shedding period spans only 60–75 frames (1.25×) while Re spans 7×, which means the PIV
+acquisition rate is scaled with flow speed and the period *in frames* really is near-constant.
+A per-window ω has nothing to adapt to.
+
+Two consequences, both testable in this same job:
+
+* the gain (if any) comes from **imposing an oscillatory basis at the right frequency**, not
+  from adapting ω — so a **fixed, non-learned ω would do as well**, and the frequency MLP is
+  removable weight;
+* **harmonics should matter more than adaptivity**, which is exactly what `oscg1` vs `oscg2`
+  vs `oscg4` measures.
+
+It also predicts `osc2` (per-pixel ω) should not beat `oscg2`: per-pixel freedom buys nothing
+when the true frequency is one number, and costs the memorization risk the global variant was
+introduced to avoid.
+
+## 12. `--w-mean` DOWN fails, and the reallocation buys the fluctuation *nothing*
+
+The arm §8.2 pre-registered. AoA 15-20 proxy against the four held-out seeds
+(81.748 ± 0.034, rel-L2 0.11303):
+
+| arm | rel-L2 | Δ rel-L2 | `wfinal` | Δ | z |
+|---|---|---|---|---|---|
+| `--w-mean 0.3` | 0.1135 | +0.4 % | 81.688 | −0.060 | −1.8 |
+| `--w-mean 0.1` | 0.1154 | +2.1 % | 81.489 | −0.259 | **−7.6** |
+
+Monotonically worse. And the decomposition on the full split, which is what §8.2 said to read:
+
+| | rel-L2 | mean part | fluc part | fluctuation energy captured |
+|---|---|---|---|---|
+| baseline `vl_s1` | 0.0851 | 0.0470 | **0.0707** | 20.3 % |
+| `--w-mean 0.3` | 0.0859 | 0.0482 (+2.6 %) | **0.0707** | 20.0 % |
+
+**Down-weighting the mean 3.3× made the mean 2.6 % worse and moved the fluctuation by
+0.0000.** Not a small gain — none. Captured fluctuation energy went the wrong way, 20.3 % →
+20.0 %.
+
+### 12.1 What that does to §8.1 and §8.2, stated plainly
+
+**§8.2's prediction was wrong**, on both halves: the mean is not nearly free to down-weight,
+and the fluctuation does not absorb the gradient.
+
+**§8.1's "information floor" was over-stated and needs narrowing.** Its evidence was that
+*more* gradient (`--w-mean 3`) leaves the mean unchanged — consistent with an information
+floor, but equally consistent with simply sitting at an optimum. The new arm distinguishes
+them: less gradient makes the mean **worse**. A quantity that cannot be improved by more
+gradient and degrades under less is **at its optimum**, which is weaker and more accurate than
+"information-limited".
+
+What survives from §8.1, and is the useful half: **the mean responds to architecture but not to
+loss weight** — a dedicated readout moves it −2.5 %, tripling its loss weight moves it 0.0.
+
+### 12.2 The loss-reweighting family is now closed in both directions
+
+| change | mean part | fluc part |
+|---|---|---|
+| `--w-mean 3` (more gradient to the mean) | 0.0 | — |
+| `--w-mean 0.3` (less) | **+2.6 %** | **0.0000** |
+| `--mean-head` (architecture, not weight) | **−2.5 %** | 0.0 |
+
+`w_mean = 1` sits at an optimum, and **neither component responds to how the loss is split
+between them.** In particular the fluctuation — 69 % of the squared error — is **not
+gradient-starved**: giving it 3.3× more of the loss changes its error in the fourth decimal.
+
+→ **Both remaining levers, on both components, are architectural rather than
+objective-weighting.** That is a measured argument for `--osc-modes` being the right *shape* of
+attack on the fluctuation, replacing the one §10.1 retracted.
+
+## 13. The oscillatory head: the value is in the CONSTRAINT, monotonically
+
+AoA 15-20 proxy against the four held-out seeds (81.748 ± 0.034, rel-L2 0.11303). Ordered by
+how tightly the head is constrained, tightest first:
+
+| arm | ω | modes | `wfinal` | Δ | z | Δ rel-L2 |
+|---|---|---|---|---|---|---|
+| **`oscg1`** | global | 1 | **81.818** | +0.070 | **+2.08** | **−0.64 %** |
+| `oscg2` | global | 2 | 81.798 | +0.050 | +1.49 | −0.55 % |
+| `oscg4` | global | 4 | 81.768 | +0.020 | +0.60 | −0.11 % |
+| `osc2` | per-pixel | 2 | 81.743 | −0.005 | −0.13 | −0.20 % |
+
+**The ranking is monotone in constrainedness and nothing else.** One global oscillator beats
+two, two beat four, and all three beat a per-pixel frequency. That is round 8's capacity result
+appearing again at the output head: **the head's value is the constraint it imposes, not the
+capacity it adds.**
+
+### 13.1 Both halves of §11.1's prediction, scored
+
+* **"Per-pixel ω should not beat global"** — correct, and strongly: `osc2` is null (−0.13σ)
+  against `oscg1`'s +2.08σ. A per-pixel frequency is freedom to fit each pixel's 20-frame trace
+  independently, which is the memorization mode the global variant was introduced to avoid.
+* **"Harmonics should matter more than adaptivity"** — **wrong.** Adaptivity is worthless, but
+  so are harmonics: J = 1 wins and each added mode erodes the gain monotonically. A single
+  oscillator at the shedding frequency captures whatever is there.
+
+The frequency MLP is also now removable weight, as §11.1 anticipated: with J = 1 and a ω that
+came out **constant** at 64.5 frames across every window, a fixed non-learned ω should do the
+same work with fewer parameters. Worth one arm if the direction is pursued.
+
+### 13.2 A limitation of the zero-init usage diagnostic
+
+§11 measured `head_osc`/`head_field` weight norms to check the path was exercised: `oscg2`
+0.292 > `osc2` 0.235 > `oscg1` 0.165. **The best-scoring arm has the LOWEST usage.** So that
+diagnostic answers "was the path exercised" and says nothing about whether it was exercised
+well — it distinguishes "the idea failed" from "the idea was never tried", which is what it was
+introduced for, and must not be read as a quality signal.
+
+**Standing: +2.08σ, −0.64 % rel-L2.** Real against seed noise, under the board's ~2 % transfer
+resolution — the same standing as `--lam-tgrad 0.3`, and a combination candidate rather than a
+package.
+
+### 13.3 RETRACTION: the constrainedness ordering does not survive the second split
+
+§13's table was one split. On the full 336-window `val_unseen` (baselines 83.428 ± 0.050) the
+two extremes **swap**:
+
+| arm | Δ rel-L2 (full) | z (full) | z (AoA proxy) | ranking stable? |
+|---|---|---|---|---|
+| `osc2` per-pixel J=2 | **−1.20 %** | **+2.46** | −0.13 | **no** |
+| `oscg1` global J=1 | −0.50 % | −0.79 | **+2.08** | **no** |
+| `oscg2` global J=2 | −0.85 % | +1.62 | +1.49 | yes |
+| `oscg4` global J=4 | −0.62 % | +0.91 | +0.60 | yes |
+
+**"Monotone in constrainedness" is withdrawn.** It described one window set; the arms at both
+ends of that ordering are the two that invert. `oscg1`'s collapse on the full split is entirely
+TKE (0.5031 against a baseline mean of 0.4912, **+2.4 %**) while its rel-L2 is fine — so the
+`wfinal` instability is TKE noise, not a real reordering.
+
+**What IS robust: every one of the four arms improves rel-L2 on both splits**, by 0.5–1.2 %
+(full) and 0.11–0.64 % (AoA). The head does something real and consistent; which variant is
+"best" is not resolvable at this resolution and needs `kfold --paired`.
+
+### 13.4 The mechanism check falsifies the premise — the gain is in the TIME-MEAN
+
+This is what the pre-registered coherence read was for. Full split, decomposed:
+
+| model | rel-L2 | **mean part** | **fluc part** | fluc energy captured | Γ² |
+|---|---|---|---|---|---|
+| baseline `vl_s1` | 0.0851 | 0.0470 | 0.0707 | 20.3 % | 0.3641 |
+| `oscg2` | 0.0844 | **0.0458** (−2.6 %) | 0.0706 (−0.1 %) | 20.4 % | 0.3651 |
+| `osc2` | 0.0841 | **0.0456** (−3.0 %) | 0.0704 (−0.4 %) | 21.3 % | 0.3693 |
+
+**The head was built to fix fluctuation PHASE at the shedding scale. It did not.** Coherence
+moved +0.3 % to +1.4 % in Γ², the fluctuation error moved −0.1 % to −0.4 %, and **the entire
+rel-L2 gain is the time-mean, −2.6 % to −3.0 %.**
+
+**Why, and it is arithmetic.** The learned period is 64.5 frames and the output window is 20,
+so the oscillator spans **0.31 of a cycle** — and `mean_t cos(ωt)` over `t = 0…19` is
+**+0.5110**, nowhere near zero. The oscillatory term therefore carries a large non-zero
+time-mean by construction, and gradient descent used it as **a second mean-field pathway**, not
+as an oscillation.
+
+That explains everything else: why J = 1 / 2 / 4 and per-pixel barely differ (all four are
+extra mean capacity), why the `wfinal` ranking is unstable (the real effect is a small
+consistent mean gain plus TKE noise), and why the size matches `--mean-head`'s −2.5 % almost
+exactly — **it is the same mechanism, arrived at accidentally.**
+
+**The decisive follow-up is one line: force the osc term to be zero-mean over the 20 output
+frames** (subtract its own time-mean before adding it). If the gain vanishes, the head is a
+disguised mean-head and the phase idea is untested; if it survives, the phase claim earns a
+second look. Until then §11.1's unsupervised-frequency result stands as a nice property of the
+parameterization that **is not what produced the score**.
+
+Prediction it also makes: `--osc-modes` and `--mean-head` should **not** be additive.

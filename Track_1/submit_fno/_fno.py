@@ -60,7 +60,7 @@ class FNO2d(nn.Module):
                  extra_ch=0, var_mlp=False, lift_mlp=False, point_mlp=False,
                  var_hidden=128, var_deep=False, var_in_std=False,
                  var_pred_std=False, fgn_dim=0, mean_head=False, osc_modes=0,
-                 osc_global=False):
+                 osc_global=False, osc_zeromean=False):
         super().__init__()
         cin = CH + extra_ch + 2
         self.lift = (nn.Sequential(nn.Conv2d(cin, 128, 1), nn.GELU(), nn.Conv2d(128, width, 1))
@@ -81,6 +81,7 @@ class FNO2d(nn.Module):
         # there; the band brackets the 60-75 frame shedding period.
         self.osc_modes = osc_modes
         self.osc_global = osc_global
+        self.osc_zeromean = osc_zeromean
         self.head_osc = None
         if osc_modes:
             # Mirrored from unet/models_alt.py.
@@ -144,6 +145,16 @@ class FNO2d(nn.Module):
             ph = om.unsqueeze(2) * self.osc_t.view(1, 1, T_OUT, 1, 1, 1)
             osc = (o[:, :, 0].unsqueeze(2) * torch.cos(ph)
                    - o[:, :, 1].unsqueeze(2) * torch.sin(ph)).sum(1)
+            if self.osc_zeromean:
+                # The decisive test of what this head is actually doing. The learned period is
+                # 64.5 frames against a 20-frame output window, so the oscillator spans 0.31 of
+                # a cycle and mean_t cos(omega t) = +0.511 -- it carries a large non-zero
+                # time-mean BY CONSTRUCTION, and the measured gain turned out to be entirely
+                # in the time-mean (-2.6%) with coherence and the fluctuation error unmoved.
+                # Subtracting the term's own time-mean leaves only its oscillatory content.
+                # If the gain survives, the phase claim is real; if it vanishes, this head was
+                # a mean-head in disguise and the phase idea is UNTESTED.
+                osc = osc - osc.mean(1, keepdim=True)
             field = field + osc.reshape(b, CH, Hh, Ww)
         if self.head_mean is not None:
             b = len(prev)
@@ -433,7 +444,8 @@ def _fno_from_blob(blob: dict, device: str):
               fgn_dim=cfg("fgn_dim", 0),
               mean_head=cfg("mean_head", False),
               osc_modes=cfg("osc_modes", 0),
-              osc_global=cfg("osc_global", False)).to(device)
+              osc_global=cfg("osc_global", False),
+              osc_zeromean=cfg("osc_zeromean", False)).to(device)
     m.load_state_dict(blob["model_state_dict"])
     m.eval()
     return m

@@ -265,6 +265,15 @@ def main() -> None:
                          "the physics; a per-pixel omega lets the head fit each pixel's "
                          "20-frame trace independently, which is the memorization failure "
                          "mode the arm exists to avoid. (p, q) stay per pixel either way.")
+    ap.add_argument("--osc-zeromean", action="store_true",
+                    help="subtract the oscillatory term's own time-mean before adding it. "
+                         "The learned period is 64.5 frames against a 20-frame window, so the "
+                         "term spans 0.31 of a cycle and carries a large non-zero time-mean by "
+                         "construction -- and the measured gain was ENTIRELY in the time-mean, "
+                         "with coherence unmoved. This isolates the oscillatory content: if "
+                         "the gain survives the phase claim is real, if it vanishes the head "
+                         "was a mean-head in disguise. Note --mean-head already zero-means "
+                         "everything head_field emits, so it implies this.")
     ap.add_argument("--dropout", type=float, default=0.0,
                     help="Dropout2d probability between spectral blocks. Adds no parameters, "
                          "so a checkpoint trained with it still loads into the submission's "
@@ -355,7 +364,7 @@ def main() -> None:
                   var_in_std=args.var_in_std,
                   var_pred_std=args.var_pred_std, dropout=args.dropout,
                   mean_head=args.mean_head, osc_modes=args.osc_modes,
-                  osc_global=args.osc_global,
+                  osc_global=args.osc_global, osc_zeromean=args.osc_zeromean,
                   fgn_dim=args.fgn_dim).to(dev)
     print(f"params: {sum(p.numel() for p in model.parameters())/1e6:.2f}M", flush=True)
 
@@ -630,7 +639,7 @@ def main() -> None:
                 # would have failed to load at deployment (loudly, on unexpected state_dict
                 # keys -- but only at scoring time, after the training had been paid for).
                 "mean_head": args.mean_head, "osc_modes": args.osc_modes,
-                "osc_global": args.osc_global,
+                "osc_global": args.osc_global, "osc_zeromean": args.osc_zeromean,
                 "ctx": args.ctx, "arch": args.arch, "modes_y": args.modes_y,
                 "modes_x": args.modes_x, "n_layers": args.n_layers, "p": args.p,
                 "self_norm": self_norm_mode, "norm": args.norm,

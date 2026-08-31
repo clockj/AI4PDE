@@ -32,6 +32,15 @@ delta to a borrowed seed sigma.
 COST.  K trainings per configuration instead of one, ~18 min each on an A100.  At K = 5 that
 is 1.5 GPU-hours per arm -- affordable for CONFIRMING an arm that already cleared the cheap
 proxy, not for screening.  Screen on `compare_v9.py --aoa 15 20`, confirm here.
+
+The SCORING pass is also slower than it looks, and it is worth knowing why before assuming a
+job has hung.  The leave-one-fold-out band calls `sps9.optimal_band` K times, and each call
+sorts a ~0.9 GB |E| array ALONG THE SAMPLE AXIS -- 82k independent sorts of length ~2.7k, each
+strided by 82k floats.  That is cache-hostile and runs in minutes, not seconds, where
+compare_v9's single call on 336 windows takes ~15 s.  If it ever becomes the bottleneck, the
+fix is to transpose the sample axis to the end and make it contiguous before sorting; it is not
+done here because `optimal_band` is shared with a dozen other scripts and this is not yet
+worth the risk of touching them.
 """
 from __future__ import annotations
 
