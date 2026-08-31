@@ -4,3 +4,7 @@
 **/*.pt
 **/*.zip
 **/*.log
+# build artefacts: staged package directories are reproduced by build_zip.py / build_t2.py
+Track_1/submit_fno/_package*/
+Track_2/_pkg/
+*.bak

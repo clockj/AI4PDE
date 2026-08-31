@@ -1,54 +1,104 @@
 """Project five v9 subscores onto the leaderboard's `final_score`.
 
-v9 does not publish the combination. Three board rounds plus the assumption that it is a linear
-weighted mean with weights summing to 1 and no intercept determine it exactly -- up to one free
-direction, because three equations cannot fix five unknowns.
+v9 does not publish the combination.  Rounds 9 and 10 inferred it from three and four board
+rounds respectively, where a five-weight linear model fits ANY three points exactly and the
+"fit" carried no evidence.  **This version uses all eight scored rounds.**  Eight equations
+against five weights with sum(w) = 1 leaves 3 degrees of freedom, so for the first time the
+no-intercept linear form is TESTED rather than assumed -- and it survives, to a max residual
+of 0.025 against subscores quoted to six decimals.
 
     from final_v9 import predict
     mid, lo, hi = predict([rel, tke, mvpe, time, sps])
 
-Replaces the rule `final ~ mean5 + 0.73` used in rounds 6-8, which was falsified in round 9:
-the three offsets were +0.728, +0.743, +0.903, and mean5 went DOWN between the last two while
-`final` went UP.
+What changed against the round-9 weights, and it matters:
 
-**This is a fit, not a validated model.** Any five-weight linear model reproduces three points.
-What makes it usable is that the interval [lo, hi] spans the whole admissible family, so a
-prediction is only as strong as its width -- report the range, never the midpoint alone. The
-next submission is the falsification test: predict before looking.
+    subscore   round-9 claim    eight-round fit   admissible
+    rel_l2         0.266            0.545         0.327 - 0.637
+    tke            0.244            0.170         0.048 - 0.293
+    mvpe           0.241            0.000         0.000 - 0.160
+    time           0.069            0.081         0.054 - 0.130
+    sps            0.181            0.204         0.170 - 0.237
+
+`rel_l2` is worth about twice what round 9 priced it at, and `mvpe` is worth approximately
+nothing.  Round 10's "stop optimizing rel-L2" followed from the old weights and is withdrawn.
+
+**Still a fit, not a law.**  Report the range, not the midpoint alone, and work in DELTAS
+between rounds wherever possible -- a delta is insensitive to everything the level fit gets
+wrong in common.  `Track_1/board_rounds.py` owns the data and the fit; this module is the
+thin, dependency-free interface to it that the eval scripts import.
 """
 from __future__ import annotations
 
 import numpy as np
 
-# rel_l2, tke, mvpe, time, sps -> final. Rounds 6 (U-Net), 7 (FNO x3), 8 (FNO x8).
+# rel_l2, tke, mvpe, time, sps, final -- every scored round from the shared account, read off
+# Codabench 2026-08-31.  Kept in sync with Track_1/board_rounds.py:ROUNDS.
 BOARD = np.array([
-    [94.4342, 78.1660, 93.7922, 91.6973, 36.9374, 79.733],
-    [94.5754, 78.5278, 93.9100, 91.7264, 37.4680, 79.984883],
-    [94.6342, 78.8825, 93.8030, 90.5066, 38.2338, 80.115065],
+    [94.4342,   78.1660,   93.7922,   91.6973,   36.9374,   79.733],      # R6  U-Net
+    [94.5754,   78.5278,   93.9100,   91.7264,   37.4680,   79.984883],   # R7  FNO x3
+    [94.6342,   78.8825,   93.8030,   90.5066,   38.2338,   80.115065],   # R9  FNO x8
+    [94.5764,   79.1528,   93.6812,   91.1209,   39.6263,   80.512025],   # R10 7 memb
+    [94.461888, 79.593999, 93.655155, 92.102517, 39.328139, 80.519055],   # X1  collaborator
+    [94.570878, 79.080459, 93.350128, 92.777073, 39.545007, 80.609074],   # R11 8 memb
+    [94.461620, 78.843945, 92.926545, 93.263011, 38.878534, 80.372179],   # X2  collaborator
+    [94.490331, 79.167748, 93.418065, 91.803630, 39.637266, 80.515842],   # R12 11 memb
 ])
 
-_A = np.vstack([BOARD[:, :5], np.ones(5)])          # three rounds + sum(w) = 1
-_b = np.concatenate([BOARD[:, 5], [1.0]])
-W0, *_ = np.linalg.lstsq(_A, _b, rcond=None)        # minimum-norm solution
-NULL = np.linalg.svd(_A)[2][-1]                     # the one unconstrained direction
+_X, _Y = BOARD[:, :5], BOARD[:, 5]
+NAMES = ["rel_l2", "tke", "mvpe", "time", "sps"]
 
-# Every weight must be non-negative, which bounds how far along NULL the solution can slide.
-_lo = [-W0[i] / NULL[i] for i in range(5) if NULL[i] > 0]
-_hi = [-W0[i] / NULL[i] for i in range(5) if NULL[i] < 0]
-S_LO, S_HI = max(_lo), min(_hi)
-W_LO, W_HI = W0 + S_LO * NULL, W0 + S_HI * NULL     # the two extreme admissible weightings
+# The subscore matrix is atrociously conditioned -- every column sits in [36, 95] and moves by
+# ~1 across eight rounds -- so this needs a real solver, not a hand-rolled projected gradient
+# (which lands on max|residual| 0.072 against nnls's 0.025 and gets the weights wrong by a
+# factor of two).  scipy is in the `realpde` env; it is absent only from the SUBMISSION
+# container, and nothing shipped imports this module.
+from scipy.optimize import linprog, nnls  # noqa: E402
+
+_A = np.vstack([_X, np.ones(5) * 100.0])       # constraint row scaled into the subscore range
+_b = np.concatenate([_Y, [100.0]])
+W0, _ = nnls(_A, _b)
+RESID = _X @ W0 - _Y
+
+# Admissible family: {w >= 0, sum w = 1, |X w - Y| <= TOL}.  TOL is twice the best achievable
+# max-residual (floored), so a knife-edge best fit does not collapse the interval to a point.
+TOL = max(2.0 * float(np.abs(RESID).max()), 0.01)
+_A_UB = np.vstack([_X, -_X])
+_B_UB = np.concatenate([_Y + TOL, -(_Y - TOL)])
+_A_EQ, _B_EQ = np.ones((1, 5)), np.array([1.0])
+_BOUNDS = [(0.0, None)] * 5
+
+
+def _extreme(v, sign):
+    """min (sign=+1) or max (sign=-1) of w . v over the admissible family."""
+    r = linprog(sign * np.asarray(v, float), A_ub=_A_UB, b_ub=_B_UB,
+                A_eq=_A_EQ, b_eq=_B_EQ, bounds=_BOUNDS)
+    return float(r.x @ np.asarray(v, float)) if r.success else float(W0 @ np.asarray(v, float))
+
+
+def weight_range() -> dict:
+    """Per-weight admissible interval, the table quoted in the docstring."""
+    out = {}
+    for i, n in enumerate(NAMES):
+        e = np.zeros(5); e[i] = 1.0
+        out[n] = (_extreme(e, +1), _extreme(e, -1))
+    return out
 
 
 def predict(subs) -> tuple[float, float, float]:
-    """(midpoint, min, max) `final_score` over the admissible weight family.
-
-    `subs` is [rel_l2_score, tke_score, mvpe_score, time_score, sps_score].
-    The three corner cases -- W0, W_LO, W_HI -- bracket the family because `final` is linear
-    in the weights and the family is a segment.
-    """
+    """(midpoint, min, max) `final_score` over the admissible weight family."""
     v = np.asarray(subs, dtype=float)
-    ends = [float(w @ v) for w in (W0, W_LO, W_HI)]
-    return float(W0 @ v), min(ends), max(ends)
+    return float(W0 @ v), _extreme(v, +1), _extreme(v, -1)
+
+
+def delta(subs_a, subs_b) -> tuple[float, float, float]:
+    """(midpoint, min, max) of `final(b) - final(a)`.
+
+    Prefer this to two `predict` calls whenever both packages are ours: the level fit's
+    common-mode error cancels in a difference, so a delta is the number the eight rounds
+    actually constrain.  Round 12's post-mortem turns on exactly this distinction.
+    """
+    d = np.asarray(subs_b, float) - np.asarray(subs_a, float)
+    return float(W0 @ d), _extreme(d, +1), _extreme(d, -1)
 
 
 def report(subs, label: str = "") -> str:
@@ -59,16 +109,13 @@ def report(subs, label: str = "") -> str:
 
 if __name__ == "__main__":
     np.set_printoptions(precision=4, suppress=True)
-    print(f"W0    {W0}   (min-norm)")
-    print(f"null  {NULL}   s in [{S_LO:.3f}, {S_HI:.3f}]")
-    print(f"W_lo  {W_LO}")
-    print(f"W_hi  {W_HI}")
-    print("\nper-weight admissible range:")
-    for i, n in enumerate(["rel_l2", "tke", "mvpe", "time", "sps"]):
-        a, b = sorted([W_LO[i], W_HI[i]])
-        print(f"  {n:7s} {a:.4f} - {b:.4f}   mid {W0[i]:.4f}")
-    print("\nself-check against the three board rounds:")
+    print(f"W0 {W0}   sum {W0.sum():.6f}")
+    print(f"max |residual| over the eight rounds: {np.abs(RESID).max():.4f}   TOL {TOL:.4f}\n")
+    for n, (lo, hi) in weight_range().items():
+        i = NAMES.index(n)
+        print(f"  {n:7s} {lo:.3f} - {hi:.3f}   fit {W0[i]:.3f}")
+    print("\nself-check against every board round:")
     for row in BOARD:
         mid, lo, hi = predict(row[:5])
-        print(f"  actual {row[5]:.6f}  fit {mid:.6f}  err {mid - row[5]:+.2e}  "
-              f"range width {hi - lo:.2e}")
+        print(f"  actual {row[5]:.6f}  fit {mid:.6f}  err {mid - row[5]:+.4f}  "
+              f"range {hi - lo:.3f}")

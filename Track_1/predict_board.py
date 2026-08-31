@@ -40,7 +40,21 @@ import sps9  # noqa: E402
 from sps9 import prep, sps_score, sc  # noqa: E402
 
 F_TAIL = 1.360                       # calib_board11.py, inverted from round 10
-RATIO = dict(rel=1.0831, tke=1.1174, mvpe=1.4522)
+# Board/proxy error ratios, on the AoA 15-20 held-out proxy.  These were anchored on round 10
+# ALONE until 2026-08-31; `proxy_calib.py` now reconstructs the proxy for R10, R11 and R12 and
+# measures them, so they are a mean of three rather than a reading of one:
+#
+#     rel   1.081 / 1.063 / 1.090     mean 1.078   spread 2.5 %
+#     tke   1.116 / 1.167 / 1.167     mean 1.150   spread 4.5 %
+#     mvpe  1.451 / 1.537 / 1.543     mean 1.511   spread 6.3 %
+#
+# The round-12 miss was `tke`, whose single-round anchor of 1.117 was the LOWEST of the three.
+#
+# READ THE SPREAD, NOT THE MEAN.  +-2.5 % on rel-L2 is about +-0.12 `final`, and the proxy is
+# worse than that as a DELTA instrument -- between R11 and R12 it got the SIGN of the rel-L2
+# move wrong.  This file predicts a level to about +-0.15; it cannot resolve a change smaller
+# than ~2 % of error, and nothing since round 8 has been bigger.
+RATIO = dict(rel=1.078, tke=1.150, mvpe=1.511)
 R10 = dict(rel_l2=94.576394, tke=79.152828, mvpe=93.681162, time=91.120851, sps=39.626333,
            final=80.512025)
 

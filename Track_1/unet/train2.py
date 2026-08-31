@@ -129,9 +129,14 @@ def main() -> None:
                          "fluctuation are orthogonal under the time inner product, so the field "
                          "loss splits exactly into the two and 1.0 reproduces it unchanged. "
                          "diag_spectral.py measures 68%% of the squared error sitting in the "
-                         "fluctuation while only ~31%% of the fluctuation energy is coherently "
-                         "predictable, so most of that budget buys nothing; the time-mean drives "
-                         "MVPE outright. >1 reallocates gradient to the learnable half.")
+                         "fluctuation. The 'only ~31%% of it is coherently predictable' that "
+                         "used to be quoted here is a CATEGORY ERROR (round 13): that Gamma^2 "
+                         "is the coherence of OUR prediction with the target, i.e. what a "
+                         "round-3 model achieved, not what is achievable. >1 reallocates "
+                         "gradient to the time-mean (tested: 3 and 8, both null); <1 "
+                         "reallocates it to the fluctuation, which the eight-round re-pricing "
+                         "of oracle_split_v9 says is the SECOND largest lever (+2.96 against "
+                         "the time-mean's +1.61) and which has never been tried.")
     ap.add_argument("--lam-p", type=float, default=0.0,
                     help="weight on an explicit MVPE term: the scorer's own wake-probe "
                          "quantity (4 columns x 9 rows, time-averaged u,v, per-column relative "
@@ -191,6 +196,11 @@ def main() -> None:
                     help="physics: match all four components of grad(u). Divergence and "
                          "vorticity are two invariant combinations of that tensor, so this "
                          "subsumes both --lam-div and --lam-vort and adds the strain rates.")
+    ap.add_argument("--lam-tgrad", type=float, default=0.0,
+                    help="match the TARGET's frame-to-frame time derivative, in physical "
+                         "units -- the temporal analogue of --lam-grad, which is the only "
+                         "loss term ever to clear the proxy's ~2%% resolution. Nothing else "
+                         "in the objective couples adjacent output frames.")
     ap.add_argument("--lam-spec", type=float, default=0.0,
                     help="physics: match the radially-averaged energy spectrum of the "
                          "fluctuation. Targets the measured amplitude deficit at high k "
@@ -233,6 +243,43 @@ def main() -> None:
                     help="WP3(c): drop every window outside --aoa-hi, i.e. train a high-AoA "
                          "specialist to be blended with the generalist rather than reweighting "
                          "one model. Held-out trajectories are excluded first, as always.")
+    ap.add_argument("--mean-head", action="store_true",
+                    help="a decoupled time-mean readout: head_field emits the (zero-mean) "
+                         "fluctuation and a separate 128-wide MLP emits mean_t(y). The "
+                         "time-mean carries 29%% of rel-L2's error energy and the bound that "
+                         "closed it in round 10 does not bound it -- see floor_aoa.py.")
+    ap.add_argument("--osc-modes", type=int, default=0,
+                    help="J oscillatory output modes, added to head_field. The shedding "
+                         "period is 60-75 frames against T_IN = T_OUT = 20, so the model sees "
+                         "a THIRD of a cycle and must extrapolate the next third -- and the "
+                         "measured error is exactly that: amplitude is right (gain 0.95-1.0) "
+                         "while coherence at k = 2-6, 57%% of the fluctuation energy, is only "
+                         "0.55-0.79. This head emits (p, q, omega) per pixel per channel per "
+                         "mode and synthesizes sum p cos(wt) - q sin(wt), building in the "
+                         "phase advance that is awkward for a conv net. Zero-initialized, so "
+                         "training starts at the plain FNO; 4.7k parameters at J = 2.")
+    ap.add_argument("--osc-global", action="store_true",
+                    help="one omega for the whole field per mode (pooled from the trunk) "
+                         "instead of one per pixel. A vortex street has ONE shedding "
+                         "frequency per trajectory, so this is the constraint that carries "
+                         "the physics; a per-pixel omega lets the head fit each pixel's "
+                         "20-frame trace independently, which is the memorization failure "
+                         "mode the arm exists to avoid. (p, q) stay per pixel either way.")
+    ap.add_argument("--dropout", type=float, default=0.0,
+                    help="Dropout2d probability between spectral blocks. Adds no parameters, "
+                         "so a checkpoint trained with it still loads into the submission's "
+                         "own FNO2d, which has none and runs in eval() regardless.")
+    ap.add_argument("--wd", type=float, default=1e-5,
+                    help="AdamW weight decay. 1e-5 -- effectively none -- was hardcoded for "
+                         "twelve rounds and never swept, while every capacity experiment in "
+                         "the project said the model MEMORIZES 74 trajectories. Explicit "
+                         "regularization is the textbook response to that regime and is the "
+                         "one family it was never tried on.")
+    ap.add_argument("--exclude", nargs="+", default=None,
+                    help="held-out trajectory stems, overriding model.VAL_TRAJ. The default "
+                         "split holds out 8 trajectories drawn from the INTERIOR of the Re "
+                         "range, so it cannot see Re-extrapolation behaviour -- and the hidden "
+                         "test set is at unseen Re. Pass a Re-extreme split to measure that.")
     ap.add_argument("--all-data", action="store_true",
                     help="train on ALL trajectories including the held-out ones. Submission "
                          "checkpoints only -- it makes local evaluation meaningless.")
@@ -252,17 +299,17 @@ def main() -> None:
     # Self-normalization needs raw physical trajectories: the per-window scale is only
     # recoverable before the global normalizer folds every condition onto one distribution.
     self_norm_mode = args.norm == "self"
-    trajs = load_trajectories(args.data, exclude=[] if args.all_data else VAL_TRAJ,
+    excl = [] if args.all_data else (args.exclude if args.exclude is not None else VAL_TRAJ)
+    trajs = load_trajectories(args.data, exclude=excl,
                               normalize=False, phases=PHASES_ALL[:args.phases])
     idx = window_index(trajs, args.stride)
-    held = "NONE (all-data)" if args.all_data else f"{len(VAL_TRAJ)} held out"
+    held = "NONE (all-data)" if args.all_data else f"{len(excl)} held out"
     print(f"train: {len(trajs)} trajectory-phases ({args.phases} phase(s)) -> "
           f"{len(idx)} windows, {held}", flush=True)
 
     # WP3: which windows sit at a high angle of attack. `<Re>_<AoA>` filenames, aligned with
     # `trajs` by construction.
-    names = trajectory_names(args.data, exclude=[] if args.all_data else VAL_TRAJ,
-                             phases=PHASES_ALL[:args.phases])
+    names = trajectory_names(args.data, exclude=excl, phases=PHASES_ALL[:args.phases])
     is_hi = np.isin([int(n.split("_")[1]) for n in names], args.aoa_hi)[idx[:, 0]]
     if args.aoa_only:
         idx = idx[is_hi]
@@ -297,7 +344,7 @@ def main() -> None:
 
     n_ctx = max(args.ctx - T_IN, 0)  # extra frames prepended before the protocol window
     from models_alt import (build, divergence, radial_index, radial_spectrum,
-                            velocity_gradient, vorticity)
+                            time_derivative, velocity_gradient, vorticity)
     rad_idx, rad_nb = radial_index(H, W, dev)
     model = build(args.arch, args.width, args.var_head,
                   (HIST_CH if args.hist else 0) + n_ctx * C,
@@ -306,7 +353,9 @@ def main() -> None:
                   point_mlp=args.point_mlp, var_hidden=args.var_hidden,
                   var_deep=args.var_deep,
                   var_in_std=args.var_in_std,
-                  var_pred_std=args.var_pred_std,
+                  var_pred_std=args.var_pred_std, dropout=args.dropout,
+                  mean_head=args.mean_head, osc_modes=args.osc_modes,
+                  osc_global=args.osc_global,
                   fgn_dim=args.fgn_dim).to(dev)
     print(f"params: {sum(p.numel() for p in model.parameters())/1e6:.2f}M", flush=True)
 
@@ -321,7 +370,7 @@ def main() -> None:
         print(f"init: {args.init} -> {len(ok)}/{len(dst)} tensors copied "
               f"({len(dst) - len(ok)} left at their random init)", flush=True)
 
-    opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-5)
+    opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.wd)
     steps = args.epochs * ((len(idx) + args.batch - 1) // args.batch)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=args.lr, total_steps=steps)
 
@@ -479,6 +528,13 @@ def main() -> None:
                                 velocity_gradient(y * mul)).mean()
                 l_div = l_div + l_grad
                 loss = loss + args.lam_grad * l_grad
+            if args.lam_tgrad > 0.0:
+                # The one derivative direction velocity_gradient does not constrain. A
+                # per-element field loss is indifferent to how the predicted sequence evolves
+                # from frame to frame, which is a strange silence in a forecaster's objective.
+                l_tg = rel_l2(time_derivative(pred * mul), time_derivative(y * mul)).mean()
+                l_div = l_div + l_tg            # reported in the `div` column with its siblings
+                loss = loss + args.lam_tgrad * l_tg
             if args.lam_spec > 0.0:
                 sp_p = radial_spectrum(pred * mul, rad_idx, rad_nb)
                 sp_y = radial_spectrum(y * mul, rad_idx, rad_nb)
@@ -569,6 +625,12 @@ def main() -> None:
                 "var_hidden": args.var_hidden, "var_deep": args.var_deep,
                 "var_in_std": args.var_in_std, "var_pred_std": args.var_pred_std,
                 "fgn_dim": args.fgn_dim, "hist": args.hist,
+                # Both of these are read from the TOP level by _fno._fno_from_blob. mean_head
+                # was missing here from the day it was added, so every --mean-head checkpoint
+                # would have failed to load at deployment (loudly, on unexpected state_dict
+                # keys -- but only at scoring time, after the training had been paid for).
+                "mean_head": args.mean_head, "osc_modes": args.osc_modes,
+                "osc_global": args.osc_global,
                 "ctx": args.ctx, "arch": args.arch, "modes_y": args.modes_y,
                 "modes_x": args.modes_x, "n_layers": args.n_layers, "p": args.p,
                 "self_norm": self_norm_mode, "norm": args.norm,

@@ -26,10 +26,13 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 
 import numpy as np
 
-from eval_wp import HERE, run, subscores
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(HERE, 'submit_fno'))
 
 T = 20
 
@@ -136,27 +139,53 @@ def transductive(X: np.ndarray, ids: np.ndarray, fallback: np.ndarray) -> np.nda
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ckpt", default="unet/wp2i_s5.pth")
-    ap.add_argument("--alpha", type=float, default=0.75)
-    ap.add_argument("--suffix", default="", help="'_sim' for the simulation validation set")
+    ap.add_argument("--ckpt", nargs="+", default=["unet/fno_vl_s1.pth"],
+                    help="one or more members; they are ensembled exactly as the package does, "
+                         "which matters here: gamma is a property of THE PREDICTION, so a "
+                         "single member and an ensemble are different measurements")
+    ap.add_argument("--alpha", type=float, default=0.90)
+    ap.add_argument("--set", default="unseen", choices=["unseen", "seen", "unseen_sim", "rein", "relo", "rehi"],
+                    help="`rein`/`relo`/`rehi` are re_split.py's interior control and the two "
+                         "Re-EXTRAPOLATION sets, and they only mean anything for a checkpoint "
+                         "trained with re_split's --exclude. "
+                         "`seen` is the trajectories the model TRAINED on. Comparing the "
+                         "mean/fluctuation split across seen and unseen localizes the "
+                         "generalization gap -- and 68%% of the squared error lives in the "
+                         "fluctuation, so if the gap does too, then the fluctuation's SHAPE "
+                         "and the generalization problem are the same problem.")
+    ap.add_argument("--tiling", action="store_true",
+                    help="also print (C), the score reachable from the stride-20 tiling. That "
+                         "route is disclosed and unused; it is a property of the protocol.")
     args = ap.parse_args()
 
-    d = np.load(os.path.join(HERE, f"val_unseen{args.suffix}.npz"))
-    X, Y, ids = d["x"], d["y"], d["ids"]
-    P, _, tstep = run(os.path.join(HERE, args.ckpt), X, args.alpha)
+    import torch
+    import _fno
+    from eval_v9 import infer
+    import sps9
+    dev = "cuda" if torch.cuda.is_available() else "cpu"
 
-    print(f"\n{'='*72}\n(A) rel-L2 decomposition  --  {args.ckpt}, alpha={args.alpha}, "
-          f"val_unseen\n{'='*72}")
+    d = np.load(os.path.join(HERE, f"val_{args.set}.npz"))
+    X, Y, ids = d["x"], d["y"], d["ids"]
+    m = [_fno.load_any(c if os.path.isabs(c) else os.path.join(HERE, c), dev)
+         for c in args.ckpt]
+    P = infer(m, X, dev, args.alpha)
+    tag = f"{len(m)} member(s), alpha={args.alpha}, val_{args.set}"
+
+    print(f"\n{'='*72}\n(A) rel-L2 decomposition  --  {tag}\n{'='*72}")
     for label, pred in (("model", P), ("input time-mean", np.repeat(X.mean(1, keepdims=True),
                                                                     T, axis=1))):
-        s = decompose(pred, Y)
-        print(f"  {label:16s} rel-L2 {s['rel_total']:.4f} = mean {s['rel_mean']:.4f} "
-              f"(+) fluc {s['rel_fluc']:.4f}   [quadrature]")
-        print(f"  {'':16s} target fluctuation is {100*s['fluc_frac']:.1f}% of field norm; "
-              f"model captures {100*s['fluc_captured']:.1f}% of its energy")
+        st = decompose(pred, Y)
+        print(f"  {label:16s} rel-L2 {st['rel_total']:.4f} = mean {st['rel_mean']:.4f} "
+              f"(+) fluc {st['rel_fluc']:.4f}   [quadrature]")
+        print(f"  {'':16s} target fluctuation is {100*st['fluc_frac']:.1f}% of field norm; "
+              f"model captures {100*st['fluc_captured']:.1f}% of its energy")
 
     print(f"\n{'='*72}\n(B) spectral coherence of the fluctuation, per radial wavenumber\n"
           f"{'='*72}")
+    print("  gamma(k) = |<F_P conj(F_Y)>| / sqrt(<|F_P|^2><|F_Y|^2>) is computed from OUR")
+    print("  PREDICTION, so it is what this model achieves, NOT what is achievable. A perfect")
+    print("  predictor scores 1 here. The energy-weighted Gamma^2 below bounds a post-hoc")
+    print("  per-wavenumber filter on this prediction and nothing else.")
     c = coherence(P, Y)
     print(f"  {'k':>3s} {'energy%':>8s} {'coherence':>10s} {'gain':>7s}   "
           f"(coherence = phase agreement, gain = |pred|/|target|)")
@@ -164,20 +193,18 @@ def main() -> None:
         if c["energy"][b] < 1e-5:
             continue
         print(f"  {b:3d} {100*c['energy'][b]:8.2f} {c['gamma'][b]:10.3f} {c['gain'][b]:7.3f}")
+    g2 = float((c["energy"] * c["gamma"] ** 2).sum() / c["energy"].sum())
+    print(f"  energy-weighted Gamma^2 = {g2:.4f}   ({tag})")
 
-    print(f"\n{'='*72}\n(C) transductive bound from the stride-20 tiling\n{'='*72}")
-    Pt = transductive(X, ids, P)
-    v = subscores(Pt, Y, tstep)
-    base = subscores(P, Y, tstep)
-    print(f"  {'':22s} {'relL2':>7s} {'TKE':>7s} {'MVPE':>7s} {'sps':>6s} {'FINAL':>7s}")
-    for label, s in (("model alone", base), ("+ tiling structure", v)):
-        print(f"  {label:22s} {s['rel_err']:7.4f} {s['tke_err']:7.4f} {s['mvpe_err']:7.4f} "
-              f"{s['sps']:6.2f} {s['final']:7.2f}")
-    # With near-zero error the band can shrink until exp(-2h/sigma) ~ 1 and still cover.
-    vo = subscores(Pt, Y, tstep, half=np.abs(Y - Pt) + 1e-6)
-    print(f"  {'+ tiling, oracle band':22s} {vo['rel_err']:7.4f} {vo['tke_err']:7.4f} "
-          f"{vo['mvpe_err']:7.4f} {vo['sps']:6.2f} {vo['final']:7.2f}")
-
+    if args.tiling:
+        print(f"\n{'='*72}\n(C) transductive bound from the stride-20 tiling\n{'='*72}")
+        from eval_wp import subscores   # pulls in the v7 kit path; only needed here
+        Pt = transductive(X, ids, P)
+        base, v = subscores(P, Y, 1.0), subscores(Pt, Y, 1.0)
+        print(f"  {'':22s} {'relL2':>7s} {'TKE':>7s} {'MVPE':>7s} {'sps':>6s} {'FINAL':>7s}")
+        for label, st in (("model alone", base), ("+ tiling structure", v)):
+            print(f"  {label:22s} {st['rel_err']:7.4f} {st['tke_err']:7.4f} "
+                  f"{st['mvpe_err']:7.4f} {st['sps']:6.2f} {st['final']:7.2f}")
 
 if __name__ == "__main__":
     main()

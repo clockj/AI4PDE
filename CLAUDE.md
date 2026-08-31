@@ -4,6 +4,10 @@ Solution code for the **RealPDE** competition (real-world PDE / sim-to-real flui
 Site: https://realpdecompetition.github.io/ · Data: https://huggingface.co/datasets/AI4Science-WestlakeU/RealPDEBench
 Track 1 (Sim2Real): https://www.codabench.org/competitions/17363/ · Track 2 (LTTTA): https://www.codabench.org/competitions/17385/
 
+> **START HERE: [`ROADMAP.md`](ROADMAP.md).** It carries the full eight-round board record, the
+> refitted subscore weights (which overturn several conclusions still written below), and the
+> current recommendation. This file is the reference manual; the roadmap is the plan.
+
 This repo (`~/RealPDE/AI4PDE`, remote `github.com/clockj/AI4PDE`) holds **our** code.
 Datasets, starting kits and official checkpoints live one level up in `~/RealPDE/` and are **not**
 committed (16 GB).
@@ -382,7 +386,7 @@ head all the weight (0.982) and buys +0.008, because the head is in-sample there
 
 | subscore | now | measured bound | how bounded |
 |---|---|---|---|
-| `rel_l2` | 95.8 | 97.0–97.4 | mean sampling floor 0.0531 ⊕ PIV noise 0.007–0.031 |
+| `rel_l2` | 95.8 | ~~97.0–97.4~~ **WITHDRAWN, round 13** | the 0.0531 "floor" is not one — the model's own time-mean error is 0.0438, below it at every AoA (`floor_aoa.py`, `mean_floor2.py`). No measured bound on `rel_l2` remains. |
 | `tke` | 79.8 | ~81 | 10-frame half-split ⇒ ≈0.47 irreducible |
 | `mvpe` | 96.3 | **96.75** | perfect-true-mean predictor at the probes = 0.0670 |
 | `time` | 98.0 | ~99 | 0.317 ms/window |
@@ -397,8 +401,11 @@ dominated by the *time-mean sampling term*, not measurement noise.
   coherence is 0.79 at the shedding scale but <0.2 above k≈15; energy-weighted Γ² = 0.308 caps
   any per-wavenumber filter. Best variance-preserving per-k gain: **+0.013**. FNO is also the
   wrong tool — mode truncation is a low-pass, and 15.5 ms costs −2.2 final. `diag_spectral.py`.
-- *The time-mean as a separate lever.* Already at its sampling floor: 0.0503 measured vs 0.0531
-  irreducible. `diag_mean_floor.py`.
+- ~~*The time-mean as a separate lever.* Already at its sampling floor.~~ **REOPENED, round
+  13**: the floor was 0.0531 from a half-split estimator that bounds the wrong quantity, and
+  the model is at 0.0438. The component carries 29% of rel-L2's error energy. Three direct
+  attacks on it (`--w-mean 3/8`, blending toward the input mean) are still null, so it is open
+  and hard, not open and easy.
 - *Loss reweighting.* `--w-mean 3` (+1.2σ), `--w-mean 8`, `--lam-p 0.3` (−0.8σ). Adding the
   scorer's own MVPE functional to the loss does not improve MVPE.
 - *More capacity, anywhere.* Width 96 lost for the field net; width 64 loses for the variance
@@ -415,8 +422,13 @@ MVPE 0.0021) — which reconciles the leaderboard's otherwise impossible 93.3, s
 caps a physically perfect forecaster near 92 and `sps_score` cannot exceed 73.11.
 **No action taken. Ask the organizers before treating this as available.**
 
-Legitimately, the same batching allows **transductive conditioning**: per-trajectory statistics
-from all ~42 windows, reading no targets. Trajectory boundaries are detectable from the
+~~Legitimately, the same batching allows **transductive conditioning**: per-trajectory
+statistics from all ~42 windows, reading no targets.~~ **STRUCK, round 13.** "Reading no
+targets" is false: window *k+1*'s input IS window *k*'s target, bit for bit, so any statistic
+pooled across windows is computed partly from the answers. A trajectory-mean of the inputs
+carries 1/42 of every window's own target. It would also pass `validate_strict.py`, since a
+pooled mean is permutation-equivariant — the guard does not cover this. **The only clean input
+for window k is window k's own input window.** Trajectory boundaries are detectable from the
 per-window mean-speed jump (within ≤0.046, across ≥0.108, 0/335 errors at threshold 0.077) when
 `metadata["sample_id"]` is unavailable.
 
@@ -700,10 +712,12 @@ the AoA 15–20 proxy (`compare_v9.py --aoa 15 20`; `wfinal` = round-9 weights o
 * **The three pieces of a prediction, priced** (`Track_1/oracle_split_v9.py`). Splitting
   `y = mean_t(y) + σ(y)·shape(y)` and handing the model the target's value for one piece at a
   time: **σ +7.71**, time-mean +2.72, shape (phase-resolved fluctuation) **+1.95**, everything
-  +21.04. → **The hardest part of the problem is worth the least.** Replacing `shape` cuts
-  rel-L2 by 34% and buys +1.95; replacing σ leaves rel-L2 *unchanged* and buys +7.71. Near
-  e ≈ 0.1 the `100/(1+0.5e)` curve is flat — **stop optimizing rel-L2**, TKE and SPS carry the
-  response.
+  +21.04. → ~~**The hardest part of the problem is worth the least.**~~ ~~**stop optimizing
+  rel-L2**, TKE and SPS carry the response.~~ **BOTH FALSIFIED, round 13.** Those numbers used
+  the round-9 weights. Re-run on the same instrument under the eight-round fit: **σ +5.96,
+  time-mean +1.61, shape +2.96** — `shape` moves from LAST to SECOND, above the time-mean, and
+  it is the only piece that moves rel-L2 (0.1086 → 0.0694, −36%), the subscore worth 0.545.
+  The curve *is* flat near e ≈ 0.1; the weight it was paired with was off by half.
 * **Oracles are upper bounds, not forecasts.** The +7.71 σ headroom yielded **+0.08** in
   practice across five arms. Quote the oracle to rank directions, never to predict a gain.
 * **The variance-trunk relationship is not monotone.** Fixed field, sigma swapped, TKE:
@@ -796,7 +810,8 @@ the AoA 15–20 proxy (`compare_v9.py --aoa 15 20`; `wfinal` = round-9 weights o
 
 rel 94.5764 / tke 79.1528 / mvpe 93.6812 / time 91.1209 / sps 39.6263. Predicted 80.422 before
 submitting (family range 80.373–80.465); actual landed 0.047 *above* the range. Plan for the
-next round: `Track_1/plan/plan_20260809.md`. Best other team: **80.79**.
+next round: `Track_1/plan/plan_20260809.md`. Best other team at the time: 80.79 —
+**stale, see below: the leader was 81.76136 by 2026-08-25.**
 
 * **The band was the round**: sps **+1.393**, against a +0.95 forecast — roughly two-thirds of
   the gain. TKE came in near-exact (predicted 79.144, actual 79.153).
@@ -896,6 +911,18 @@ next round: `Track_1/plan/plan_20260809.md`. Best other team: **80.79**.
   ms/window** (round 10: 3.487). Predicted board **80.603** (+0.091); prediction recorded in
   `Track_1/plan/plan_20260809.md` before submitting.
 
+### Round 11 BOARD RESULT — 80.60907, and `predict_board.py` is now a VALIDATED instrument
+
+Submitted 2026-08-10 20:55 (submission 885003, shared account); the result surfaced on
+2026-08-31 when the leaderboard was finally read from a logged-in browser. Board
+**80.60907** against a recorded prediction of **80.603 — a residual of +0.006.**
+
+`plan_20260809.md` flagged this explicitly as `predict_board.py`'s **first genuine
+out-of-sample prediction** (round 10's −0.009 was fitted, and does not count). It passed.
+The board-time model, the board/proxy error inflation ratios and the round-9 delta weights
+now have one honest confirmation between them. **Predict every board result before
+submitting; the instrument has earned the right to be trusted to ~±0.01 on deltas.**
+
 ### Architecture directions assessed 2026-08-09 — `Track_1/report/directions_20260809_architecture.md`
 
 **The diagnosis after round 11.** Capacity, data, ensembling, the band and latency are all
@@ -941,9 +968,20 @@ Round 11's `lam_v` U-shape says log-MSE is a **misaligned surrogate**, not a har
   128-wide MLP. Cheap test if anyone insists: region-wise error maps, then a per-location FiLM.
 
 **The pattern:** GNN and KANO are both proposals about **operator expressivity**, and rounds
-8–11 say expressivity stopped being the binding constraint. What remains is that the fluctuation
-is partly unpredictable (`diag_spectral.py`: only ~31% of fluctuation energy is coherently
-predictable) and we model it with a log-MSE sigma head instead of a proper scoring rule.
+8–11 say expressivity stopped being the binding constraint. ~~What remains is that the
+fluctuation is partly unpredictable (`diag_spectral.py`: only ~31% of fluctuation energy is
+coherently predictable)~~ **— CATEGORY ERROR, corrected round 13.** `diag_spectral`'s
+`gamma(k) = |<F_P conj(F_Y)>| / sqrt(<|F_P|²><|F_Y|²>)` is computed from **our prediction**
+`F_P`, so Γ² = 0.308 is the fraction this model gets right in phase, not the fraction that is
+gettable — a perfect predictor scores 1 on the same instrument, and the 0.308 was measured on a
+**round-3 U-Net**. What it legitimately bounds is what it was computed for: a post-hoc
+per-wavenumber filter on that prediction, capped at +0.013. **No measured bound on fluctuation
+predictability exists** — and round 13 measured Γ² rising monotonically with model quality on
+the same 336 windows (round-12 U-Net **0.3288**, current FNO **0.3641**, 5-member ensemble
+**0.3865**, against the quoted 0.308), which is what a model property looks like and what a
+ceiling does not. The re-pricing makes `shape` the second largest oracle (+2.96). What remains, then, is that we model the fluctuation amplitude with a log-MSE sigma
+head instead of a proper scoring rule — and that we have never tried to predict the
+fluctuation's *phase* with anything but the field head.
 
 ### Round 12 (2026-08-29) — ported to an OSC A100, FGN and phase closed, U-Net joins the package
 
@@ -952,11 +990,12 @@ Full detail: `Track_1/report/report_20260829_round12.md`; raw rows in
 4060 box is gone); every binary artifact rebuilt from scratch. Git branch: `qwu/dev`.
 
 * **Environment**: data at `/users/PAS1187/qwu/RealPDE/`, env `realpde` recreated (torch
-  2.2.2+cu121). The kit `scoring.py` on this machine is a verified RECONSTRUCTION (Codabench
-  is auth-walled from the cluster; agrees with `sps9.py` to 6.5e-8; MVPE is rel-L2 per probe
-  COLUMN, mean over the 4 x-stations — a pooled-36-probe variant read −0.097 wfinal until the
-  persistence/time-mean anchors caught it). Fetch the official kit v9 with a Codabench login
-  to retire the last risk; TKE ddof=0 is the one remaining assumption. Recipe reproduces at
+  2.2.2+cu121). The kit `scoring.py` used all round was a RECONSTRUCTION (Codabench is
+  auth-walled from the cluster) — **now retired: the official kits arrived 2026-08-31 and the
+  reconstruction is score-identical to them** (see the round-12 postscript below). MVPE is
+  rel-L2 per probe COLUMN, mean over the 4 x-stations — a pooled-36-probe variant read −0.097
+  wfinal until the persistence/time-mean anchors caught it, and the official file confirms the
+  per-column form. Recipe reproduces at
   +1σ (82.063 vs 82.046±0.017); 18.4 min/run; **the 12-core cpuset, not the GPU, binds** —
   never time anything while training runs, and don't judge liveness by nvidia-smi (reads 0%).
 * **WP-1 FGN/CRPS probabilistic head: FAILED its pre-registered screen, closed.**
@@ -983,6 +1022,118 @@ Full detail: `Track_1/report/report_20260829_round12.md`; raw rows in
 * **Predicted board, recorded pre-submission**: rel 94.521 / tke 79.869 / mvpe 93.782 / time
   91.248 / sps 39.628 → **final 80.707 (+0.195)**, delta-based off round 10's confirmed
   80.512. TKE carries the round. **Not yet submitted** — submission is the user's call.
+
+### Round 12 BOARD RESULT (2026-08-31) — 80.515842, and three rounds of work were NOISE
+
+rel 94.490331 / tke 79.167748 / mvpe 93.418065 / time 91.803630 / sps 39.637266. Predicted
+**80.707**; actual **80.516**, a miss of **−0.191**. All eight scored rounds and the analysis
+below are reproducible with `Track_1/board_rounds.py`.
+
+* **The round-12 thesis failed outright.** "TKE carries the round": predicted `tke` +0.716 over
+  round 10, delivered **+0.015**. Gate M's held-out measurement of the U-Net member (+0.091
+  proxy / +0.123 full wfinal, attributed to TKE) transferred as ~+0.09 `tke_score` against
+  round 11 — an order of magnitude less than the local number implied.
+* **`predict_board.py` is 1-for-2, not validated.** Round 11's +0.006 residual was luck. A note
+  added earlier on 2026-08-31 claiming it had "earned the right to be trusted to ±0.01 on
+  deltas" was wrong and is retracted.
+* **The complete submission history was recovered from Codabench** (the repo knew about four
+  rounds; there are eight, two of them a collaborator's). Ids/dates/subscores in
+  `board_rounds.py`.
+
+**1. The regression is LATENCY, not the model.** R12 vs R11, priced with the refitted weights:
+
+| subscore | Δ | × weight | = final |
+|---|---|---|---|
+| rel_l2 | −0.081 | 0.545 | −0.044 |
+| tke | +0.087 | 0.170 | +0.015 |
+| mvpe | **+0.068** | 0.000 | +0.000 |
+| **time** | **−0.973** | 0.081 | **−0.079** |
+| sps | +0.092 | 0.204 | +0.019 |
+| **total** | | | **−0.089** (actual −0.093) |
+
+MVPE did **not** regress against round 11 — it improved. An earlier same-day reading that
+blamed the U-Net member for an MVPE loss compared against round 10, the wrong baseline, and is
+withdrawn. The 11-member package's accuracy is fractionally *better* than the 8-member one; it
+lost because 4 invocations cost ~1 board ms.
+
+**2. AT CONSTANT BOARD LATENCY, ROUNDS 10-12 ARE INDISTINGUISHABLE.** `time_score` swings 2.8
+points across the eight rounds and is only partly ours to control. Holding it at the median:
+
+| round | board `final` | normalised |
+|---|---|---|
+| R6 U-Net | 79.733 | 79.738 |
+| R7 FNO ×3 | 79.985 | 79.988 |
+| R9 FNO ×8 | 80.115 | 80.217 |
+| **R10 7 memb/3 inv** | 80.512 | **80.564** |
+| R11 8 memb/3 inv | **80.609** | 80.527 |
+| R12 11 memb/4 inv | 80.516 | 80.513 |
+
+R11's apparent +0.097 and R12's apparent −0.093 are both mostly board-timing swing. **Real
+progress stopped on 2026-08-08.** Rounds 11 and 12 — more members, a second architecture
+family, α 0.90, the mode-padded fusion — bought **nothing measurable**. Ensembling and
+composition are exhausted; treat any future member-set change as ~0 until proven otherwise.
+
+**3. THE SUBSCORE WEIGHTS WERE WRONG, AND THE STRATEGY THAT FOLLOWED THEM WAS TOO.** Eight
+rounds against five weights with Σw = 1 and no intercept is overdetermined (3 dof) and fits to
+a max residual of **0.025** — so unlike rounds 9–10 this is a tested model, not an exact
+interpolation. Round 10 "falsified" the no-intercept form on four points; with eight it holds.
+
+| subscore | fitted | admissible | round-9 claim |
+|---|---|---|---|
+| **rel_l2** | **0.545** | 0.327–0.637 | 0.266 |
+| tke | 0.170 | 0.048–0.293 | 0.244 |
+| **mvpe** | **0.000** | 0.000–0.160 | 0.241 |
+| time | 0.081 | 0.054–0.130 | 0.069 |
+| sps | 0.204 | 0.170–0.237 | 0.181 |
+
+→ **`rel_l2` is the most valuable subscore, at ~2× the assumed weight.** Round 10's
+"**stop optimizing rel-L2**, TKE and SPS carry the response" is **FALSIFIED** — it was a
+correct reading of the *curve* (`100/(1+0.5e)` is flat near e ≈ 0.1) paired with a weight that
+was off by half.
+→ **`mvpe` is worth approximately nothing** (≤0.16, best estimate 0). Stop spending on it, and
+stop counting its regressions as losses. Its 96.75 ceiling is irrelevant.
+→ Re-pricing round 9's exchange rate with these weights, a **10 % error cut is worth +0.93
+`final`**, split **sps 49 % / rel_l2 38 % / tke 14 % / mvpe 0 %**. The leader is 81.76; closing
+1.25 needs a **~13 % error reduction**.
+
+**4. The board-time model is overfit and should not be trusted.**
+`board ms = 4.447 + 0.324·inv + 0.431·local ms` fits its own four rounds to ±0.064 ms and
+misses **R11 by −1.86 ms and R12 by −0.90 ms**. R7 and R11 both ran 3 invocations at similar
+local cost and landed 1.5 ms apart. Observed board latency spans 3.80–8.02 ms. Budget for
+invocations, but do not predict `time_score` to better than ±1 point.
+
+### Round-12 postscript (2026-08-31) — the official kits arrived; the scorer risk is closed
+
+* **The reconstruction is SCORE-IDENTICAL to the official kit v9.** Both official kits were
+  downloaded from Codabench with a logged-in browser and unpacked under
+  `/users/PAS1187/qwu/RealPDE/official/{t1_v9,t2_v6}/`. Two verifiers, both committed:
+  `Track_1/verify/diff_scoring_official.py` (synthetic, every function and score curve) and
+  `Track_1/verify/diff_scoring_real.py` (the real 336 `val_unseen` windows, GPU-free anchor
+  predictors). Worst disagreement on real data over every metric and subscore: **2.4e-6**,
+  against a 0.05 run-to-run noise floor. The official file also reproduces CLAUDE.md's
+  documented anchors exactly (persistence 0.1384 / 1.0000 / 0.1408; time-mean 0.1338 /
+  0.1240) and independently confirms the round-12 **per-column MVPE fix**. **Every round-12
+  number stands; nothing needs re-running.** Keep using the reconstruction or the official
+  file — they are interchangeable.
+* **The TKE `ddof` caveat was never a risk — it is algebraically invariant.** TKE is a
+  *relative* L2, `‖ke_p − ke_t‖/‖ke_t‖`, and a ddof change multiplies `ke_p` and `ke_t` by the
+  same 20/19, which cancels exactly (measured: 5.6e-17). SPS's tke branch reads the same
+  rel-L2, so it cancels there too. Do not re-flag it.
+* **Eval-image package set confirmed from the official `smoke_test_kit.py`**:
+  `MISSING_IN_EVAL_IMAGE = {scipy, h5py, matplotlib, pandas}`, with `einops` absent but
+  required to resolve from the kit's own `_vendor/`. Exactly what this file already claimed.
+* **New GPU-free pre-submission gate**: `Track_1/verify/cpu_smoke_submission.py` extracts
+  `submission.zip` to a clean dir, blocks those four packages the way the official smoke test
+  does, imports `submission.py` with the extract dir NOT on `sys.path`, and calls `predict()`.
+  The round-12 package passes on CPU: shape/dtype/finite, bounds well-formed, `p` zero-filled,
+  and **permutation invariance is bit-exact (0.00e+00)**. Use it on any login node;
+  `validate_strict.py` remains the authority when a GPU is available (it also times).
+* **The leaderboard moved much faster than we did.** Read 2026-08-31: leader `np-user`
+  **81.76136** (2026-08-25). Our confirmed track is 80.512 → 80.609 → 80.707 predicted, i.e.
+  **~+0.10 per round while the leader gained ~+0.97 in the same window.** At round 9's measured
+  exchange rate (+0.089 `final` per 1 % of error removed) closing 1.05 needs a **~12 % error
+  reduction** — more than rounds 8–12 delivered combined. **Incremental ensemble/composition
+  work cannot close this gap; the next round needs a different lever, not another member.**
 
 ### Physics losses: rejected, measured
 
@@ -1076,10 +1227,11 @@ tuning. The eval GPU is unknown and probably faster — treat this as a ranking,
   affine/FiLM, low-rank adapter on the last block, or a backprop-free EMA/RLS bias correction on
   the prediction-vs-revealed-target residual). Self-normalization already removes the Re shift,
   so what is left for TTT is trajectory-specific bias.
-* **Strongest T2-specific play: adapt the variance head.** Each step reveals the previous
-  window's ground truth, hence its true per-pixel std — measured above as the best available
-  predictor of the next window's std (rel-L2 0.56, corr 0.76). An EMA calibration of head (b)
-  costs microseconds and attacks the largest subscore gap directly.
+* ~~**Strongest T2-specific play: adapt the variance head.**~~ **FALSIFIED, round 13.** The
+  revealed previous target IS the current input window (stride-20 tiling), so "the previous
+  window's true per-pixel std" is the current input's own std — the zero-parameter anchor that
+  scores rel-L2 0.501 against our σ head's 0.329. It was never a Track-2 lever, and adapting a
+  0.33 predictor toward a 0.50 one makes it worse. See `Track_2/README.md`.
 
 ### Track 2 specifics
 
@@ -1190,3 +1342,60 @@ Development until 2026-09-27**; Decision until 2026-10-25; results 2026-11-10; w
 Winners open-source two weeks before the presentation. Track 2 agent steps must be explicitly
 bounded; direct network access / own LLM API keys are prohibited (organizer gateway only).
 Prizes per track: $6k / $3k / $1.5k; both tracks can be entered.
+
+
+### Round 13 (2026-08-31) — Track 2 built and closed; the board's noise is now measured
+
+Plan and submission strategy: `Track_1/plan/plan_20260831.md`. Track-2 detail:
+`Track_2/README.md`. Nothing was submitted this round; two packages are staged in
+`../sub_candidates/`.
+
+* **THE BOARD'S FOUR ERROR SUBSCORES ARE NOISE-FREE. `time_score` IS NOT.** `rel_l2`, `tke`,
+  `mvpe` and `sps` are deterministic given the submitted arrays; resubmitting the same zip
+  reproduces them. `time_score` swings ±1.7 points for the same invocation count in an order
+  that does not follow local time ⇒ **±0.07 `final` at 1σ, on its own**, which is the size of
+  every per-round improvement since 2026-08-08. **Compare packages by subscore delta, never by
+  `final`**, and never resubmit for a better timing draw.
+* **`final_v9.py` now uses all EIGHT board rounds**, matching `board_rounds.py` (nnls + an LP
+  for the admissible range, max residual 0.025). The round-9 three-round weights it used to
+  carry were an exact interpolation of three points and carried no evidence. `rel_l2` is
+  **0.545** (was 0.266) and `mvpe` is **0.000** (was 0.241). Every script that imports
+  `final_v9` moved with it.
+* **Track 2 is Track 1's model, streamed.** Windows tile at stride 20 with T_in = T_out = 20,
+  so window k−1's revealed target IS window k's input — therefore anything computable from
+  `prev_target_norm` alone was already computable from `input_norm`, and Track 1 could compute
+  it. Only the supervised PAIR and the REALIZED ERROR are new, and all three adaptation
+  families that live there are measured and negative:
+  **residual EMA** (lag-1 residual correlation +0.051; ORACLE additive per-trajectory
+  correction worth 1.75 % of rel-L2), **online SPS band calibration** (at the board's 1.39×
+  stretch the shipped band is already exactly optimal, c = 1.00), **gradient TTT** (40 arms;
+  best is rel-L2 −1.6 % single member / −0.7 % ensemble ≈ +0.02 `final`, against ~9.7 ms/step
+  of backward ≈ −0.5 `final`).
+* **CUDA graphs are worth ≈ +0.25 `final` on Track 2 and nothing on Track 1.** At batch 1 a
+  single member costs **3.18 ms eagerly**, almost all of it kernel-launch overhead; an extra
+  *invocation* costs +2.4 ms and an extra member inside a fused group costs 0.09. Capturing
+  the whole device-side step is **bit-exact (0.0e+00)** and takes the fused 8-member group from
+  3.61 ms to **0.989**. Track 1 amortizes the same overhead over a batch of 64, so it gains
+  ~0.05 ms/window there — nothing. `submission.py` verifies the graph against the eager path at
+  load time and drops it on any disagreement.
+* **A submission gate must KEEP what the model returns and check it later.** Handing back a
+  reused staging buffer makes every stored prediction equal to the last one (rel-L2 0.67
+  against 0.074) and passes every harness that copies out on the same line — including the
+  official kit's `local_eval`. `Track_2/validate_t2.py` caught exactly that on its first GPU
+  run.
+* **The two normalizers are not the same.** T2's `mean_in`/`std_in` are bit-identical to
+  `_fno.MEAN`/`_fno.STD`, so the evaluator's normalized input is what the trunk already wants;
+  `mean_tgt`/`std_tgt` differ in the sixth decimal and the output needs that affine correction.
+  `Track_2/verify_space.py` proves the whole path reproduces Track 1's `predict()` to 4e-6
+  physical.
+* **New instruments.** `Track_1/re_split.py` (Re-EXTRAPOLATION held-out sets `val_relo`,
+  `val_rehi` plus an interior control `val_rein`, 56 trajectories left to train on),
+  `Track_1/proxy_calib.py` (is the board/proxy ratio stable, and what is the proxy's resolution
+  limit), `Track_2/stream_eval.py` (real trajectories through the streaming protocol, official
+  scoring). `train2.py` gains **`--wd`** (weight decay was hardcoded at 1e-5 for twelve
+  rounds), **`--dropout`** (Dropout2d between spectral blocks; no parameters, so checkpoints
+  stay loadable by the shipped `_fno.py`) and **`--exclude`** (override the held-out split).
+* **The one untested model family is explicit regularization.** Every capacity result says the
+  model memorizes 74 trajectories; weight decay, dropout and `--aug-scale` (freestream
+  rescaling — a first-order Reynolds shift, aimed at the hidden set's unseen Re) were never
+  swept. That is the current sweep.

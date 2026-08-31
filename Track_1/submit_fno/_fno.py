@@ -15,11 +15,16 @@ anywhere a member list may contain one.
 """
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import torch
 import torch.nn as nn
 
 T_IN = T_OUT = 20
+# Oscillatory-head frequency band, mirrored from unet/models_alt.py: periods of
+# 200 down to 10 frames, bracketing the 60-75 frame shedding period.
+OSC_W_LO, OSC_W_HI = 2.0 * math.pi / 200.0, 2.0 * math.pi / 10.0
 H, W, C = 32, 64, 2
 CH = T_IN * C
 
@@ -54,7 +59,8 @@ class FNO2d(nn.Module):
     def __init__(self, width=24, modes_y=8, modes_x=12, n_layers=4, var_head=True,
                  extra_ch=0, var_mlp=False, lift_mlp=False, point_mlp=False,
                  var_hidden=128, var_deep=False, var_in_std=False,
-                 var_pred_std=False, fgn_dim=0):
+                 var_pred_std=False, fgn_dim=0, mean_head=False, osc_modes=0,
+                 osc_global=False):
         super().__init__()
         cin = CH + extra_ch + 2
         self.lift = (nn.Sequential(nn.Conv2d(cin, 128, 1), nn.GELU(), nn.Conv2d(128, width, 1))
@@ -67,6 +73,30 @@ class FNO2d(nn.Module):
         self.norm = nn.ModuleList([nn.GroupNorm(8, width) for _ in range(n_layers)])
         self.head_field = nn.Sequential(nn.Conv2d(width, 128, 1), nn.GELU(),
                                         nn.Conv2d(128, CH, 1))
+        # Decoupled time-mean readout (--mean-head): head_field emits only the zero-mean
+        # fluctuation and this emits mean_t(y). Mirrors unet/models_alt.py exactly.
+        self.head_mean = (nn.Sequential(nn.Conv2d(width, 128, 1), nn.GELU(),
+                                        nn.Conv2d(128, C, 1)) if mean_head else None)
+        # Oscillatory output head, mirrored from unet/models_alt.py. See the long comment
+        # there; the band brackets the 60-75 frame shedding period.
+        self.osc_modes = osc_modes
+        self.osc_global = osc_global
+        self.head_osc = None
+        if osc_modes:
+            # Mirrored from unet/models_alt.py.
+            # With a per-pixel omega the head can fit each pixel's 20-frame trace on its own,
+            # which is the memorization failure mode this whole line of work is aimed at. A
+            # vortex street has ONE shedding frequency per trajectory (plus harmonics), so
+            # `osc_global` pools the trunk spatially and emits J frequencies for the whole
+            # field -- the constraint that actually carries the physics. (p, q) stay per pixel
+            # either way: amplitude and phase DO vary across the wake.
+            nout = (2 if osc_global else 3) * osc_modes * C
+            self.head_osc = nn.Sequential(nn.Conv2d(width, 128, 1), nn.GELU(),
+                                          nn.Conv2d(128, nout, 1))
+            nn.init.zeros_(self.head_osc[2].weight); nn.init.zeros_(self.head_osc[2].bias)
+            self.osc_w = (nn.Sequential(nn.Linear(width, 64), nn.GELU(),
+                                        nn.Linear(64, osc_modes)) if osc_global else None)
+            self.register_buffer("osc_t", torch.arange(T_OUT, dtype=torch.float32))
         self.var_deep, self.var_in_std, self.var_pred_std = var_deep, var_in_std, var_pred_std
         var_cin = ((width * n_layers if var_deep else width)
                    + (C if var_in_std else 0) + (C if var_pred_std else 0))
@@ -97,6 +127,29 @@ class FNO2d(nn.Module):
             h = h + torch.nn.functional.gelu(n(s(h) + p(h)))
             hs.append(h)
         field = self.head_field(h)
+        if self.head_osc is not None:
+            # omega is squashed into [2pi/200, 2pi/10] rad/frame, a band that brackets the
+            # 60-75 frame shedding period with room on both sides. Added BEFORE the mean head
+            # so head_mean still owns the time-mean and only the oscillation's fluctuating
+            # part survives the zero-meaning below.
+            b, Hh, Ww = len(prev), field.shape[-2], field.shape[-1]
+            k = 2 if self.osc_global else 3
+            o = self.head_osc(h).reshape(b, self.osc_modes, k, C, Hh, Ww)
+            if self.osc_global:
+                w = self.osc_w(h.mean((-2, -1)))                       # (B, J)
+                om = (OSC_W_LO + (OSC_W_HI - OSC_W_LO)
+                      * torch.sigmoid(w))[:, :, None, None, None]      # broadcast over C,H,W
+            else:
+                om = OSC_W_LO + (OSC_W_HI - OSC_W_LO) * torch.sigmoid(o[:, :, 2])
+            ph = om.unsqueeze(2) * self.osc_t.view(1, 1, T_OUT, 1, 1, 1)
+            osc = (o[:, :, 0].unsqueeze(2) * torch.cos(ph)
+                   - o[:, :, 1].unsqueeze(2) * torch.sin(ph)).sum(1)
+            field = field + osc.reshape(b, CH, Hh, Ww)
+        if self.head_mean is not None:
+            b = len(prev)
+            fl = field.reshape(b, T_OUT, C, H, W)
+            fl = fl - fl.mean(1, keepdim=True)
+            field = (self.head_mean(h).unsqueeze(1) + fl).reshape(b, CH, H, W)
         logstd = None
         if self.head_logstd is not None:
             z = torch.cat(hs, 1) if self.var_deep else h
@@ -339,7 +392,13 @@ def fuse(models):
         groups.setdefault(key, []).append(m)
     out = []
     for g in groups.values():
-        if len(g) == 1 or not isinstance(g[0], FNO2d):
+        # A member with a decoupled time-mean head is passed through UNFUSED. StackedFNO
+        # enumerates lift / point / norm / head_field / head_logstd explicitly, so a
+        # `head_mean` would be silently DROPPED and the member would emit a zero-mean field.
+        # Losing an invocation costs latency; losing a head is a wrong answer, and it would
+        # not show up as a crash.
+        if (len(g) == 1 or not isinstance(g[0], FNO2d)
+                or g[0].head_mean is not None or g[0].head_osc is not None):
             out.extend(g)     # `extend`, not `append`: two U-Nets are two invocations, not one
         else:
             out.append(StackedFNO(g).to(g[0].grid.device).eval())
@@ -347,24 +406,50 @@ def fuse(models):
 
 
 def _fno_from_blob(blob: dict, device: str):
-    m = FNO2d(blob.get("width", 24), blob.get("modes_y", 8), blob.get("modes_x", 12),
-              blob.get("n_layers", 4), blob.get("var_head", True),
-              var_mlp=blob.get("var_mlp", False),
-              lift_mlp=blob.get("lift_mlp", False),
-              point_mlp=blob.get("point_mlp", False),
-              var_hidden=blob.get("var_hidden", 128),
-              var_deep=blob.get("var_deep", False),
-              var_in_std=blob.get("var_in_std", False),
-              var_pred_std=blob.get("var_pred_std", False),
-              fgn_dim=blob.get("fgn_dim", 0)).to(device)
+    def cfg(key, default):
+        """Read an architecture flag from the blob's top level, falling back to `config`.
+
+        train2.py writes each flag explicitly at the top level AND dumps all of `vars(args)`
+        under "config". The two lists drifted: `mean_head` was added to the model and to the
+        argparse but never to the top-level list, so a --mean-head checkpoint built a
+        head-less FNO2d here and died on unexpected state_dict keys -- at SCORING time, after
+        the training had been paid for. Falling back to `config` makes the top-level list an
+        optimization rather than a second source of truth, and fixes checkpoints already on
+        disk without re-training them.
+        """
+        if key in blob:
+            return blob[key]
+        return blob.get("config", {}).get(key, default)
+
+    m = FNO2d(cfg("width", 24), cfg("modes_y", 8), cfg("modes_x", 12),
+              cfg("n_layers", 4), cfg("var_head", True),
+              var_mlp=cfg("var_mlp", False),
+              lift_mlp=cfg("lift_mlp", False),
+              point_mlp=cfg("point_mlp", False),
+              var_hidden=cfg("var_hidden", 128),
+              var_deep=cfg("var_deep", False),
+              var_in_std=cfg("var_in_std", False),
+              var_pred_std=cfg("var_pred_std", False),
+              fgn_dim=cfg("fgn_dim", 0),
+              mean_head=cfg("mean_head", False),
+              osc_modes=cfg("osc_modes", 0),
+              osc_global=cfg("osc_global", False)).to(device)
     m.load_state_dict(blob["model_state_dict"])
     m.eval()
     return m
 
 
 def load(path: str, device: str):
-    """FNO-only loader. Kept for the many analysis scripts that only ever see FNO members."""
-    return _fno_from_blob(torch.load(path, map_location=device), device)
+    """Backwards-compatible alias for `load_any`.
+
+    This used to be an FNO-ONLY loader, on the assumption that the analysis scripts never see
+    anything else. Round 12 put a U-Net in the member set and falsified that: twenty scripts
+    call `load`, and the first member list containing `unet_g1.pth` crashed one of them
+    (`alpha_board.py`) with a wall of missing state_dict keys. Dispatching is
+    behaviour-identical for FNO blobs, so the fix belongs here rather than in twenty call
+    sites.
+    """
+    return load_any(path, device)
 
 
 def load_any(path: str, device: str):

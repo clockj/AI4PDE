@@ -17,8 +17,8 @@ import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TRACK1 = os.path.dirname(HERE)
-STAGE = os.path.join(HERE, "_package")
-ZIP = os.path.join(HERE, "submission.zip")
+STAGE_DEFAULT = os.path.join(HERE, "_package")
+ZIP_DEFAULT = os.path.join(HERE, "submission.zip")
 SIZE_CAP_MB = 256
 
 DEFAULT_CKPT = os.path.join(TRACK1, "unet", "fno_grad.pth")
@@ -26,6 +26,12 @@ DEFAULT_CKPT = os.path.join(TRACK1, "unet", "fno_grad.pth")
 
 def main() -> None:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--band", default=os.path.join(HERE, "band.npz"),
+                    help="which fitted band to package. It MUST have been fitted for exactly "
+                         "this member set at exactly this ALPHA (fit_band.py --ckpt/--alpha) "
+                         "-- the band is solved against one ensemble's error field.")
+    ap.add_argument("--stage", default=STAGE_DEFAULT)
+    ap.add_argument("--out", default=ZIP_DEFAULT)
     ap.add_argument("--ckpt", nargs="+", default=[DEFAULT_CKPT],
                     help="checkpoint(s) to package. More than one is an ensemble, averaged in "
                          "raw field space on the GPU; the first is packaged as fno.pth and the "
@@ -36,11 +42,12 @@ def main() -> None:
     files = [
         (os.path.join(HERE, "submission.py"), "submission.py"),
         (os.path.join(HERE, "_fno.py"), "_fno.py"),
-        (os.path.join(HERE, "band.npz"), "band.npz"),
+        (args.band, "band.npz"),
     ] + list(zip(args.ckpt, names))
     for src, name in zip(args.ckpt, names):
         print(f"packaging checkpoint: {src}  ->  {name}")
 
+    STAGE, ZIP = args.stage, args.out
     if os.path.isdir(STAGE):
         shutil.rmtree(STAGE)
     os.makedirs(STAGE)

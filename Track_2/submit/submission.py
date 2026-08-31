@@ -1,0 +1,255 @@
+"""RealPDE Track 2 (LTTTA) submission: the Track-1 ensemble, streamed, frozen, CUDA-graphed.
+
+Round T2-1.  **No test-time adaptation at all.**  ``ttt_step`` runs the same forecaster Track 1
+ships and returns the same SPS band.  That is deliberate: it is the floor of this track, it
+puts a number on a board where we have none, and every adaptation arm afterwards is measured
+against it instead of against a guess.  The two backprop-free adaptation families that looked
+obvious were both measured first and both are dead -- see ``../ttt_offline.py`` (lag-1
+residual correlation is +0.05, so an EMA bias correction has nothing to correct).
+
+WHAT IS DIFFERENT FROM TRACK 1
+------------------------------
+* **Space.**  Track 1 hands ``predict()`` raw physical fields; Track 2 hands ``ttt_step``
+  tensors the evaluator has already normalized, and denormalizes the answer itself.  The
+  evaluator's ``mean_in``/``std_in`` are bit-identical to ``_fno.MEAN``/``_fno.STD`` (checked
+  against ``example_data/mean_std_real.pt``), so the normalized input IS what the trunk wants
+  -- no round trip.  The TARGET stats differ in the sixth decimal, so the output carries one
+  exact affine correction (``_A``, ``_B``).  ``../verify_space.py`` proves the whole path
+  reproduces Track 1's ``predict()`` to 4e-6 in physical units.
+* **Batch 1, and the step is what is timed.**  Track 1 amortizes one batched call over every
+  window; here each step pays the full launch cost.  Measured on an A100-PCIe, eagerly:
+  a single member costs **3.18 ms** of which the arithmetic is a small fraction, and each
+  extra INVOCATION costs **+2.4 ms** while an extra member inside a fused group costs 0.09.
+* **Hence the CUDA graph.**  The whole device-side step -- forward, ensemble average,
+  fluctuation rescaling, band -- is captured once at load time (which is not timed) and
+  replayed per step.  Measured bit-exact against the eager path (max abs difference 0.0) and
+  3.70 ms -> 1.04 ms for the fused 8-member group.  At the fitted `time` weight of 0.081 that
+  is worth about +0.25 `final`, for no change in any other subscore.  If capture fails for any
+  reason the eager path runs instead, so the graph is an optimization and never a dependency.
+* **Bounds go in ``info``**, in normalized space: ``half_norm = half_raw / std_tgt``.
+
+WHAT IS THE SAME
+----------------
+The members, ``ALPHA`` and ``band.npz`` come from the Track-1 package.  Both tracks score the
+same windows with the same five subscores, so a band fitted to this ensemble's error field on
+Track 1 is the band for it here.
+"""
+from __future__ import annotations
+
+import os
+import sys
+from typing import Any, Dict, Optional, Tuple
+
+import numpy as np
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+
+import torch  # noqa: E402
+
+import _fno  # noqa: E402
+
+T_IN = T_OUT = 20
+H, W = 32, 64
+CH = T_IN * 2
+
+# Evaluator target-space stats (example_data/mean_std_real.pt).  Our net emits fields
+# normalized by _fno.MEAN / _fno.STD, which ARE the evaluator's input stats, so
+#     pred_norm = (y_ours * STD + MEAN - MEAN_TGT) / STD_TGT = y_ours * _A + _B
+_MEAN_TGT = np.array([0.15496256947517395, -0.0005177936982363462], dtype=np.float64)
+_STD_TGT = np.array([0.09681040793657303, 0.015963643789291382], dtype=np.float64)
+_A = (_fno.STD.astype(np.float64) / _STD_TGT).astype(np.float32)
+_B = ((_fno.MEAN.astype(np.float64) - _MEAN_TGT) / _STD_TGT).astype(np.float32)
+
+ALPHA = 0.60
+
+
+class FrozenEnsemble:
+    """The ``reset_ttt_state`` / ``ttt_step`` contract over a fused, frozen ensemble."""
+
+    def __init__(self, models, device, band, sigma_ref, band_p, use_graph=True):
+        self.models = models
+        self.device = str(device)
+        self.band_p = float(band_p or 0.0)
+        cuda = self.device.startswith("cuda")
+
+        # band / sigma_ref arrive as physical half-widths; dividing by std_tgt once, here,
+        # moves them into the space `info` has to report and keeps the timed path free of it.
+        self.half0 = self.sref = None
+        if band is not None:
+            b = np.ascontiguousarray(band[..., :2].astype(np.float32)) / _STD_TGT.astype(np.float32)
+            self.half0 = torch.from_numpy(b.astype(np.float32)).to(device)
+        if sigma_ref is not None:
+            self.sref = torch.from_numpy(
+                np.ascontiguousarray(sigma_ref[..., :2].astype(np.float32))).to(device)
+        self.std = torch.from_numpy(_fno.STD).to(device)
+        self.Ad = torch.from_numpy(_A).to(device)
+        self.Bd = torch.from_numpy(_B).to(device)
+
+        # Static I/O buffers.  They are the graph's inputs and outputs, so they must be the
+        # same storage on every step -- which is also why they are allocated once here.
+        self.gx = torch.zeros((1, T_IN, H, W, 3), dtype=torch.float32, device=device)
+        self.go = torch.zeros((1, T_OUT, H, W, 3), dtype=torch.float32, device=device)
+        self.gl = torch.zeros_like(self.go)
+        self.gh = torch.zeros_like(self.go)
+        self.host = [torch.empty((1, T_OUT, H, W, 3), dtype=torch.float32,
+                                 pin_memory=cuda) for _ in range(3)]
+        self.graph = None
+        if cuda and use_graph:
+            self._capture()
+
+    # -- the device-side step, written once and used by both paths ----------------------
+    def _body(self):
+        pv = self.gx[..., :2].permute(0, 1, 4, 2, 3).reshape(1, CH, H, W).contiguous()
+        y = sig = None
+        total = 0
+        for m in self.models:
+            nm = getattr(m, "n_members", 1)      # a fused group stands in for nm members
+            total += nm
+            raw, logstd = m(pv)
+            yi = raw.reshape(1, T_OUT, 2, H, W).permute(0, 1, 3, 4, 2) * nm
+            y = yi if y is None else y + yi
+            if logstd is not None:
+                si = logstd.clamp(-8.0, 2.0).exp().permute(0, 2, 3, 1).unsqueeze(1) * nm
+                sig = si if sig is None else sig + si
+        if total > 1:
+            y = y / total
+            sig = None if sig is None else sig / total
+        if sig is not None and ALPHA > 0:
+            m_ = y.mean(1, keepdim=True)
+            s_ = y.std(1, keepdim=True, unbiased=False)
+            y = m_ + (y - m_) * ((ALPHA * sig + (1 - ALPHA) * s_) / (s_ + 1e-6))
+        self.go[..., :2] = y * self.Ad + self.Bd
+        if self.half0 is None:
+            return
+        half = self.half0
+        if self.band_p and self.sref is not None and sig is not None:
+            half = half * torch.clamp((sig * self.std) / self.sref, 0.3, 3.0) ** self.band_p
+        self.gl[..., :2] = self.go[..., :2] - half
+        self.gh[..., :2] = self.go[..., :2] + half
+
+    @torch.no_grad()
+    def _capture(self):
+        """Capture ``_body`` once, at load time, and VERIFY it before trusting it.
+
+        Capture is worth 3.61 ms -> 0.989 ms/step on the fused 8-member group, which is about
+        +0.25 `final` at the fitted `time` weight.  It is also the only part of this file whose
+        behaviour depends on a GPU we have never run on, so it is checked rather than assumed:
+        capture, then replay on random input and compare against the eager path.  Anything that
+        raises, or any disagreement at all, drops back to eager.  Never raises.
+        """
+        try:
+            s = torch.cuda.Stream()
+            s.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(s):
+                for _ in range(5):
+                    self._body()
+            torch.cuda.current_stream().wait_stream(s)
+            torch.cuda.synchronize()
+            g = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(g):
+                self._body()
+
+            probe = torch.randn_like(self.gx)
+            self.gx.copy_(probe)
+            self._body()                                   # eager, into the same buffers
+            ref = [t.clone() for t in (self.go, self.gl, self.gh)]
+            self.gx.copy_(probe)
+            g.replay()
+            torch.cuda.synchronize()
+            worst = max(float((a - b).abs().max())
+                        for a, b in zip((self.go, self.gl, self.gh), ref))
+            self.graph = g if worst == 0.0 else None
+        except Exception:
+            self.graph = None
+
+    # -- contract ----------------------------------------------------------------------
+    def reset_ttt_state(self) -> None:
+        """Nothing to reset: the weights never move.  Timed, and costs nothing."""
+
+    @torch.no_grad()
+    def ttt_step(self, input_norm, prev_target_norm=None) -> Tuple[Any, Dict[str, Any]]:
+        x = torch.as_tensor(input_norm)
+        if x.dtype != torch.float32:
+            x = x.float()
+        self.gx.copy_(x, non_blocking=True)
+        if self.graph is not None:
+            self.graph.replay()
+        else:
+            self._body()
+        srcs = (self.go,) if self.half0 is None else (self.go, self.gl, self.gh)
+        out = self._fetch(srcs, x.is_cuda)
+        if self.half0 is None:
+            return out[0], {"adapt_loss": None}
+        return out[0], {"adapt_loss": None, "lower": out[1], "upper": out[2]}
+
+    def _fetch(self, srcs, want_cuda: bool):
+        """Return tensors the caller OWNS, on the device it handed us the input on.
+
+        Two things this gets right that the obvious version does not.
+
+        **The clone is not optional.**  The evaluator keeps every prediction until the run
+        ends, and these buffers are overwritten on the next step, so handing them back makes
+        all N predictions equal to the last one -- rel-L2 0.67 instead of 0.074.  Every local
+        harness hides it, because the kit's `local_eval` and our `stream_eval` both copy out of
+        the returned tensor on the same line.  `validate_t2.py` asserts it, and caught exactly
+        this on its first GPU run.
+
+        **The device is matched to the input's**, not fixed.  The kit's `local_eval` holds its
+        normalizer statistics on the CPU and would raise on a CUDA return; the kit's own
+        reference `ReferenceTTTModel` returns whatever `device` it was constructed with.  The
+        two cannot both be right about the platform, so the safe policy is to mirror the
+        evaluator: hand back what it handed in.  On CUDA that also skips three device-to-host
+        copies.
+        """
+        if want_cuda and self.device.startswith("cuda"):
+            return [s.clone() for s in srcs]
+        if not self.device.startswith("cuda"):
+            return [s.clone() for s in srcs]
+        for i, s in enumerate(srcs):
+            self.host[i].copy_(s, non_blocking=True)   # pinned: 0.031 ms vs 0.068 pageable
+        torch.cuda.synchronize()
+        return [self.host[i].clone() for i in range(len(srcs))]
+
+def _load_band(submission_dir: str):
+    p_npz = os.path.join(submission_dir, "band.npz")
+    if not os.path.exists(p_npz):
+        return None, None, 0.0
+    z = np.load(p_npz)
+    band = z["base"].astype(np.float32)
+    ref = z["sigma_ref"].astype(np.float32)
+    p = float(z["p"])
+    if not (np.all(np.isfinite(band)) and np.all(band >= 0.0)):
+        return None, None, 0.0
+    if band.shape[1:4] != (T_OUT, H, W) or band.shape[-1] < 2:
+        return None, None, 0.0
+    if p and not np.all(ref > 0.0):
+        p = 0.0
+    return band, ref, p
+
+
+def get_ttt_model(submission_dir: str, device: str):
+    """Called once, before the stream, and NOT timed -- so warm-up and capture belong here.
+
+    On CUDA the first forward of a shape pays cuFFT/cuDNN plan selection; at batch 1 that is
+    tens of milliseconds and would otherwise be charged to step 0 of the first trajectory.
+    """
+    dev = str(device) if device else ("cuda" if torch.cuda.is_available() else "cpu")
+    if dev.startswith("cuda") and not torch.cuda.is_available():
+        dev = "cpu"
+    ckpts = [p for p in [os.path.join(submission_dir, "fno.pth")]
+             + [os.path.join(submission_dir, f"fno_{i}.pth") for i in range(2, 17)]
+             if os.path.exists(p)]
+    models = _fno.fuse([_fno.load_any(p, dev) for p in ckpts])
+    band, ref, p = _load_band(submission_dir)
+    m = FrozenEnsemble(models, dev, band, ref, p)
+    try:
+        probe = torch.zeros((1, T_IN, H, W, 3), dtype=torch.float32)
+        for _ in range(3):
+            m.ttt_step(probe, None)
+        if dev.startswith("cuda"):
+            torch.cuda.synchronize()
+    except Exception:
+        pass
+    return m
