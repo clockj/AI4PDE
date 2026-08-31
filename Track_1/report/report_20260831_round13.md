@@ -185,6 +185,32 @@ It also says something reassuring about the shipped package: an 8-member ensembl
 exactly this variance down, which is consistent with the board's flatness across member counts
 even though the accuracy gains were nil.
 
+### 5.5 CORRECTION: the seed-variance ratio is ~58×, not ~1400×
+
+§5.1 quoted "**seed variance is ~1400× larger out of distribution**" from **two** controls: a
+0.001 `wfinal` gap on `rein` against 1.42 on `relo`. **A range-of-two is a poor σ estimator**,
+and with the two extra controls `re_var` trained it collapses:
+
+| set | `wfinal` (4 seeds) | rel-L2 |
+|---|---|---|
+| `rein` | 83.999 ± **0.0122** | 0.07537 ± 0.00005 |
+| `relo` | 81.647 ± **0.7073** | 0.12498 ± 0.01092 |
+| `rehi` | 78.936 ± **0.1408** | 0.12290 ± 0.00068 |
+
+**σ ratio against the interior control: `relo` 58×, `rehi` 11.6×.** The 1400× figure is
+withdrawn.
+
+**The finding itself survives, and is what mattered:** identical-recipe seeds agree to
+±0.012 `wfinal` in distribution and disagree by ±0.71 under low-Re extrapolation — a factor of
+**58**, and 12× even for the milder high-Re shift. In-distribution fit still does not determine
+out-of-distribution behaviour, board score still carries a which-draw term no in-distribution
+proxy can see, and one run is still not a measurement out of distribution. Only the
+multiplier changes.
+
+Note also `relo` is much noisier than `rehi` (0.71 vs 0.14), i.e. **extrapolating BELOW the
+training range is far less stable than above it** — and Re 2968, the known test condition,
+is below.
+
 ### 5.2 `--dropout 0.15` is the first arm to clear anything
 
 Best on **all three** sets: `rein` 84.061 (above both controls), `relo` 82.857 (above the better
@@ -788,3 +814,290 @@ second look. Until then §11.1's unsupervised-frequency result stands as a nice 
 parameterization that **is not what produced the score**.
 
 Prediction it also makes: `--osc-modes` and `--mean-head` should **not** be additive.
+
+### 13.5 `oscz2` doubles as the capacity control both mean-arms needed
+
+`--mean-head` and `--osc-modes` now both improve the time-mean by ~2.5–3 %, by two apparently
+different routes. Without a control, "a dedicated mean readout helps" and "**any** extra
+output-side capacity helps" are indistinguishable — and the second reading is live, because
+round 10b's rule is that capacity at the boundaries pays.
+
+`oscz2` is that control for free: it has **exactly the same parameters** as `oscg2` with only
+the mean pathway removed. So
+
+* `oscz2` still helps ⇒ the gain was output-side **capacity**, and `--mean-head`'s −2.5 % is
+  probably the same thing rather than the decomposition working;
+* `oscz2` is null ⇒ the gain was specifically the **mean pathway**, capacity per se buys
+  nothing, and `--mean-head`'s clean mean/fluctuation separation stands.
+
+Either way it also answers the phase question. One arm, three readings.
+
+## 14. `--aug-scale` and `--dropout`, and then the pattern across all six arms
+
+Completing the regularization family (AoA proxy, baselines 81.748 ± 0.034, rel-L2 0.11303):
+
+| arm | `wfinal` | Δ | z | Δ rel-L2 |
+|---|---|---|---|---|
+| `--aug-scale 0.15` | 81.665 | −0.082 | −2.4 | +0.77 % |
+| `--aug-scale 0.35` | 81.628 | −0.120 | −3.5 | +1.13 % |
+| `--dropout 0.05` | 81.802 | +0.055 | +1.6 | −0.55 % |
+| `--dropout 0.15` | 81.791 | +0.043 | +1.3 | −0.64 % |
+
+`--aug-scale` degrades monotonically. That is the expected sign and is **not** evidence against
+it: freestream rescaling is a first-order Reynolds shift, aimed at *out-of-range* Re, and in
+distribution it can only add noise to conditions the model already sees. Its verdict belongs to
+`re_split`, where it scored `relo` 81.206 against controls 82.349/80.930 — inside the control
+spread, undecided rather than refuted.
+
+### 14.1 THE PATTERN: six unrelated mechanisms, one indistinguishable gain
+
+| arm | mechanism | `wfinal` | z |
+|---|---|---|---|
+| `oscg1` | oscillatory output basis, J = 1 | 81.818 | +2.08 |
+| `--lam-tgrad 0.3` | temporal-derivative loss | 81.806 | +1.73 |
+| `--lam-tgrad 1.0` | temporal-derivative loss | 81.804 | +1.67 |
+| `--dropout 0.05` | channel dropout in the trunk | 81.802 | +1.61 |
+| `oscg2` | oscillatory output basis, J = 2 | 81.798 | +1.49 |
+| `--dropout 0.15` | channel dropout in the trunk | 81.791 | +1.28 |
+
+**Six structurally unrelated changes — an auxiliary loss, an output-basis head at two mode
+counts, and stochastic regularization at two rates — span 0.027 `wfinal`, i.e. 0.8σ. They are
+indistinguishable from one another**, all sit at +1.3…+2.1σ, and all improve rel-L2 by
+0.55–0.64 %.
+
+That is far better explained by **"the model is mildly under-regularized, and any mild
+regularizer recovers ~0.6 % of rel-L2"** than by six different mechanisms each happening to be
+worth the same amount. And §13.4 already caught one of them red-handed: the oscillatory head's
+gain was **not** the phase mechanism it was built for.
+
+Three consequences, and they are the round's real output:
+
+* **Expect combinations NOT to add.** If all six tap the same slack, stacking them recovers it
+  once. The `mhosc` arm in `jobs/oscz.sbatch` tests exactly this for one pair.
+* **None of them is shippable, and combining them probably will not change that.** 0.6 % of
+  rel-L2 against a ~2 % transfer bar, six times over, is still 0.6 %.
+* **The fluctuation is untouched by all of it.** Every decomposition this round puts the
+  fluctuation part at 0.0704–0.0707 — baseline, `--w-mean 0.3`, `oscg2`, `osc2` alike — while
+  69 % of the squared error lives there. **Nothing tried in round 13 moved the thing that
+  carries most of the error.**
+
+The honest read of the round: the regularization family is measured and small, the loss-weight
+family is closed, and the fluctuation remains the open problem it was at the start — now with
+one fewer wrong ceiling in front of it (§4, §6) and one arm whose stated mechanism was
+disproved (§13.4).
+
+### 14.2 CORRECTION to §14.1: dropout is not one of the six
+
+§14.1 read "six unrelated mechanisms, one indistinguishable gain" **off the AoA proxy alone**.
+That is the same single-split error §13.3 retracted an hour earlier, repeated. The full split
+separates them:
+
+| arm | z (full) | z (AoA) | ΔTKE (full) | ΔTKE (AoA) | sign stable? |
+|---|---|---|---|---|---|
+| `--aug-scale 0.15` | +1.15 | −2.43 | −1.39 % | +0.55 % | **no** |
+| `--aug-scale 0.35` | +0.69 | −3.52 | −1.78 % | +0.96 % | **no** |
+| **`--dropout 0.05`** | **+3.76** | +1.61 | **−3.18 %** | −0.30 % | yes |
+| **`--dropout 0.15`** | **+3.84** | +1.28 | **−3.10 %** | +0.64 % | yes |
+| `oscg2` | +1.62 | +1.49 | −0.27 % | +0.19 % | yes |
+| `--lam-tgrad 0.3` | +1.05 | +1.73 | −0.15 % | −0.11 % | yes |
+
+**What survives of §14.1:** the **rel-L2** gains really are uniform, 0.55–0.64 % across every
+mechanism, which still reads as mild under-regularization recoverable by anything.
+
+**What does not:** dropout is **qualitatively different**. On 336 windows it is **+3.8σ**, more
+than twice any other arm, and it gets there through **TKE −3.1 %** where all four
+non-dropout arms move TKE by under 0.3 %. Priced at the eight-round weights that TKE move alone
+is worth ≈ **+0.08 `final`**.
+
+**The caveat that keeps it from being a result.** Dropout's TKE gain is **absent on the AoA
+proxy** (−0.30 %, +0.64 %), so it lives in the AoA 0/5/10 windows. The board looks like an
+AoA-hard mix — and §9.2 measured that the proxy inflates TKE by only 1.014× while the board
+sits 1.150× above it for reasons **not explained by AoA**. So nothing local tells us which
+regime the board's TKE resembles, and this gain may or may not transfer.
+
+`--aug-scale` flips sign between splits, which with §13.3's `osc2`/`oscg1` makes **four of
+tonight's arms sign-unstable across nested splits**. At this effect size neither split is a
+reliable instrument on its own; that is what `kfold --paired` is for, and its per-AoA cells
+(n ≈ 700) are what would settle where dropout's TKE gain lives.
+
+## 15. `--dropout 0.15` clears the bar out of distribution, with complete seed separation
+
+`re_var`: three dropout seeds against four controls, same 56 training trajectories, band fitted
+on `rein` only.
+
+| set | controls (4) `wfinal` | dropout (3) `wfinal` | z | controls rel-L2 | dropout rel-L2 | Δ |
+|---|---|---|---|---|---|---|
+| `rein` (interior control) | 83.999 ± 0.012 | 84.061 ± 0.006 | **+5.06** | 0.07537 | 0.07490 | −0.6 % |
+| `relo` (low-Re) | 81.647 ± 0.707 | 82.993 ± 0.278 | +1.90 | 0.12498 | **0.10720** | **−14.2 %** |
+| `rehi` (high-Re) | 78.936 ± 0.141 | 79.545 ± 0.089 | **+4.33** | 0.12290 | **0.11783** | **−4.1 %** |
+
+**Every dropout seed beats every control seed on rel-L2, on both extrapolation sets:**
+
+```
+relo: dropout worst 0.1141  <  control best 0.1147     SEPARATED
+rehi: dropout worst 0.1180  <  control best 0.1219     SEPARATED
+```
+
+Complete separation of 3 against 4 is p = 1/35 = 0.029 one-sided **per set**, and the two sets
+agree independently. This is not a seed draw.
+
+**And the magnitudes clear the ~2 % transfer bar decisively** — −14.2 % on `relo` and −4.1 % on
+`rehi`, against every other arm of the round at 0.5–1.2 %.
+
+### 15.1 Why this changes the round's conclusion
+
+§14.1 grouped dropout with five other arms as "one indistinguishable gain"; §14.2 already
+separated it in distribution on TKE. This separates it much further, on the axis that matters:
+**in distribution dropout looks like the others; out of distribution it is in a different
+class.** The hidden test set has unseen Reynolds numbers, so out of distribution is the regime
+the board occupies.
+
+**Dropout also shrinks the seed spread it is measured against** — `relo` σ 0.707 → 0.278,
+`rehi` 0.141 → 0.089. It attacks §5.1's instability directly, not just the mean level.
+
+### 15.2 What it is NOT yet, and the two things standing between it and a package
+
+* **The training set differs.** These models see **56** trajectories; the shipped members see
+  all 82. Regularization generally matters more with less data, so the 56-trajectory effect is
+  an **upper bound** on what the shipped recipe would get. The 74-trajectory evidence is
+  weaker but same-signed: +3.8σ on the full split, TKE −3.1 % (§14.2).
+* **The board is less extrapolated than `relo`.** Re 2968 sits ~2.7 % outside the full-data
+  mean-speed range where `relo` sits ~12 % outside its 56-trajectory one, so expect dilution —
+  the honest bracket is nearer `rehi`'s **−4 %** than `relo`'s −14 %. At the eight-round
+  weights a 4 % rel-L2 cut is worth roughly **+0.2 `final`**, which would still be the largest
+  single gain since round 10.
+
+**Next, in order:** `kfold_do15` (queued) gives the paired confirmation on all 82 trajectories
+with a trajectory bootstrap — the instrument built for exactly this question. If it holds,
+rebuilding the package needs 8 dropout-trained all-data members, ~2.5 GPU-hours.
+
+## 16. `--mean-head` does NOT fix out-of-distribution mean transfer — the pre-registered null
+
+§8/§11a left this open: `--mean-head` is null in distribution, but §7 showed the time-mean is
+where extrapolation fails, so a dedicated readout **might** reduce that spread even while doing
+nothing in-distribution. `re_var` asked it directly, on `relo`:
+
+| | mean part | fluc part |
+|---|---|---|
+| controls (4) | 0.0909 ± 0.0159 | 0.0837 ± 0.0036 |
+| `--mean-head` (2) | **0.0958 ± 0.0261** | 0.0817 |
+
+**No.** The mean part is **+0.31σ worse**, not better, and its seed spread is not reduced — the
+worst `--mean-head` seed (0.1142) is as bad as the worst control (0.1125). The hypothesis is
+falsified on the only split that could test it.
+
+`--mean-head` is now **closed on both axes**: null in distribution (§8.1 — the mechanism works,
+the component is at its optimum) and null out of it (here). It stays in the tree, defaulted
+off, with this attached.
+
+Which sharpens §15 by elimination: of everything tried this round, **only dropout improves
+out-of-distribution transfer** — and it does so without going through the mean decomposition
+that §7 made look like the obvious route.
+
+## 17. Ensembling, dropout and the blend all attack the same thing — and dropout wins
+
+`re_var` measured all three against each other on the Re split. The common target is §5.1's
+out-of-distribution seed draw, which §7 localized to the time-mean.
+
+### 17.1 Ensembling IS variance averaging out of distribution
+
+Control ensembles against the single-model mean (rel-L2):
+
+| members | `rein` | `relo` | `rehi` |
+|---|---|---|---|
+| ×2 | −2.0 % | −6.4 % | −2.4 % |
+| ×3 | −2.7 % | −9.3 % | −3.3 % |
+| ×4 | −3.1 % | **−10.2 %** | −3.7 % |
+
+**Ensembling is worth ~3× more out of distribution than in it** (`wfinal` +1.16 on `relo`
+against +0.38 on `rein`). That is a mechanism for the board's flatness across member counts
+while local accuracy gains were nil: **the members were buying robustness, not accuracy**, and
+the local proxies are in-distribution where robustness is worth least.
+
+### 17.2 Dropout survives ensembling; the blend is dominated by it
+
+At matched 3 members, dropout against control:
+
+| set | dropout ×3 | control ×3 | Δ |
+|---|---|---|---|
+| `rein` | 0.0737 | 0.0733 | +0.5 % |
+| `relo` | **0.1018** | 0.1134 | **−10.2 %** |
+| `rehi` | **0.1160** | 0.1189 | −2.4 % |
+
+**Dropout stacks on ensembling rather than duplicating it** — the caveat §7.1 raised against
+the blend, which dropout passes.
+
+The blend's own test (gated, 4-member control ensemble): `relo` 0.1122 → **0.1079** at β = 0.3
+(**−3.8 %**), `rehi` 0.1184 → 0.1169 (−1.3 %), `rein` **unchanged at every β**. So the blend
+**does** survive ensembling, and gating is what makes it worth having — ungated on the same
+ensemble it manages only −1.4 % on `relo` and *costs* +2.7 % in distribution.
+
+But it is dominated. On a single model the blend is worth −4.7 % on a mid-quality control and
+only **−1.2 % on a dropout model** — it repairs bad draws, and dropout has already removed
+them. **They are substitutes, not complements.**
+
+### 17.3 Decision
+
+**Ship dropout, not the blend.** Dropout is 2.7× larger at matched ensemble size, fixes the
+fluctuation as well as the mean, needs no inference-time machinery, and subsumes most of what
+the blend was for. The blend stays in the tree (`mean_blend_re.py`, `--gate`) as a
+zero-training fallback if dropout fails its paired k-fold.
+
+Expected board effect, stated conservatively: the board sits at a **milder** extrapolation than
+either test set (Re 2968 is ~2.7 % outside the full-data mean-speed range against `relo`'s
+~12 %), so the honest bracket for dropout is nearer `rehi`'s −2.4…−4 % than `relo`'s −10…−14 %.
+At the eight-round weights that is roughly **+0.1 … +0.2 `final`**.
+
+## 18. `--osc-zeromean`: §13.4's conclusion was premature, and the fluctuation finally moved
+
+The decisive test. Full split, all one-member, α = 0.90:
+
+| model | rel-L2 | mean part | fluc part | Γ² | Δmean | Δfluc | ΔΓ² |
+|---|---|---|---|---|---|---|---|
+| baseline `vl_s1` | 0.0851 | 0.0470 | 0.0707 | 0.3641 | — | — | — |
+| `oscg2` (mean path **on**) | 0.0844 | 0.0458 | 0.0706 | 0.3651 | −2.6 % | −0.1 % | +0.3 % |
+| **`oscz2`** (mean path **off**) | **0.0841** | 0.0460 | **0.0701** | **0.3723** | −2.1 % | **−0.8 %** | **+2.3 %** |
+| `mh1` (`--mean-head`) | 0.0848 | 0.0464 | 0.0707 | 0.3658 | −1.3 % | +0.0 % | +0.5 % |
+| `mhosc` (both) | 0.0839 | 0.0455 | 0.0703 | 0.3675 | −3.2 % | −0.6 % | +0.9 % |
+
+Scores: `oscz2` **83.585 (+3.1σ)** on the full split against `oscg2`'s +1.6σ, and +1.55σ vs
++1.49σ on the AoA proxy. **Removing the mean pathway did not cost the gain — it improved it.**
+
+### 18.1 Correcting §13.4
+
+§13.4 concluded the head was "a mean-head in disguise" and the phase premise "falsified". **That
+was premature and is withdrawn.** Two direct refutations:
+
+* **The gain survives the mean pathway's removal** (81.798 → 81.800 on the proxy; 83.509 →
+  83.585 on the full split). If the mean were the mechanism, zeroing it would have removed the
+  gain.
+* **With the shortcut gone, the head does what it was built to do.** `oscz2` produces the
+  round's **largest coherence move, Γ² +2.3 %**, and the only real fluctuation move, **−0.8 %** —
+  where `oscg2`, with the shortcut available, managed +0.3 % and −0.1 %.
+
+The correct reading: **given a cheap mean pathway the optimizer takes it; deny it and the same
+head improves fluctuation phase instead.** §13.4's decomposition was right about `oscg2` and
+wrong to generalize from it.
+
+### 18.2 What is capacity and what is not
+
+`oscz2` **cannot** contribute a time-mean, yet its mean part still improves −2.1 %. So that
+component is the head **shaping the trunk** — capacity, exactly the control §13.5 wanted — and
+`--mean-head`'s −1.3 % is plausibly the same effect by another route. Consistent with §13.5's
+first branch.
+
+**Not additive**, as predicted: `mhosc` scores 83.567 against `oscz2`'s 83.585 — combining a
+mean head with an osc head lands where the osc head already was.
+
+### 18.3 The significance, kept in proportion
+
+Every other arm this round left the fluctuation at 0.0704–0.0707 and Γ² within ±0.5 %.
+**`--osc-zeromean` is the first change in the project to move fluctuation coherence at all** —
+Γ² 0.3641 → 0.3723 from a **4 748-parameter** head — and the fluctuation carries 69 % of the
+squared error.
+
+It is still small: total rel-L2 −1.2 %, under the ~2 % transfer bar. But it is the first crack
+in the one quantity §P3 identifies as the only open direction, and it says the right way to
+attack the fluctuation is **a constrained output basis, with every cheaper pathway explicitly
+denied**. The obvious next arms: `--osc-zeromean` at J = 1 and J = 4, with a fixed
+(non-learned) ω, and combined with `--dropout 0.05`.

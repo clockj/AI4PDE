@@ -205,8 +205,12 @@ recipe are indistinguishable on the interior control and 22 % apart under Re ext
 | control seed 1 | 0.0754 | 83.989 | 0.1147 | 82.349 |
 | control seed 2 | 0.0754 | 83.990 | 0.1404 | 80.930 |
 
-They are genuinely different models (max |w₁ − w₂| = 1.19; `train2.py` sets no seed). **Seed
-variance is ~1400× larger out of distribution than in it** — 0.001 `wfinal` against 1.42.
+They are genuinely different models (max |w₁ − w₂| = 1.19; `train2.py` sets no seed).
+~~Seed variance is ~1400× larger out of distribution~~ — **that came from a range-of-two and is
+withdrawn.** With **four** controls (`re_var`): `rein` 83.999 ± **0.0122**, `relo` 81.647 ±
+**0.7073**, `rehi` 78.936 ± **0.1408** ⇒ **σ is 58× larger on `relo` and 11.6× on `rehi`.**
+Note `relo` is 5× noisier than `rehi`, so extrapolating **below** the training range is far
+less stable than above it — and Re 2968, the known test condition, is below.
 
 The hidden test set contains unseen Reynolds numbers, so board score carries a
 which-draw-did-we-get term that **no in-distribution proxy can see**, and every proxy this
@@ -376,22 +380,35 @@ unaffected: it needs both tracks to ship the *same* model, not a particular α.
 
 Archives in `../sub_candidates/`, predictions recorded there before upload.
 
-### P2 — Regularization: weight decay is CLOSED by mechanism; dropout and augmentation are not
+### P2 — Regularization: measured, small, and uniform. The family is done.
 
-`--wd` swept over four decades against four held-out baseline seeds
-(`report/report_20260831_round13.md` §1): nothing clears the seed spread except `1e-1`, which
-clears it **downward** at −4.1σ, and it does so **specifically at AoA 15–20** while looking
-neutral on the full split.
+Weight decay is closed by mechanism (`GroupNorm` is scale-invariant in the weights feeding it,
+so a weight-norm penalty reparameterizes rather than regularizes; at `1e-1` the spectral
+weights lose 33 % of their norm while `head_field` *grows* to compensate). The
+function-changing regularizers were then run, and so were two auxiliary losses and an
+output-basis head, and they all landed in the same place:
 
-The mechanism closes the family, not just the four arms. The trunk is
-`GroupNorm(8, width)(spec(h) + point(h))` at every layer, and **GroupNorm is scale-invariant in
-the weights feeding it** — measured, at `1e-1` the spectral weights lose 33 % of their norm
-while `head_field` *grows* to compensate. **Any pure weight-norm penalty on this trunk is a
-reparameterization, not a regularizer.** What is left are the regularizers that change the
-*function*: `--dropout`, `--aug-scale` (freestream rescaling ≈ a first-order Reynolds shift,
-aimed at the hidden set's unseen Re), and stochastic depth.
+| arm | mechanism | z vs 4 seeds |
+|---|---|---|
+| `oscg1` | oscillatory output basis, J = 1 | +2.08 |
+| `--lam-tgrad 0.3` | temporal-derivative loss | +1.73 |
+| `--lam-tgrad 1.0` | temporal-derivative loss | +1.67 |
+| `--dropout 0.05` | channel dropout | +1.61 |
+| `oscg2` | oscillatory output basis, J = 2 | +1.49 |
+| `--dropout 0.15` | channel dropout | +1.28 |
 
-### P3 — The fluctuation's SHAPE, reopened — the largest unexplored direction
+**Six structurally unrelated changes span 0.8σ and all improve rel-L2 by 0.55–0.64 %.** That
+reads as *the model is mildly under-regularized and any mild regularizer recovers ~0.6 %*, not
+as six mechanisms each worth the same. Corroborated directly: the oscillatory head's gain was
+measured to be **not** its stated phase mechanism
+(`report/report_20260831_round13.md` §13.4).
+
+→ **Expect combinations not to add**, expect none to clear the ~2 % transfer bar, and stop
+screening new regularizers one at a time. `--aug-scale` is the exception still open, and only
+on `re_split`: it is a Reynolds shift, so in-distribution numbers (−2.4σ, −3.5σ) measure the
+wrong thing.
+
+### P3 — The fluctuation's SHAPE — the ONLY open direction, and untouched by round 13
 
 Two independent corrections landed on the same square this round.
 
@@ -411,6 +428,12 @@ Two independent corrections landed on the same square this round.
   The fluctuation carries **70.6 %** of the squared error, and ensembling improves its PHASE,
   not its amplitude — so the residual is decorrelation, matching round 12's phase/advection
   null.
+
+**Round 13 tried, and moved it by nothing.** Every decomposition of the round leaves the
+fluctuation part at **0.0704–0.0707** — baseline, `--w-mean 0.3` (3.3× more of the loss),
+`oscg2`, `osc2` alike — while **69 % of the squared error lives there**. The loss-weight family
+cannot reach it (§12), the regularization family does not touch it (§14.1), and the one arm
+built specifically for it was improving the time-mean instead (§13.4).
 
 Round 12's phase/advection null still stands and constrains the *form* of any attack: the
 fluctuation error is decorrelation, not misregistration, so no re-registration, no phase
