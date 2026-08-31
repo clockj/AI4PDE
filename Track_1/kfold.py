@@ -65,28 +65,47 @@ def all_names(data=DATA):
     return sorted(f[:-3] for f in os.listdir(data) if f.endswith(".h5"))
 
 
-def folds(k=K, data=DATA):
-    """K folds, stratified so each spans the AoA range and the Re range.
+def folds(k=K, data=DATA, split="stratified"):
+    """K folds. `stratified` spans every AoA and Re in each fold; `re` holds out Re BANDS.
 
-    Sorting by (AoA, Re) and dealing round-robin puts consecutive Re at the same AoA into
-    DIFFERENT folds, so no fold is missing an angle -- which matters because error is governed
-    by AoA and by almost nothing else, and an unbalanced fold would just be measuring its own
-    AoA mix.
+    stratified -- sorting by (AoA, Re) and dealing round-robin puts consecutive Re at the same
+    AoA into DIFFERENT folds, so no fold is missing an angle. Error is governed by AoA, and an
+    unbalanced fold would just be measuring its own AoA mix. **Every fold is in-distribution in
+    Re**, which is the limitation: this design cannot see extrapolation at all.
+
+    re -- contiguous Reynolds bands, one held out per fold. Every fold is then a Re-transfer
+    test, and the EXTREME folds (0 and K-1) are genuine extrapolation while the middle ones are
+    interpolation gaps -- so the per-fold breakdown gives a gradient of transfer severity
+    rather than a single number. This is the design the round-13 dropout result needs and the
+    stratified one structurally cannot provide (`report_20260831_round13.md` 20.2): dropout is
+    worth ~+0.07 `final` in distribution and -4...-14% of error under shift, and only the
+    second is a reason to ship it.
     """
+    names = all_names(data)
+    if split == "re":
+        res = sorted({int(n.split("_")[0]) for n in names})
+        bands = [res[i::1][j::k] for i, j in [(0, 0)]]     # placeholder, replaced below
+        # contiguous chunks of the sorted Re list, as equal in trajectory count as possible
+        per = len(res) / k
+        band_of = {r: min(int(i / per), k - 1) for i, r in enumerate(res)}
+        out = [[] for _ in range(k)]
+        for n in names:
+            out[band_of[int(n.split("_")[0])]].append(n)
+        return [sorted(f) for f in out]
     def key(n):
         re_, aoa = n.split("_")
         return (int(aoa), int(re_))
-    ordered = sorted(all_names(data), key=key)
+    ordered = sorted(names, key=key)
     out = [[] for _ in range(k)]
     for i, n in enumerate(ordered):
         out[i % k].append(n)
     return [sorted(f) for f in out]
 
 
-def build(k=K, data=DATA, out_dir=OUT_DIR):
+def build(k=K, data=DATA, out_dir=OUT_DIR, split="stratified"):
     import h5py
     os.makedirs(out_dir, exist_ok=True)
-    fs = folds(k, data)
+    fs = folds(k, data, split)
     for i, names in enumerate(fs):
         xs, ys, ids = [], [], []
         for name in names:
@@ -253,17 +272,24 @@ def main():
     ap.add_argument("--inflate", type=float, default=1.39)
     ap.add_argument("--ms", type=float, default=1.02)
     ap.add_argument("--out-dir", default=OUT_DIR)
+    ap.add_argument("--split", default="stratified", choices=["stratified", "re"],
+                    help="`stratified` folds span every Re, so every fold is IN-distribution "
+                         "in Re and the design cannot see extrapolation. `re` holds out "
+                         "contiguous Reynolds bands, making every fold a transfer test with "
+                         "the extreme folds genuine extrapolation. Use a separate --out-dir "
+                         "for each, and note fold ORDER is meaningful under `re`: fold 0 is "
+                         "the lowest Re band, which is the one the hidden test set resembles.")
     ap.add_argument("--limit", type=int, default=0,
                     help="truncate every fold to this many windows. For exercising the "
                          "scoring path on a CPU before a job spends an hour training the "
                          "models it will be handed -- NOT for reporting numbers.")
     a = ap.parse_args()
     if a.folds:
-        for i, names in enumerate(folds(a.k)):
+        for i, names in enumerate(folds(a.k, split=a.split)):
             print(f'EX{i}="{" ".join(names)}"')
         return
     if a.build:
-        build(a.k, out_dir=a.out_dir); return
+        build(a.k, out_dir=a.out_dir, split=a.split); return
     global LIMIT
     LIMIT = a.limit
     import torch

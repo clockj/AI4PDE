@@ -1101,3 +1101,153 @@ in the one quantity §P3 identifies as the only open direction, and it says the 
 attack the fluctuation is **a constrained output basis, with every cheaper pathway explicitly
 denied**. The obvious next arms: `--osc-zeromean` at J = 1 and J = 4, with a fixed
 (non-learned) ω, and combined with `--dropout 0.05`.
+
+## 19. Seven baseline seeds: the noise floor holds, and the proxy is PRECISE but not ACCURATE
+
+`twins` trained three more held-out w24 seeds, giving seven of the identical recipe on the AoA
+proxy:
+
+| | `wfinal` | rel-L2 |
+|---|---|---|
+| 4 seeds | 81.7475 ± **0.0339** | 0.11303 ± 0.00040 |
+| **7 seeds** | 81.7506 ± **0.0282** | 0.11297 ± **0.00031** |
+
+**Three more seeds tightened the floor rather than widening it** (σ 0.034 → 0.028), and the
+mean moved 0.003. Every z-score quoted this round therefore grows by ~1.2×; no conclusion
+changes sign or category. Restated against the seven-seed floor:
+
+| arm | `wfinal` | z (4 seeds) | **z (7 seeds)** |
+|---|---|---|---|
+| `oscg1` | 81.818 | +2.08 | **+2.39** |
+| `--lam-tgrad 0.3` | 81.806 | +1.73 | +1.96 |
+| `--dropout 0.05` | 81.802 | +1.61 | +1.82 |
+| `oscz2` | 81.800 | +1.55 | +1.75 |
+| `oscg2` | 81.798 | +1.49 | +1.68 |
+| `--dropout 0.15` | 81.791 | +1.28 | +1.43 |
+| `osc2` (per-pixel) | 81.743 | −0.13 | −0.27 |
+| `--w-mean 0.3` | 81.688 | −1.75 | −2.22 |
+| `--mean-head` s1 | 81.678 | −2.05 | −2.57 |
+| `--aug-scale 0.15` | 81.665 | −2.43 | −3.03 |
+
+### 19.1 The gap that explains the whole project's transfer problem
+
+The AoA proxy resolves **σ = 0.028 `wfinal`** across seven identical-recipe seeds — that is
+0.034 % of its own value, a genuinely precise instrument. The board's transfer resolution is
+~2 % of error, which is **≈ 0.5 `wfinal`**.
+
+**So the proxy measures ~18× finer than the board can distinguish.** That is not a defect in
+its precision; it is the definition of the problem. Every arm this round landed in the band
+between those two numbers — real at 1.5–2.4σ locally, invisible at the board. **The proxy is
+precise but not accurate**, and no amount of extra seeds fixes that, because the missing
+quantity is distribution shift rather than variance.
+
+This is why §15's dropout result matters and the other five do not: dropout is the only arm
+measured on a **shifted** distribution (`re_split`), where its effect is −4…−14 % of error —
+comfortably above the board's resolution rather than 18× below it.
+
+## 20. The paired k-fold on dropout — and §14.2's TKE claim does not survive it
+
+3 383 out-of-fold windows, identical windows for both arms, trajectory bootstrap on the
+difference:
+
+| metric | baseline | `--dropout 0.15` | Δ | SE | z | % |
+|---|---|---|---|---|---|---|
+| rel-L2 | 0.08416 | 0.08306 | −0.00110 | 0.00052 | **−2.10** | −1.31 % |
+| **TKE** | 0.46481 | 0.46922 | +0.00441 | 0.00161 | **+2.74** | **+0.95 % WORSE** |
+| MVPE | 0.07156 | 0.06854 | −0.00302 | — | — | −4.23 % |
+
+Priced at the eight-round weights: rel_l2 **+0.028**, tke **−0.025**, mvpe +0.000, sps +0.066
+→ **+0.069 `final` (admissible +0.036 … +0.104)**.
+
+### 20.1 §14.2's "dropout also buys TKE" is withdrawn
+
+§14.2 separated dropout from the other five arms on the strength of **TKE −3.1 %**, measured on
+336 unpaired windows. On 3 383 **paired** windows with a trajectory bootstrap, TKE goes the
+other way — **+0.95 % worse at z = +2.74**. The better instrument reverses the sign, and the
+paired design removes exactly the between-trajectory variance that made the 336-window number
+unreliable.
+
+**That is the third time tonight a larger instrument has overturned a reading from a smaller
+one** (§13.3 the osc ordering, §5.5 the 1400× seed ratio, and now this). The pattern is not
+coincidence: at these effect sizes the 126- and 336-window splits are simply below the
+resolution needed, and I have been over-reading them.
+
+### 20.2 What the case for dropout now actually rests on
+
+**In distribution dropout is worth ~+0.07 `final`, and its rel-L2 gain is largely cancelled by
+a TKE loss.** That is not a reason to change the package.
+
+**The case rests entirely on the out-of-distribution result** (§15): `relo` −14 %, `rehi` −4 %,
+complete 3-vs-4 seed separation, stacking on ensembling. And **`kfold.py` structurally cannot
+confirm that** — its folds are stratified over (AoA, Re), so every fold is in-distribution in
+Re. I queued it as "the paired confirmation"; it is the paired confirmation of the *wrong
+quantity*.
+
+**The right instrument does not exist yet: a leave-Re-BAND-out k-fold**, folds defined by Re
+bands rather than stratified across them, so every fold is an extrapolation test and the paired
+bootstrap applies to the quantity that matters. That is the honest next step before spending
+2.7 GPU-h on dropout-trained all-data members.
+
+Recommendation, revised down from §15: **do not rebuild the package on this evidence.** Build
+the Re-band k-fold first. `jobs/alldata_dropout.sbatch` stays written and unqueued.
+
+## 21. The osc follow-up: the SCORE claim regresses, the COHERENCE claim replicates
+
+Four zero-mean osc arms plus dropout and the combination, against the 7-seed floor
+(AoA proxy 81.7506 ± 0.0282; full split 83.4275 ± 0.0502).
+
+| arm | z (AoA) | z (full) | Δ rel-L2 (full) | **Γ²** | ΔΓ² | fluc part |
+|---|---|---|---|---|---|---|
+| baseline | — | — | — | 0.3641 | — | 0.0707 |
+| `oscz2` (J2) | +1.75 | +3.14 | −1.20 % | 0.3723 | +2.3 % | 0.0701 |
+| **`ozb`** (J2, replicate) | **−0.52** | **+1.31** | −0.62 % | 0.3684 | +1.2 % | 0.0704 |
+| `oz1` (J1) | +0.76 | +0.95 | −0.62 % | 0.3676 | +1.0 % | 0.0703 |
+| `oz4` (J4) | +0.05 | +1.03 | −0.73 % | 0.3696 | +1.5 % | 0.0702 |
+| `do05` (dropout) | +1.82 | +3.76 | −0.73 % | **0.3591** | **−1.4 %** | 0.0703 |
+| **`ozdo`** (both) | **+3.87** | **+4.75** | **−1.67 %** | 0.3701 | +1.6 % | **0.0699** |
+
+### 21.1 §18's score claim does not survive its replicate
+
+`oscz2` read +3.14σ on the full split; its replicate `ozb` reads **+1.31σ**, and on the AoA
+proxy the pair is +1.75σ / **−0.52σ**. Two identical configs 0.092 apart on the full split
+against a baseline σ of 0.050. **The single-run +3.1σ overstated the effect by about 2×** — the
+four-run family mean is **+1.60σ** (full) and +0.51σ (proxy).
+
+**Fourth instance tonight of a single run at 2–3σ regressing on replication.** The others:
+§13.3 the osc ordering, §5.5 the 1400× ratio, §20.1 the dropout TKE claim. This is now a
+measured property of the setup, not bad luck: **at these effect sizes one run is not a
+measurement**, and replicates belong in the first job rather than the follow-up.
+
+### 21.2 But the COHERENCE claim replicates, and it separates the two mechanisms
+
+**Γ² across all four zero-mean arms: 0.3695 ± 0.0021 = +1.5 % over baseline**, consistent
+across J = 1, 2 and 4 and across seeds. §18's central claim — that this is the first change to
+move fluctuation coherence — **survives replication**, at +1.5 % rather than the single run's
++2.3 %.
+
+**And dropout does the opposite: Γ² −1.4 %.** It improves rel-L2 while making coherence
+*worse*, which is exactly consistent with §20's paired k-fold finding that it makes TKE worse
+(+0.95 %, z = +2.74). Dropout is a regularizer that trades phase for robustness.
+
+**That is why they add.** The two arms move different quantities in different directions:
+
+| | coherence Γ² | fluctuation error | mechanism |
+|---|---|---|---|
+| `--osc-zeromean` | **+1.5 %** | −0.6 % | constrained temporal basis |
+| `--dropout 0.05` | **−1.4 %** | −0.6 % | regularization |
+| **combined** | **+1.6 %** | **−1.1 %** | both, and the coherence gain survives |
+
+`ozdo` has the **lowest fluctuation error of any model in the project** (0.0699 against the
+baseline's 0.0707) and the round's largest rel-L2 move, **−1.67 %**. Roughly additive: the
+full-split additive prediction is 83.696 against 83.666 observed.
+
+### 21.3 Standing
+
+`ozdo` is **one run** and this section is a case study in why that is not enough. Three
+replicates are queued (`jobs/ozdo_rep.sbatch`) with the pass condition fixed in advance: **the
+four-run mean must clear +2σ against the 7-seed floor AND the rel-L2 move must clear ~2 %.**
+Five arms this round cleared the first and none transferred.
+
+If it holds at ~−1.5 % rel-L2 it is still under the transfer bar on its own — but combined with
+whatever `kfold_re` says about dropout out of distribution, it is the first candidate of the
+round with a mechanism, a replicated component, and two independent effects that stack.
