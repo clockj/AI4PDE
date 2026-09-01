@@ -64,12 +64,40 @@ _B = ((_fno.MEAN.astype(np.float64) - _MEAN_TGT) / _STD_TGT).astype(np.float32)
 
 ALPHA = 0.60
 
-# NOTE: Track 1's gated mean-blend (`submit_fno/submission.py:BLEND_BETA`) is NOT here.
-# This step runs inside a captured CUDA graph, where the blend's data-dependent early-out
-# is not expressible, and nothing local would exercise it either way -- the stream never
-# leaves the training speed range. If it earns its place on the board, port it as an
-# unconditional tensor op inside `_body` (gate * beta is 0 for in-range windows anyway)
-# and extend `validate_t2.py` the way `verify/blend_path.py` extends the Track-1 gate.
+# ---------------------------------------------------------------------------------------
+# THE RUNNING-HISTORY MEAN. Off by default (HIST_BETA = 0), so the step is bit-identical to
+# the round-13 package until it is switched on.
+#
+# Track 1's gated mean-blend replaces part of the predicted time-mean with the INPUT WINDOW's
+# own measured mean, because a measurement cannot be wrong about a Reynolds number it has
+# never seen. Here a strictly better measurement is available. The official `local_eval.py`
+# holds ONE model object, calls `ttt_step` in strict time order, and calls
+# `reset_ttt_state()` at trajectory boundaries -- a hook that exists only because
+# within-trajectory state is expected to persist. So at step k every frame the stream has
+# already delivered is ours to keep, and those are frames from BEFORE the forecast time,
+# which is the ordinary situation of any deployed forecaster. It is the opposite of the leak
+# CLAUDE.md records, which reads window k+1 -- window k's own answer, bit for bit.
+#
+# Measured on val_unseen's own 336 windows (`Track_1/ctx_probe.py`), estimating the target
+# window's time-mean:
+#     the input window's own 20 frames   0.1022     <- all Track 1 can ever use
+#     every frame delivered so far       0.0783     -23%
+#     the whole trajectory, incl. future 0.0739     (the offline ceiling)
+# 20 frames is under a third of a 60-75 frame shedding period, so a window mean is
+# contaminated by the phase it happens to sit at; a long average is not.
+#
+# GATED, for the same reason the Track-1 blend is: in DISTRIBUTION the model's own predicted
+# mean (0.0438) is far better than any history estimator, so blending would make it worse.
+# The gate fires only where the model has no right to be trusted -- windows whose mean
+# streamwise speed leaves the training range.
+#
+# The accumulator is updated in `ttt_step`, NOT in `_body`: `_body` runs inside a captured
+# CUDA graph and is also replayed five times during warm-up and twice more by the capture-time
+# verification, any of which would corrupt a running sum. `_body` only READS the static
+# buffers, which the graph can do because their storage never moves.
+HIST_BETA = 0.0
+BLEND_REF = 0.02
+TRAIN_SPEED = (0.037523, 0.296857)   # per-WINDOW mean streamwise speed, all 82 real traj
 
 
 class FrozenEnsemble:
@@ -102,6 +130,13 @@ class FrozenEnsemble:
         self.gh = torch.zeros_like(self.go)
         self.host = [torch.empty((1, T_OUT, H, W, 3), dtype=torch.float32,
                                  pin_memory=cuda) for _ in range(3)]
+        # Running-history accumulator. `hsum` is the sum of every delivered frame's u,v, `hn`
+        # the frame count; `ghm` holds the resulting mean and `ggate` the blend strength, both
+        # written by ttt_step and read by _body.
+        self.hsum = torch.zeros((1, 1, H, W, 2), dtype=torch.float32, device=device)
+        self.hn = 0.0
+        self.ghm = torch.zeros_like(self.hsum)
+        self.ggate = torch.zeros((), dtype=torch.float32, device=device)
         self.graph = None
         if cuda and use_graph:
             self._capture()
@@ -127,6 +162,10 @@ class FrozenEnsemble:
             m_ = y.mean(1, keepdim=True)
             s_ = y.std(1, keepdim=True, unbiased=False)
             y = m_ + (y - m_) * ((ALPHA * sig + (1 - ALPHA) * s_) / (s_ + 1e-6))
+        if HIST_BETA:
+            # Unconditional tensor arithmetic: ggate is 0 for an in-range window, so this is
+            # an identity there and no branch is needed inside the graph.
+            y = y + (HIST_BETA * self.ggate) * (self.ghm - y.mean(1, keepdim=True))
         self.go[..., :2] = y * self.Ad + self.Bd
         if self.half0 is None:
             return
@@ -173,7 +212,14 @@ class FrozenEnsemble:
 
     # -- contract ----------------------------------------------------------------------
     def reset_ttt_state(self) -> None:
-        """Nothing to reset: the weights never move.  Timed, and costs nothing."""
+        """The weights never move; the running history does, and it is per TRAJECTORY.
+
+        Failing to clear it here would carry one trajectory's mean field into the next, which
+        is both wrong and undetectable from a single-trajectory test -- so `validate_t2.py`
+        streams several.
+        """
+        self.hsum.zero_()
+        self.hn = 0.0
 
     @torch.no_grad()
     def ttt_step(self, input_norm, prev_target_norm=None) -> Tuple[Any, Dict[str, Any]]:
@@ -181,6 +227,16 @@ class FrozenEnsemble:
         if x.dtype != torch.float32:
             x = x.float()
         self.gx.copy_(x, non_blocking=True)
+        if HIST_BETA:
+            self.hsum += self.gx[..., :2].sum(1, keepdim=True)
+            self.hn += T_IN
+            torch.div(self.hsum, self.hn, out=self.ghm)
+            # The gate reads PHYSICAL speed, and this track's tensors are normalized.
+            spd = self.gx[..., 0].mean() * float(_fno.STD[0]) + float(_fno.MEAN[0])
+            lo, hi = TRAIN_SPEED
+            d = torch.clamp(torch.maximum(lo - spd, spd - hi), min=0.0) / max(
+                (hi - lo) * BLEND_REF, 1e-9)
+            torch.clamp(d, 0.0, 1.0, out=self.ggate)
         if self.graph is not None:
             self.graph.replay()
         else:

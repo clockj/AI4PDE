@@ -33,6 +33,11 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default="/users/PAS1187/qwu/RealPDE/train_real/train_real")
     ap.add_argument("--epochs", type=int, default=150)
+    ap.add_argument("--seed", type=int, default=-1,
+                    help="seed torch/numpy so a control and its arm share initialization and "
+                         "batch order. Seed sigma on the AoA 15-20 proxy is 0.017 wfinal "
+                         "(round 11), which is the size of several shipped effects -- pairing "
+                         "removes it from the comparison instead of averaging it down.")
     ap.add_argument("--batch", type=int, default=32)
     ap.add_argument("--stride", type=int, default=5)
     ap.add_argument("--width", type=int, default=64)
@@ -297,6 +302,29 @@ def main() -> None:
                          "split holds out 8 trajectories drawn from the INTERIOR of the Re "
                          "range, so it cannot see Re-extrapolation behaviour -- and the hidden "
                          "test set is at unseen Re. Pass a Re-extreme split to measure that.")
+    ap.add_argument("--sim", default="",
+                    help="train_sim directory. Adds a SECOND loss term on sim windows mapped "
+                         "into real's measurement space (simreal.load_sim_mapped). Sim is a "
+                         "strict superset of real's condition grid, so it covers Re 15225 and "
+                         "27975 and the holes real leaves -- the Reynolds extrapolation the "
+                         "hidden test set is suspected to need.")
+    ap.add_argument("--lam-sim", type=float, default=0.3,
+                    help="weight on the sim term. Real still defines the epoch: one sim batch "
+                         "is drawn per real step, so this is a per-step gradient ratio.")
+    ap.add_argument("--sim-loss", choices=["shape", "full"], default="shape",
+                    help="'full' is the naive arm (the same field loss as real). 'shape' is "
+                         "the bet: normalize BOTH prediction and target by their own time-mean "
+                         "and per-pixel temporal std before comparing, which makes the term "
+                         "blind to exactly the two quantities sim_map.py measures sim to be "
+                         "wrong about -- the time-mean field (rel-L2 0.400 against real, where "
+                         "this model is at 0.11) and the fluctuation amplitude (2.9-5.6x too "
+                         "energetic). What survives is WHERE the structure goes, which no "
+                         "statistic in sim_map.py rules out and which the round-10 oracle "
+                         "prices as the largest reachable component under the nine-round "
+                         "weights.")
+    ap.add_argument("--sim-stride", type=int, default=5)
+    ap.add_argument("--sim-batch", type=int, default=0, help="0 = same as --batch")
+    ap.add_argument("--sim-frames", type=int, default=0, help="0 = all 1000")
     ap.add_argument("--all-data", action="store_true",
                     help="train on ALL trajectories including the held-out ones. Submission "
                          "checkpoints only -- it makes local evaluation meaningless.")
@@ -311,6 +339,11 @@ def main() -> None:
     elif args.arch != "fno":
         # Only FNO2d takes a `z`; UNetTwoHead and DeepONetCh would raise deep inside the loop.
         raise SystemExit(f"--fgn is implemented for --arch fno only (got {args.arch})")
+
+    if args.seed >= 0:
+        torch.manual_seed(args.seed)
+        torch.cuda.manual_seed_all(args.seed)
+        np.random.seed(args.seed)
 
     dev = "cuda"
     # Self-normalization needs raw physical trajectories: the per-window scale is only
@@ -344,6 +377,20 @@ def main() -> None:
     # would need ~21 GB at stride 2.
     trajs_t = [torch.from_numpy(d) for d in trajs]
     idx_t = torch.from_numpy(idx)
+
+    sim_trajs_t = sim_idx_t = None
+    if args.sim:
+        if self_norm_mode:
+            raise SystemExit("--sim assumes the global real normalizer; --norm self would "
+                             "rescale every window and undo the speed match")
+        from simreal import load_sim_mapped
+        sim_trajs = load_sim_mapped(args.sim, args.data, phases=PHASES_ALL[:args.phases],
+                                    frames=args.sim_frames)
+        sim_idx = window_index(sim_trajs, args.sim_stride)
+        sim_trajs_t = [torch.from_numpy(d) for d in sim_trajs]
+        sim_idx_t = torch.from_numpy(sim_idx)
+        print(f"sim: {len(sim_idx)} windows at stride {args.sim_stride}, "
+              f"lam_sim {args.lam_sim} loss '{args.sim_loss}'", flush=True)
 
     stats = NORM_STATS[args.norm]
     mean_v = torch.from_numpy(stats[0]).to(dev)
@@ -420,7 +467,7 @@ def main() -> None:
         # steps over a differently-weighted pool rather than one pass over every window.
         perm = (torch.randperm(len(idx_t)) if w_samp is None else
                 torch.multinomial(w_samp, len(idx_t), replacement=True))
-        acc = np.zeros(9)
+        acc = np.zeros(10)
         n = 0
         for i in range(0, len(idx_t), args.batch):
             pos = perm[i:i + args.batch]
@@ -603,13 +650,41 @@ def main() -> None:
                     sk = std_t(xs.detach().reshape(k_s * b, T_OUT, H, W, C))
                     l_svar = rel_l2(sk.reshape(k_s, b, 1, H, W, C).mean(0), std_t(y)).mean()
 
+            l_sim = torch.zeros((), device=dev)
+            if sim_idx_t is not None and args.lam_sim > 0.0:
+                # One sim batch per real step. Real defines the epoch: sim is a regularizer
+                # on a wrong-but-related distribution, not a second dataset to fit.
+                nb = args.sim_batch or args.batch
+                ss = sim_idx_t[torch.randint(len(sim_idx_t), (nb,))]
+                xs_ = torch.stack([sim_trajs_t[i][t:t + T_IN] for i, t in ss.tolist()])
+                ys_ = torch.stack([sim_trajs_t[i][t + T_IN:t + T_IN + T_OUT]
+                                   for i, t in ss.tolist()])
+                xs_ = ((xs_.to(dev, non_blocking=True) - mean_v) / std_v)
+                ys_ = ((ys_.to(dev, non_blocking=True) - mean_v) / std_v)
+                ps_ = from_ch(model(to_ch(xs_), detach_var=args.detach_var)[0])
+                if args.sim_loss == "full":
+                    dd = ps_ - ys_
+                    ddm = dd.mean(1, keepdim=True)
+                    l_sim = (args.w_mean * torch.mean((ddm * cw) ** 2)
+                             + torch.mean(((dd - ddm) * cw) ** 2))
+                else:
+                    # Blind to the time-mean AND to the amplitude: divide each field by its
+                    # own per-pixel temporal std. The gradient w.r.t. a global rescaling of
+                    # the prediction is then exactly zero, so sim cannot teach its 2.9x
+                    # fluctuation energy or its 0.40 rel-L2 mean field -- only structure.
+                    def _shape(z):
+                        f = z - z.mean(1, keepdim=True)
+                        return f / f.pow(2).mean(1, keepdim=True).sqrt().clamp(min=1e-3)
+                    l_sim = torch.mean((_shape(ps_) - _shape(ys_)) ** 2)
+                loss = loss + args.lam_sim * l_sim
+
             opt.zero_grad(set_to_none=True)
             loss.backward()
             opt.step()
             sched.step()
             acc += np.array([loss.item(), l_field.item(), l_var.item(), l_tke.item(),
                              l_probe.item(), l_div.item(), l_spec.item(),
-                             l_crps.item(), l_svar.item()]) * b
+                             l_crps.item(), l_svar.item(), l_sim.item()]) * b
             n += b
 
         if args.swa and ep >= args.epochs - args.swa:
@@ -632,7 +707,7 @@ def main() -> None:
             print(f"  epoch {ep:3d}  loss {a[0]:.5f}  field {a[1]:.5f}  "
                   f"var {a[2]:.5f}  tke {a[3]:.5f}  probe {a[4]:.5f}  "
                   f"div {a[5]:.5f}  spec {a[6]:.5f}  crps {a[7]:.5f}  "
-                  f"svar {a[8]:.5f}  ({time.time()-t0:.0f}s)", flush=True)
+                  f"svar {a[8]:.5f}  sim {a[9]:.5f}  ({time.time()-t0:.0f}s)", flush=True)
 
     if swa_state is not None:
         print(f"SWA: averaged the last {swa_n} epochs", flush=True)
