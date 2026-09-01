@@ -43,13 +43,17 @@ ROUNDS = [
                               f"{U}/fno_vl_w64.pth"]),
     ("R12 11 memb", 0.90, S + [f"{U}/fno_vl_m1220.pth", f"{U}/fno_vl_w48.pth",
                                f"{U}/fno_vl_w64.pth", f"{U}/unet_g1.pth"]),
-    ("R13 8 memb", 0.90, S + [f"{U}/fno_vl_m1220.pth"]),
+    # R13 shipped ALPHA 0.60, not 0.90 -- the round was submitted precisely to move that
+    # constant, so scoring its twins at 0.90 would compare the proxy against a board number
+    # the package never produced.
+    ("R13 8 memb", 0.60, S + [f"{U}/fno_vl_m1220.pth"]),
 ]
 # Board subscores -> board ERRORS, by inverting score = 100/(1+0.5e).
 BOARD = {
     "R10 7 memb":  (94.576394, 79.152828, 93.681162),
     "R11 8 memb":  (94.570878, 79.080459, 93.350128),
     "R12 11 memb": (94.490331, 79.167748, 93.418065),
+    "R13 8 memb":  (94.679785, 77.983720, 93.613336),
 }
 
 

@@ -1,0 +1,164 @@
+<title>RealPDE Calibration Log</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Palette from the subject: PIV velocity fields are rendered on a blue-white-red diverging
+   map, so cool/warm here are the domain's own colours, not decoration. Neutrals carry a blue
+   bias so they read as chosen. */
+:root{
+  --ground:#f7f8fa; --panel:#ffffff; --sunk:#f1f3f7;
+  --ink:#14181f; --dim:#6a7280; --faint:#9aa1ac; --line:#dfe3ea; --rule:#c8cfda;
+  --probe:#2b5fa8; --cool:#1f6f8b; --warm:#b3402c; --hold:#8a6d1f;
+  --coolw:#1f6f8b22; --warmw:#b3402c22;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --ground:#12151b; --panel:#191d24; --sunk:#141920;
+  --ink:#e6e9ee; --dim:#98a1ae; --faint:#6b7481; --line:#262c35; --rule:#39414d;
+  --probe:#7aa8e0; --cool:#5fb6c9; --warm:#ef8a72; --hold:#d4a94a;
+  --coolw:#5fb6c92e; --warmw:#ef8a722e;
+}}
+:root[data-theme="dark"]{
+  --ground:#12151b; --panel:#191d24; --sunk:#141920;
+  --ink:#e6e9ee; --dim:#98a1ae; --faint:#6b7481; --line:#262c35; --rule:#39414d;
+  --probe:#7aa8e0; --cool:#5fb6c9; --warm:#ef8a72; --hold:#d4a94a;
+  --coolw:#5fb6c92e; --warmw:#ef8a722e;
+}
+*{box-sizing:border-box}
+body{background:var(--ground);color:var(--ink);margin:0;padding:34px 20px 80px;
+  font:400 14px/1.6 "IBM Plex Sans","Helvetica Neue",Arial,sans-serif;
+  -webkit-font-smoothing:antialiased}
+.wrap{max-width:1200px;margin:0 auto}
+h1{font-family:"IBM Plex Sans Condensed","IBM Plex Sans",Arial,sans-serif;font-weight:700;
+  font-size:30px;line-height:1.1;margin:0 0 6px;letter-spacing:-.005em;text-wrap:balance}
+.lede{color:var(--dim);margin:0 0 6px;max-width:66ch;font-size:14.5px}
+.stamp{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:11px;color:var(--faint);
+  letter-spacing:.06em;text-transform:uppercase;margin:0 0 26px}
+h2{font-family:"IBM Plex Sans Condensed","IBM Plex Sans",Arial,sans-serif;font-weight:600;
+  font-size:19px;margin:0;letter-spacing:.005em}
+.eyebrow{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:10.5px;font-weight:500;
+  color:var(--faint);letter-spacing:.11em;text-transform:uppercase}
+section{background:var(--panel);border:1px solid var(--line);border-top:2px solid var(--rule);
+  padding:20px 22px 22px;margin:20px 0 0}
+.head{display:flex;justify-content:space-between;align-items:baseline;gap:16px;
+  margin:0 0 14px;flex-wrap:wrap}
+.head p{color:var(--dim);margin:6px 0 0;font-size:13px;max-width:70ch;flex-basis:100%}
+/* readout strip */
+.strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(152px,1fr));gap:1px;
+  background:var(--line);border:1px solid var(--line);margin:0 0 4px}
+.cell{background:var(--panel);padding:13px 15px}
+.cell .k{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:10px;color:var(--faint);
+  letter-spacing:.1em;text-transform:uppercase}
+.cell .v{font-family:"IBM Plex Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums;
+  font-size:25px;font-weight:500;line-height:1.15;margin-top:5px;letter-spacing:-.02em}
+.cell .n{color:var(--dim);font-size:11.5px;margin-top:3px}
+/* the thesis callout */
+.thesis{border:1px solid var(--rule);background:var(--sunk);padding:15px 18px;margin:20px 0 0;
+  font-size:14px;max-width:none}
+.thesis .eyebrow{display:block;margin-bottom:6px}
+.thesis b{font-weight:600}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:12.5px}
+th,td{text-align:right;padding:6px 10px;border-bottom:1px solid var(--line);white-space:nowrap;
+  font-family:"IBM Plex Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums}
+th{font-family:"IBM Plex Sans","Helvetica Neue",Arial,sans-serif;color:var(--faint);
+  font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;
+  border-bottom:1px solid var(--rule)}
+td.l,th.l{text-align:left}
+td.t{font-family:"IBM Plex Sans","Helvetica Neue",Arial,sans-serif;white-space:normal;
+  min-width:16ch}
+tbody tr:hover td{background:var(--sunk)}
+.g{color:var(--cool)}.b{color:var(--warm)}.w{color:var(--hold)}.d{color:var(--faint)}
+.chip{display:inline-block;padding:1px 8px;border:1px solid currentColor;border-radius:2px;
+  font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:10px;font-weight:500;
+  letter-spacing:.05em}
+.SHIPPED{color:var(--cool)}.OPEN{color:var(--probe)}
+.MARGINAL,.CLOSED{color:var(--hold)}.REJECTED{color:var(--warm)}
+code{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:.92em;
+  background:var(--sunk);padding:1px 5px;border:1px solid var(--line)}
+svg{display:block;max-width:100%}
+svg text{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:10px;fill:var(--dim)}
+svg text.lab{font-size:10.5px;fill:var(--faint);letter-spacing:.06em}
+footer{color:var(--faint);font-size:11.5px;margin-top:34px;padding-top:14px;
+  border-top:1px solid var(--line);font-family:"IBM Plex Mono",ui-monospace,monospace;
+  line-height:1.8}
+@media (prefers-reduced-motion:no-preference){
+  tbody tr td{transition:background .12s ease}}
+</style>
+
+<div class="wrap">
+<h1>RealPDE calibration log</h1>
+<p class="lede">Every submission, the prediction recorded before it was uploaded, and what the board returned &mdash; then the local experiments behind them and the measured correction from our validation set to the hidden one.</p>
+<p class="stamp">generated by leaderboard/lb.py &middot; 10 submissions &middot; 29 local arms &middot; subscore weights refit on 8 scored rounds</p>
+<div class="strip">
+<div class="cell"><div class="k">best, track 1</div><div class="v">80.644</div><div class="n">round R13</div></div>
+<div class="cell"><div class="k">leader</div><div class="v">81.761</div><div class="n">np-user &middot; 08-25</div></div>
+<div class="cell"><div class="k">gap</div><div class="v">1.118</div><div class="n">&asymp;&thinsp;11.8% of error</div></div>
+<div class="cell"><div class="k">last 4 @ const t</div><div class="v">0.056</div><div class="n">span, four rounds</div></div>
+<div class="cell"><div class="k">prediction rms</div><div class="v">0.130</div><div class="n">4 predicted rounds</div></div>
+<div class="cell"><div class="k">resolution limit</div><div class="v">3.4%</div><div class="n">of error, to transfer</div></div>
+</div>
+<div class="thesis"><span class="eyebrow">read this first</span>At constant board latency the last four rounds span <b>0.056</b> points. The model has not measurably improved since 2026-08-08 &mdash; what improved is latency, one composition constant, and our knowledge of the scoring rule. Section&nbsp;3 measures why: the proxy predicts the board&rsquo;s <i>level</i> to &plusmn;1&ndash;3%, but explains almost none of its <i>movement</i>, and every gain we have chased has been smaller than that residual.</div>
+<section><div class="head"><h2>Submissions</h2><span class="eyebrow">board final</span><p>The prediction is recorded before upload; a prediction written afterwards is worth nothing. Colour is the size of the miss.</p></div><div class="scroll"><table><thead><tr><th class='l'>Round</th><th>Tr</th><th class='l'>Date</th><th class='l t'>Thesis</th><th>Pred</th><th>Actual</th><th>Miss</th></tr></thead><tbody>
+<tr><td class='l'><b>R6</b></td><td>1</td><td class='l d'>2026-08-04</td><td class='l t'>first v9 submission; the July-30 U-Net package</td><td class='d'>&mdash;</td><td><b>79.733</b></td><td></td></tr>
+<tr><td class='l'><b>R7</b></td><td>1</td><td class='l d'>2026-08-05</td><td class='l t'>the 0.90M FNO with the velocity-gradient loss replaces the U-Net</td><td class='d'>&mdash;</td><td><b>79.985</b></td><td></td></tr>
+<tr><td class='l'><b>R9</b></td><td>1</td><td class='l d'>2026-08-06</td><td class='l t'>ensemble diversity: architecture beats seeds</td><td class='d'>&mdash;</td><td><b>80.115</b></td><td></td></tr>
+<tr><td class='l'><b>R10</b></td><td>1</td><td class='l d'>2026-08-08</td><td class='l t'>the SPS band reopened: per-window widths from the variance head</td><td class='d'>80.422</td><td><b>80.512</b></td><td class='w'>+0.090</td></tr>
+<tr><td class='l'><b>R11</b></td><td>1</td><td class='l d'>2026-08-10</td><td class='l t'>fuse the members; ALPHA up to 0.90</td><td class='d'>80.603</td><td><b>80.609</b></td><td class='g'>+0.006</td></tr>
+<tr><td class='l'><b>R12</b></td><td>1</td><td class='l d'>2026-08-31</td><td class='l t'>a mixed architecture family; TKE carries the round</td><td class='d'>80.707</td><td><b>80.516</b></td><td class='b'>-0.191</td></tr>
+<tr><td class='l'><b>R13</b></td><td>1</td><td class='l d'>2026-08-31</td><td class='l t'>PROBE: ALPHA is a near-pure rel_l2<->tke trade, the weight family's dominant undetermined axis</td><td class='d'>80.491</td><td><b>80.644</b></td><td class='b'>+0.153</td></tr>
+<tr><td class='l'><b>T2R1</b></td><td>2</td><td class='l d'>2026-08-31</td><td class='l t'>PROBE: do the two tracks score the same hidden data with the same rule?</td><td class='d'>&mdash;</td><td><b>80.653</b></td><td></td></tr>
+<tr><td class='l'><b>R14</b></td><td>1</td><td class='l d'>2026-09-01</td><td class='l t'>PROBE: is the hidden set outside the training Reynolds range? inference-side mechanism</td><td class='d'>80.668</td><td><b><span class='d'>pending</span></b></td><td></td></tr>
+<tr><td class='l'><b>T2R2</b></td><td>2</td><td class='l d'>2026-09-01</td><td class='l t'>PROBE: same hypothesis, training-side mechanism</td><td class='d'>80.737</td><td><b><span class='d'>pending</span></b></td><td></td></tr>
+</tbody></table></div>
+<div class='scroll' style='margin-top:14px'><table><thead><tr><th class='l'>Round</th><th>rel</th><th>tke</th><th>mvpe</th><th>time</th><th>sps</th></tr></thead><tbody>
+<tr><td class='l'><b>R6</b></td><td>94.434</td><td>78.166</td><td>93.792</td><td>91.697</td><td>36.937</td></tr>
+<tr><td class='l'><b>R7</b></td><td>94.575</td><td>78.528</td><td>93.910</td><td>91.726</td><td>37.468</td></tr>
+<tr><td class='l'><b>R9</b></td><td>94.634</td><td>78.882</td><td>93.803</td><td>90.507</td><td>38.234</td></tr>
+<tr><td class='l'><b>R10</b></td><td>94.576</td><td>79.153</td><td>93.681</td><td>91.121</td><td>39.626</td></tr>
+<tr><td class='l'><b>R11</b></td><td>94.571</td><td>79.080</td><td>93.350</td><td>92.777</td><td>39.545</td></tr>
+<tr><td class='l'><b>R12</b></td><td><span class='d'>94.52</span> <span class='g'>94.490</span></td><td><span class='d'>79.87</span> <span class='b'>79.168</span></td><td><span class='d'>93.78</span> <span class='w'>93.418</span></td><td><span class='d'>91.25</span> <span class='b'>91.804</span></td><td><span class='d'>39.63</span> <span class='g'>39.637</span></td></tr>
+<tr><td class='l'><b>R13</b></td><td><span class='d'>94.66</span> <span class='g'>94.680</span></td><td><span class='d'>77.75</span> <span class='w'>77.984</span></td><td><span class='d'>93.41</span> <span class='w'>93.613</span></td><td><span class='d'>92.59</span> <span class='b'>93.115</span></td><td><span class='d'>40.01</span> <span class='w'>39.689</span></td></tr>
+<tr><td class='l'><b>T2R1</b></td><td><span class='d'>94.66</span> <span class='g'>94.695</span></td><td><span class='d'>77.75</span> <span class='w'>77.942</span></td><td><span class='d'>93.41</span> <span class='g'>93.399</span></td><td>93.288</td><td><span class='d'>40.01</span> <span class='w'>39.730</span></td></tr>
+</tbody></table></div><p class='stamp' style='margin:10px 0 0'>predicted &middot; actual</p></section>
+<section><div class="head"><h2>Progress at constant latency</h2><span class="eyebrow">time_score held at the median</span><p>Board <code>time_score</code> swings 2.8 points across the rounds and is only partly ours to control, so the raw ranking conflates model quality with eval-machine luck. Holding it fixed is the honest curve.</p></div>
+<svg viewBox="0 0 980 210" role="img" aria-label="board score at constant latency"><line x1="52" y1="149.7" x2="862" y2="149.7" stroke="var(--line)" stroke-width="1"/><text x="44" y="153.2" text-anchor="end">80.0</text><line x1="52" y1="115.6" x2="862" y2="115.6" stroke="var(--line)" stroke-width="1"/><text x="44" y="119.1" text-anchor="end">80.5</text><line x1="52" y1="81.5" x2="862" y2="81.5" stroke="var(--line)" stroke-width="1"/><text x="44" y="85.0" text-anchor="end">81.0</text><line x1="52" y1="47.3" x2="862" y2="47.3" stroke="var(--line)" stroke-width="1"/><text x="44" y="50.8" text-anchor="end">81.5</text><line x1="52" y1="29.5" x2="862" y2="29.5" stroke="var(--warm)" stroke-width="1.2" stroke-dasharray="5 4"/><text x="870" y="33.0" fill="var(--warm)">leader 81.761</text><rect x="446.0" y="20" width="427.0" height="156" fill="var(--warmw)"/><text x="659.5" y="33" text-anchor="middle" class="lab">span 0.056</text><polyline points="52.0,167.8 187.0,150.8 322.0,134.6 457.0,111.2 592.0,114.4 727.0,115.0 862.0,114.0" fill="none" stroke="var(--probe)" stroke-width="2" stroke-linejoin="round"/><circle cx="52.0" cy="167.8" r="3" fill="var(--panel)" stroke="var(--probe)" stroke-width="2"/><text x="52.0" y="196" text-anchor="middle">R6</text><text x="52.0" y="207" text-anchor="middle" fill="var(--faint)">08-04</text><circle cx="187.0" cy="150.8" r="3" fill="var(--panel)" stroke="var(--probe)" stroke-width="2"/><text x="187.0" y="196" text-anchor="middle">R7</text><text x="187.0" y="207" text-anchor="middle" fill="var(--faint)">08-05</text><circle cx="322.0" cy="134.6" r="3" fill="var(--panel)" stroke="var(--probe)" stroke-width="2"/><text x="322.0" y="196" text-anchor="middle">R9</text><text x="322.0" y="207" text-anchor="middle" fill="var(--faint)">08-06</text><circle cx="457.0" cy="111.2" r="3" fill="var(--panel)" stroke="var(--probe)" stroke-width="2"/><text x="457.0" y="196" text-anchor="middle">R10</text><text x="457.0" y="207" text-anchor="middle" fill="var(--faint)">08-08</text><circle cx="592.0" cy="114.4" r="3" fill="var(--panel)" stroke="var(--probe)" stroke-width="2"/><text x="592.0" y="196" text-anchor="middle">R11</text><text x="592.0" y="207" text-anchor="middle" fill="var(--faint)">08-10</text><circle cx="727.0" cy="115.0" r="3" fill="var(--panel)" stroke="var(--probe)" stroke-width="2"/><text x="727.0" y="196" text-anchor="middle">R12</text><text x="727.0" y="207" text-anchor="middle" fill="var(--faint)">08-31</text><circle cx="862.0" cy="114.0" r="4.5" fill="var(--probe)" stroke="var(--probe)" stroke-width="2"/><text x="862.0" y="196" text-anchor="middle">R13</text><text x="862.0" y="207" text-anchor="middle" fill="var(--faint)">08-31</text><text x="862.0" y="103.0" text-anchor="end" fill="var(--ink)" font-weight="600">80.523</text></svg></section>
+<section><div class="head"><h2>Local &rarr; board correction</h2><span class="eyebrow">% of error</span><p>Proxy = the held-out <i>twin</i> members on the AoA&nbsp;15&ndash;20 slice of <code>val_unseen</code>, scored at the ALPHA that package ships. <code>r</code> is board error divided by proxy error.</p></div><div class='scroll'><table><thead><tr><th class='l'>Round</th><th>proxy rel</th><th>proxy tke</th><th>proxy mvpe</th><th>board rel</th><th>board tke</th><th>board mvpe</th><th>r_rel</th><th>r_tke</th><th>r_mvpe</th></tr></thead><tbody>
+<tr><td class='l'><b>R10</b></td><td class='d'>0.10609</td><td class='d'>0.47198</td><td class='d'>0.09296</td><td class='d'>0.11469</td><td class='d'>0.52676</td><td class='d'>0.13490</td><td><b>1.081</b></td><td><b>1.116</b></td><td><b>1.451</b></td></tr>
+<tr><td class='l'><b>R11</b></td><td class='d'>0.10798</td><td class='d'>0.45347</td><td class='d'>0.09268</td><td class='d'>0.11482</td><td class='d'>0.52907</td><td class='d'>0.14247</td><td><b>1.063</b></td><td><b>1.167</b></td><td><b>1.537</b></td></tr>
+<tr><td class='l'><b>R12</b></td><td class='d'>0.10703</td><td class='d'>0.45114</td><td class='d'>0.09132</td><td class='d'>0.11662</td><td class='d'>0.52628</td><td class='d'>0.14091</td><td><b>1.090</b></td><td><b>1.167</b></td><td><b>1.543</b></td></tr>
+<tr><td class='l'><b>R13</b></td><td class='d'>0.10451</td><td class='d'>0.49748</td><td class='d'>0.09345</td><td class='d'>0.11238</td><td class='d'>0.56464</td><td class='d'>0.13645</td><td><b>1.075</b></td><td><b>1.135</b></td><td><b>1.460</b></td></tr>
+<tr><td class='l d'>mean &plusmn;&frac12;range</td><td></td><td></td><td></td><td></td><td></td><td></td><td class='d'>1.077&#177;0.013</td><td class='d'>1.146&#177;0.025</td><td class='d'>1.498&#177;0.046</td></tr></tbody></table></div>
+<div class="thesis"><span class="eyebrow">the finding</span><b>The levels calibrate; the deltas do not.</b> Those ratios are stable to &plusmn;1&ndash;3%, so the proxy predicts the board&rsquo;s level well. Round to round it explains almost none of the board&rsquo;s movement &mdash; residual rms <b>3.4%</b> of the error, range -5.5 to +5.9%, and <code>mvpe</code> inverts sign between R12 and R13. <b>A local delta below ~3% of the error does not survive the trip and must not be used to choose a package</b> &mdash; and every improvement measured since 2026-08-08 has been smaller than it.</div>
+<svg viewBox="0 0 980 229" role="img" aria-label="proxy residual per transition"><rect x="403.8" y="24" width="312.3" height="189" fill="var(--coolw)"/><text x="560" y="16" text-anchor="middle" class="lab">&#177;3.4% rms &mdash; the resolution limit</text><line x1="560" y1="24" x2="560" y2="213" stroke="var(--rule)" stroke-width="1"/><rect x="483.0" y="28.5" width="77.0" height="12" fill="var(--cool)" opacity=".85"/><text x="200" y="38.0" text-anchor="end">R10&#8594;R11</text><text x="210" y="38.0" fill="var(--ink)">rel</text><text x="262" y="38.0">proxy +1.78</text><text x="360" y="38.0">board +0.11</text><text x="476.0" y="38.0" fill="var(--cool)" text-anchor="end" font-weight="600">-1.67</text><rect x="560.0" y="49.5" width="200.6" height="12" fill="var(--warm)" opacity=".85"/><text x="200" y="59.0" text-anchor="end">R10&#8594;R11</text><text x="210" y="59.0" fill="var(--ink)">tke</text><text x="262" y="59.0">proxy -3.92</text><text x="360" y="59.0">board +0.44</text><text x="767.6" y="59.0" fill="var(--warm)" text-anchor="start" font-weight="600">+4.36</text><rect x="560.0" y="70.5" width="272.0" height="12" fill="var(--warm)" opacity=".85"/><text x="200" y="80.0" text-anchor="end">R10&#8594;R11</text><text x="210" y="80.0" fill="var(--ink)">mvpe</text><text x="262" y="80.0">proxy -0.30</text><text x="360" y="80.0">board +5.61</text><text x="839.0" y="80.0" fill="var(--warm)" text-anchor="start" font-weight="600">+5.91</text><rect x="560.0" y="91.5" width="112.7" height="12" fill="var(--warm)" opacity=".85"/><text x="200" y="101.0" text-anchor="end">R11&#8594;R12</text><text x="210" y="101.0" fill="var(--ink)">rel</text><text x="262" y="101.0">proxy -0.88</text><text x="360" y="101.0">board +1.57</text><text x="679.7" y="101.0" fill="var(--warm)" text-anchor="start" font-weight="600">+2.45</text><rect x="559.4" y="112.5" width="0.6" height="12" fill="var(--cool)" opacity=".85"/><text x="200" y="122.0" text-anchor="end">R11&#8594;R12</text><text x="210" y="122.0" fill="var(--ink)">tke</text><text x="262" y="122.0">proxy -0.51</text><text x="360" y="122.0">board -0.53</text><text x="552.4" y="122.0" fill="var(--cool)" text-anchor="end" font-weight="600">-0.01</text><rect x="560.0" y="133.5" width="17.2" height="12" fill="var(--warm)" opacity=".85"/><text x="200" y="143.0" text-anchor="end">R11&#8594;R12</text><text x="210" y="143.0" fill="var(--ink)">mvpe</text><text x="262" y="143.0">proxy -1.47</text><text x="360" y="143.0">board -1.09</text><text x="584.2" y="143.0" fill="var(--warm)" text-anchor="start" font-weight="600">+0.37</text><rect x="501.2" y="154.5" width="58.8" height="12" fill="var(--cool)" opacity=".85"/><text x="200" y="164.0" text-anchor="end">R12&#8594;R13</text><text x="210" y="164.0" fill="var(--ink)">rel</text><text x="262" y="164.0">proxy -2.35</text><text x="360" y="164.0">board -3.63</text><text x="494.2" y="164.0" fill="var(--cool)" text-anchor="end" font-weight="600">-1.28</text><rect x="422.8" y="175.5" width="137.2" height="12" fill="var(--cool)" opacity=".85"/><text x="200" y="185.0" text-anchor="end">R12&#8594;R13</text><text x="210" y="185.0" fill="var(--ink)">tke</text><text x="262" y="185.0">proxy +10.27</text><text x="360" y="185.0">board +7.29</text><text x="415.8" y="185.0" fill="var(--cool)" text-anchor="end" font-weight="600">-2.98</text><rect x="306.9" y="196.5" width="253.1" height="12" fill="var(--cool)" opacity=".85"/><text x="200" y="206.0" text-anchor="end">R12&#8594;R13</text><text x="210" y="206.0" fill="var(--ink)">mvpe</text><text x="262" y="206.0">proxy +2.33</text><text x="360" y="206.0">board -3.17</text><text x="299.9" y="206.0" fill="var(--cool)" text-anchor="end" font-weight="600">-5.50</text><text x="554" y="223" text-anchor="end" class="lab">board moved LESS than the proxy said</text><text x="566" y="223" class="lab">board moved MORE</text></svg>
+<p class='stamp' style='margin:14px 0 0'>also calibrated &mdash; sps element-tail f 1.360 (T1) / 1.350 (T2), calib_band13.py &middot; board ms = 2.616 + 0.435&times;inv + 0.803&times;local, rms 0.690 over 7 rounds, residuals ordered by date &middot; one invocation = 0.52&ndash;0.56 board ms = 0.036 final</p></section>
+<section><div class="head"><h2>Experiment ledger</h2><span class="eyebrow">29 arms &middot; 15 ensembled</span><p><b>ens</b> marks an arm measured at the ensemble size that actually ships. It is the most predictive column here: <code>ozdo</code> was +3.84&sigma; per model and &minus;0.012 at four members, and <code>--var-mlp</code>&rsquo;s 3.9% fixed-field TKE cut became +0.08. An arm that has not been ensembled has not been measured.</p></div><div class='scroll'><table><thead><tr><th class='l'>Verdict</th><th class='l'>Date</th><th class='l'>Arm</th><th class='l'>Direction</th><th>ens</th><th class='l t'>Effect</th><th class='l'>Board</th></tr></thead><tbody>
+<tr><td class='l'><span class='chip SHIPPED'>SHIPPED</span></td><td class='l d'>2026-08-08</td><td class='l'><code>--var-mlp</code></td><td class='l d'>variance head</td><td><span class='g'>&#10003;</span></td><td class='l t'>+0.103 wfinal, 3.4sigma; +0.082 at 3-vs-3 ensemble</td><td class='l'>R10</td></tr>
+<tr><td class='l'><span class='chip SHIPPED'>SHIPPED</span></td><td class='l d'>2026-08-08</td><td class='l'><code>--lift-mlp</code></td><td class='l d'>boundary capacity</td><td><span class='g'>&#10003;</span></td><td class='l t'>+0.076 alone; +0.164 with --var-mlp at 5.9sigma</td><td class='l'>R10</td></tr>
+<tr><td class='l'><span class='chip SHIPPED'>SHIPPED</span></td><td class='l d'>2026-08-08</td><td class='l'><code>SPS band: sigma-scaled p=0.45, box blur k=3</code></td><td class='l d'>band</td><td><span class='g'>&#10003;</span></td><td class='l t'>+0.729 sps = +0.132 final</td><td class='l'>R10</td></tr>
+<tr><td class='l'><span class='chip SHIPPED'>SHIPPED</span></td><td class='l d'>2026-08-31</td><td class='l'><code>Track 2: CUDA graph capture</code></td><td class='l d'>latency</td><td><span class='g'>&#10003;</span></td><td class='l t'>fused 8-member step 3.61 ms -> 0.989 ms, bit-exact (0.0e+00)</td><td class='l'>T2R1</td></tr>
+<tr><td class='l'><span class='chip SHIPPED'>SHIPPED</span></td><td class='l d'>2026-09-01</td><td class='l'><code>ALPHA 0.90 -> 0.60</code></td><td class='l d'>composition</td><td><span class='g'>&#10003;</span></td><td class='l t'>+0.07 final at the nine-round weights; both families peak at 0.60 with a positive minimax over the weight family</td><td class='l'>R13</td></tr>
+<tr><td class='l'><span class='chip OPEN'>OPEN</span></td><td class='l d'>2026-08-31</td><td class='l'><code>--dropout 0.05 / 0.15</code></td><td class='l d'>regularization</td><td><span class='g'>&#10003;</span></td><td class='l t'>rel-L2 z = -3.57, -18.4% overall -- but band 0 alone is -36.4% and bands 1-4 give -2.6%</td><td class='l'>T2R2</td></tr>
+<tr><td class='l'><span class='chip OPEN'>OPEN</span></td><td class='l d'>2026-09-01</td><td class='l'><code>gated mean-blend, beta 0.15</code></td><td class='l d'>out-of-distribution mean field</td><td><span class='g'>&#10003;</span></td><td class='l t'>rein BIT-IDENTICAL at every beta; relo -4.2%; rehi -1.5%</td><td class='l'>R14</td></tr>
+<tr><td class='l'><span class='chip MARGINAL'>MARGINAL</span></td><td class='l d'>2026-08-29</td><td class='l'><code>U-Net as a mixed-family member</code></td><td class='l d'>ensemble diversity</td><td><span class='g'>&#10003;</span></td><td class='l t'>+0.091 proxy / +0.123 full wfinal on the 7-FNO ensemble</td><td class='l'>R12</td></tr>
+<tr><td class='l'><span class='chip CLOSED'>CLOSED</span></td><td class='l d'>2026-08-09</td><td class='l'><code>band CV, 84 configs</code></td><td class='l d'>band</td><td><span class='g'>&#10003;</span></td><td class='l t'>pooling the fitting split buys 0.000 sps</td><td class='l'><span class=d>&mdash;</span></td></tr>
+<tr><td class='l'><span class='chip CLOSED'>CLOSED</span></td><td class='l d'>2026-09-01</td><td class='l'><code>SPS band element-tail refit at the MEASURED f</code></td><td class='l d'>band</td><td><span class='g'>&#10003;</span></td><td class='l t'>f = 1.360 (T1) / 1.350 (T2) against the 1.39 in use; refitting at the calibrated value is worth +0.000 sps</td><td class='l'><span class=d>&mdash;</span></td></tr>
+<tr><td class='l'><span class='chip REJECTED'>REJECTED</span></td><td class='l d'>2026-08-08</td><td class='l'><code>--point-mlp</code></td><td class='l d'>trunk capacity</td><td><span class='d'>&mdash;</span></td><td class='l t'>-0.379</td><td class='l'><span class=d>&mdash;</span></td></tr>
+<tr><td class='l'><span class='chip REJECTED'>REJECTED</span></td><td class='l d'>2026-08-08</td><td class='l'><code>width 16 / 48 / 64</code></td><td class='l d'>capacity</td><td><span class='d'>&mdash;</span></td><td class='l t'>81.865 / 81.451 / 81.359 against w24's 82.059</td><td class='l'><span class=d>&mdash;</span></td></tr>
+<tr><td class='l'><span class='chip REJECTED'>REJECTED</span></td><td class='l d'>2026-08-08</td><td class='l'><code>--detach-var</code></td><td class='l d'>variance head</td><td><span class='d'>&mdash;</span></td><td class='l t'>best rel-L2 of any arm, worst TKE (0.5625)</td><td class='l'><span class=d>&mdash;</span></td></tr>
+<tr><td class='l'><span class='chip REJECTED'>REJECTED</span></td><td class='l d'>2026-08-08</td><td class='l'><code>post-hoc sigma blending</code></td><td class='l d'>variance head</td><td><span class='d'>&mdash;</span></td><td class='l t'>-0.311 out of sample</td><td class='l'><span class=d>&mdash;</span></td></tr>
+<tr><td class='l'><span class='chip REJECTED'>REJECTED</span></td><td class='l d'>2026-08-08</td><td class='l'><code>--lam-t x3</code></td><td class='l d'>loss weights</td><td><span class='d'>&mdash;</span></td><td class='l t'>TKE moves 0.0001, rel-L2 worse</td><td class='l'><span class=d>&mdash;</span></td></tr>
+<tr><td class='l'><span class='chip REJECTED'>REJECTED</span></td><td class='l d'>2026-08-09</td><td class='l'><code>--var-hidden 256 / --var-deep / --var-in-std</code></td><td class='l d'>variance head</td><td><span class='d'>&mdash;</span></td><td class='l t'>82.038 / 82.047 / 82.049 against 82.046 +- 0.017; training var unchanged</td><td class='l'><span class=d>&mdash;</span></td></tr>
+<tr><td class='l'><span class='chip REJECTED'>REJECTED</span></td><td class='l d'>2026-08-09</td><td class='l'><code>--lam-v 0.05 --lam-t 1.0</code></td><td class='l d'>loss weights</td><td><span class='d'>&mdash;</span></td><td class='l t'>-0.58 wfinal at 34sigma; training TKE -11%, held-out TKE +5%</td><td class='l'><span class=d>&mdash;</span></td></tr>
+<tr><td class='l'><span class='chip REJECTED'>REJECTED</span></td><td class='l d'>2026-08-09</td><td class='l'><code>--lam-v 0.6</code></td><td class='l d'>loss weights</td><td><span class='d'>&mdash;</span></td><td class='l t'>training var improves monotonically with lam_v; held-out TKE is U-shaped with its minimum at the shipped 0.3</td><td class='l'><span class=d>&mdash;</span></td></tr>
+<tr><td class='l'><span class='chip REJECTED'>REJECTED</span></td><td class='l d'>2026-08-29</td><td class='l'><code>FGN / CRPS probabilistic head</code></td><td class='l d'>generative sigma</td><td><span class='d'>&mdash;</span></td><td class='l t'>spread-sigma rel-L2 0.451-0.469 against the log-MSE head's 0.329; every composition loses ~0.7 wfinal</td><td class='l'><span class=d>&mdash;</span></td></tr>
+<tr><td class='l'><span class='chip REJECTED'>REJECTED</span></td><td class='l d'>2026-08-29</td><td class='l'><code>phase / advection re-registration</code></td><td class='l d'>fluctuation shape</td><td><span class='d'>&mdash;</span></td><td class='l t'>synthetic control recovers a planted (1,3) roll 100.0%; the real model recovers 0.2%</td><td class='l'><span class=d>&mdash;</span></td></tr>
+<tr><td class='l'><span class='chip REJECTED'>REJECTED</span></td><td class='l d'>2026-08-31</td><td class='l'><code>--norm self</code></td><td class='l d'>normalization</td><td><span class='g'>&#10003;</span></td><td class='l t'>relo rel-L2 -11.1% and low-Re seed sigma 13x tighter; relo TKE +20.8%; -0.50 wfinal as a 2-member ensemble</td><td class='l'><span class=d>&mdash;</span></td></tr>
+<tr><td class='l'><span class='chip REJECTED'>REJECTED</span></td><td class='l d'>2026-08-31</td><td class='l'><code>ozdo (oscillatory head + dropout)</code></td><td class='l d'>fluctuation shape</td><td><span class='g'>&#10003;</span></td><td class='l t'>+3.84sigma per model, replicated 4-for-4 with a tighter spread than the baseline's 7 seeds; -0.012 final at 4 members</td><td class='l'><span class=d>&mdash;</span></td></tr>
+<tr><td class='l'><span class='chip REJECTED'>REJECTED</span></td><td class='l d'>2026-08-31</td><td class='l'><code>--tbasis 4</code></td><td class='l d'>fluctuation shape</td><td><span class='d'>&mdash;</span></td><td class='l t'>matches ozdo to -0.55 baseline sigma</td><td class='l'><span class=d>&mdash;</span></td></tr>
+<tr><td class='l'><span class='chip REJECTED'>REJECTED</span></td><td class='l d'>2026-08-31</td><td class='l'><code>--aug-scale (freestream rescaling)</code></td><td class='l d'>augmentation</td><td><span class='d'>&mdash;</span></td><td class='l t'>null</td><td class='l'><span class=d>&mdash;</span></td></tr>
+<tr><td class='l'><span class='chip REJECTED'>REJECTED</span></td><td class='l d'>2026-08-31</td><td class='l'><code>--wd (weight decay), 1e-3 to 1e-1</code></td><td class='l d'>regularization</td><td><span class='d'>&mdash;</span></td><td class='l t'>null, and closed by mechanism</td><td class='l'><span class=d>&mdash;</span></td></tr>
+<tr><td class='l'><span class='chip REJECTED'>REJECTED</span></td><td class='l d'>2026-08-31</td><td class='l'><code>Track 2: residual EMA</code></td><td class='l d'>test-time adaptation</td><td><span class='g'>&#10003;</span></td><td class='l t'>lag-1 residual correlation +0.051; an ORACLE additive per-trajectory correction is worth 1.75% of rel-L2</td><td class='l'><span class=d>&mdash;</span></td></tr>
+<tr><td class='l'><span class='chip REJECTED'>REJECTED</span></td><td class='l d'>2026-08-31</td><td class='l'><code>Track 2: online SPS band calibration</code></td><td class='l d'>test-time adaptation</td><td><span class='g'>&#10003;</span></td><td class='l t'>the shipped band is already exactly optimal, c = 1.00</td><td class='l'><span class=d>&mdash;</span></td></tr>
+<tr><td class='l'><span class='chip REJECTED'>REJECTED</span></td><td class='l d'>2026-08-31</td><td class='l'><code>Track 2: gradient TTT, 40 arms</code></td><td class='l d'>test-time adaptation</td><td><span class='g'>&#10003;</span></td><td class='l t'>best is rel-L2 -1.6% single member / -0.7% ensemble = +0.02 final, against ~9.7 ms/step of backward = -0.5 final</td><td class='l'><span class=d>&mdash;</span></td></tr>
+<tr><td class='l'><span class='chip REJECTED'>REJECTED</span></td><td class='l d'>2026-09-01</td><td class='l'><code>mvpe weight probe</code></td><td class='l d'>board instrumentation</td><td><span class='d'>&mdash;</span></td><td class='l t'>the dominant open axis is rel_l2 +1.00 / mvpe -0.68, but the only knob that moves mvpe hard moves rel_l2 THE SAME WAY (beta 0.30: rel +6.6%, mvpe +9.9%)</td><td class='l'><span class=d>&mdash;</span></td></tr>
+</tbody></table></div></section>
+<footer>subscore weights, nine rounds, max residual 0.035 &nbsp;&mdash;&nbsp; rel 0.582 &nbsp; tke 0.097 &nbsp; mvpe 0.011 &nbsp; time 0.087 &nbsp; sps 0.224<br>sources: leaderboard/board.jsonl &middot; leaderboard/runs.jsonl &middot; Track_1/final_v9.py &middot; Track_1/proxy_calib.py</footer></div>
