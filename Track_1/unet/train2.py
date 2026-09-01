@@ -325,6 +325,13 @@ def main() -> None:
     ap.add_argument("--sim-stride", type=int, default=5)
     ap.add_argument("--sim-batch", type=int, default=0, help="0 = same as --batch")
     ap.add_argument("--sim-frames", type=int, default=0, help="0 = all 1000")
+    ap.add_argument("--sim-exclude-held", action="store_true",
+                    help="also drop the held-out conditions from the SIM pool. Without it the "
+                         "model sees CFD at exactly the Reynolds numbers the real data is "
+                         "missing, which is the upper bound on sim's value rather than the "
+                         "deployment situation -- the Track-2 example trajectory is Re 2968, "
+                         "below sim's own range. Separates 'sim teaches this condition' from "
+                         "'sim teaches the regime'.")
     ap.add_argument("--all-data", action="store_true",
                     help="train on ALL trajectories including the held-out ones. Submission "
                          "checkpoints only -- it makes local evaluation meaningless.")
@@ -385,7 +392,9 @@ def main() -> None:
                              "rescale every window and undo the speed match")
         from simreal import load_sim_mapped
         sim_trajs = load_sim_mapped(args.sim, args.data, phases=PHASES_ALL[:args.phases],
-                                    frames=args.sim_frames)
+                                    frames=args.sim_frames,
+                                    exclude=excl if args.sim_exclude_held else None,
+                                    real_exclude=excl)
         sim_idx = window_index(sim_trajs, args.sim_stride)
         sim_trajs_t = [torch.from_numpy(d) for d in sim_trajs]
         sim_idx_t = torch.from_numpy(sim_idx)

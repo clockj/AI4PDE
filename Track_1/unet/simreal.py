@@ -38,6 +38,7 @@ THE MAP, per trajectory, in this order:
 from __future__ import annotations
 
 import glob
+import hashlib
 import os
 
 import numpy as np
@@ -60,8 +61,18 @@ CACHE = "/fs/scratch/PAS1187/qwu/tmp/realpde/work"
 def load_sim_mapped(sim_dir: str, real_dir: str, exclude: list[str] | None = None,
                     phases: tuple[tuple[int, int], ...] = ((0, 0),),
                     frames: int = 0, verbose: bool = True,
-                    cache: str | None = CACHE) -> list[np.ndarray]:
+                    cache: str | None = CACHE,
+                    real_exclude: list[str] | None = None) -> list[np.ndarray]:
     """Every sim trajectory, mapped into real's measurement space. Raw physical units.
+
+    `real_exclude` IS NOT OPTIONAL WHEN THERE IS A HELD-OUT SPLIT. The map reads each sim
+    trajectory's real TWIN for three things -- measured mean speed, fluctuation amplitude and
+    FOV mask. If that twin is a trajectory the model is being evaluated on, all three are
+    leaked into training, and the mean speed is precisely the quantity the model gets worst at
+    an unseen Reynolds number: the leak would land exactly where the gain is claimed. Names
+    passed here are dropped from the twin table, and the conditions that lose their twin fall
+    back to the freestream law and the nearest surviving mask, which is what sim's 18
+    twin-less conditions already use. An ALL-DATA run has no held-out set and passes nothing.
 
     Building the map reads ~10 GB of HDF5 (82 real trajectories for the twins' statistics,
     then 100 sim ones) and takes ~10 min on shared storage -- longer than a training run.
@@ -73,9 +84,11 @@ def load_sim_mapped(sim_dir: str, real_dir: str, exclude: list[str] | None = Non
 
     from model import SUB
 
+    rex = sorted(real_exclude or [])
     key = None
     if cache:
-        key = os.path.join(cache, f"simmap_p{len(phases)}_f{frames}.npy")
+        tag = "" if not rex else "_x" + hashlib.sha1(" ".join(rex).encode()).hexdigest()[:10]
+        key = os.path.join(cache, f"simmap_p{len(phases)}_f{frames}{tag}.npy")
         nk = key[:-4] + "_names.npy"
         if os.path.exists(key) and os.path.exists(nk):
             arr = np.load(key, mmap_mode="r")
@@ -90,6 +103,8 @@ def load_sim_mapped(sim_dir: str, real_dir: str, exclude: list[str] | None = Non
     twin: dict[str, tuple[float, float, np.ndarray]] = {}
     for p in sorted(glob.glob(os.path.join(real_dir, "*.h5"))):
         nm = os.path.basename(p)[:-3]
+        if nm in rex:               # held out: its statistics must not reach training
+            continue
         with h5py.File(p, "r") as f:
             d = np.stack([f["u"][:].astype(np.float32), f["v"][:].astype(np.float32)], -1)
         twin[nm] = _stats(d[:, ::SUB, ::SUB])
@@ -136,8 +151,9 @@ def load_sim_mapped(sim_dir: str, real_dir: str, exclude: list[str] | None = Non
 
     if verbose:
         print(f"sim: {len(out)} trajectory-phases mapped into real's space "
-              f"({n_law} condition(s) placed by the freestream law, the rest by their twin)",
-              flush=True)
+              f"({n_law} condition(s) placed by the freestream law, the rest by their twin"
+              + (f"; {len(rex)} real trajectories withheld from the twin table)" if rex
+                 else ")"), flush=True)
     if key is not None:
         os.makedirs(cache, exist_ok=True)
         np.save(key, np.stack(out))

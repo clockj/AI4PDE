@@ -1521,3 +1521,105 @@ Track 2 (910642), the **identical** package: 94.694512 / 77.942224 / 93.399401 /
   so the gate fired at 0.56 strength on real validation data and the bit-identity claim was
   false), and then a float32 boundary case at 2.5e-4 — fixed by padding the stored range,
   not by thresholding the gate.
+
+### Round 14 (2026-09-01) — sim2real WORKS, given a domain map; and the model underfits
+
+Report: `Track_1/report/report_20260901_round14.md`. Instrument log: `leaderboard/` (published
+dashboard; `python leaderboard/lb.py --html` regenerates it). Nothing submitted; ~8 GPU-h of
+the 200-h budget. Two proposed directions were gated and closed, and two structural
+corrections came out of closing them.
+
+* **SIM IS A STRICT SUPERSET OF REAL'S CONDITION GRID.** Every real `(Re, AoA)` has an exact
+  CFD twin; sim adds Re 15225, Re 27975 and every hole real leaves. Nothing had used that, and
+  it makes the domain gap measurable **per condition** (`Track_1/sim_map.py`, 12 matched
+  pairs, sim speed-matched): time-mean field rel-L2 **0.400** against the model's own 0.045;
+  std field 1.457, or 0.603 with amplitude divided out, against the σ head's 0.329; energy
+  ratio **2.9× at k≈1, 5.6× at k≈10, 0.55× at k≈35**; transverse TI 2.28×. Two repairs died:
+  the FOV mask is worth **7%** of the mean gap (and the zero fraction is **3.3%**, not the
+  9.9% recorded above), and the energy ratio is **non-monotone in k**, so no low-pass can
+  produce it — it is 2D-CFD over-prediction of large-scale unsteadiness.
+* **`Track_1/unet/simreal.py` maps sim into real's measurement space** — speed match from the
+  fitted freestream law `mean_u = c(AoA)·Re` with `c = [1.138, 1.149, 1.098, 1.002, 0.991]e-5`
+  for AoA 0/5/10/15/20, amplitude match to the twin, then the twin's FOV/airfoil zero set
+  painted on. `train2.py` gains `--sim / --lam-sim / --sim-loss / --sim-exclude-held`, and
+  **`--seed`**, which makes a control and its arm share initialization and batch order
+  (verified bit-exact) instead of averaging the 0.017 `wfinal` seed σ away.
+* **`--sim-loss full` PASSES THE §1.15 ENSEMBLE TEST — measured twice, because the first
+  measurement was leaked.** Leak-corrected 3-vs-3 on `re_split`: `rein` 84.470 → **84.471**
+  (flat), `relo` 82.618 → **84.307** (rel-L2 0.1216 → 0.0949, **−22.0 %**), `rehi` 79.180 →
+  **79.652**. Per model the low-Re **seed spread tightens 3.2×** (σ 0.0132 → 0.0041). λ 0.3 and
+  1.0 tie. **The first arm in this project to gain at ensemble size on Re extrapolation while
+  costing nothing in distribution**, and it **deploys free**: a `--sim` checkpoint is
+  architecturally identical to a shipped member and fuses into the same single invocation.
+  Round 5's `+0.00` was measured without a domain map.
+  → **THE FIRST MEASUREMENT WAS CONTAMINATED and the retraction is worth keeping.**
+  `load_sim_mapped` set each sim trajectory's mean speed, fluctuation amplitude and FOV mask
+  from its **real twin**, and built the twin table from every file in the real directory
+  regardless of the split — so **26 held-out trajectories were leaking all three quantities
+  into training.** Mean speed is exactly what the model gets worst at an unseen Reynolds
+  number, so the leak landed precisely where the gain was claimed. `real_exclude` is now
+  threaded through `train2.py --exclude`; under `re_split` **44 of 100** sim conditions fall
+  back to the freestream law instead of 26 leaking, and the cache key carries a hash of the
+  exclusion so the two variants cannot be confused. **An all-data run has no held-out set and
+  leaks nothing**, and the controls use no sim, so only the three `--sim-loss full` arms were
+  rebuilt (`simE`). **Do not cite the −21.4% or the +1.62.**
+  → **The general rule this earns:** any preprocessing that reads statistics from the real
+  dataset must be told the split. A domain map, a normalizer fitted per condition, a mask —
+  all of them are training-time reads of data that may be held out, and none of them is
+  covered by `--exclude`, which only filters the trajectories the loss sees.
+  → **Re-run leak-free the numbers are IDENTICAL and marginally better** (−22.0 % against
+  −21.4 %), so the leaked scalars contributed nothing and the gain is sim's Reynolds coverage.
+  The retraction still stands as method: the result was not trustworthy until re-measured, and
+  it was luck rather than judgement that the two agreed.
+* **`--sim-loss shape` — the arm designed to be blind to sim's wrong mean and amplitude — is
+  REJECTED**, monotone in λ: proxy `wfinal` 81.850 → 81.651 → 81.139, and `relo` rel-L2 +25%
+  with MVPE +46%. Dividing by a per-pixel temporal std that is near zero in the freestream
+  amplifies quiescent regions into noise. **Being blind to what sim gets wrong is worse than
+  matching it.**
+* **TRAJECTORY HISTORY IS LEGITIMATE IN TRACK 2 AND WORTH NOTHING.** The official
+  `local_eval.py` holds ONE model object, calls `ttt_step` in strict time order and calls
+  `reset_ttt_state()` at trajectory boundaries — a hook that exists only because
+  within-trajectory state is expected to persist — so frames already delivered are *past*
+  measurements, the opposite of the recorded leak (window *k+1* IS window *k*'s answer).
+  Round 11 ruled long context out on Track-1 grounds and never revisited the track built for
+  it. The information is real: a per-window DMD fit goes **0.1424 → 0.1059** from 20 to 200
+  frames (20 frames is under a third of a 60-75 frame shedding period, so no per-window fit
+  can identify the oscillation), and the target's time-mean is estimated at 0.1022 by the
+  input window against **0.0783** by all history. But **the model already has it**: DMD-200's
+  per-window error correlates with the model's at **+0.897**, the model's own time-mean is
+  **0.0449** against history's 0.0783, and every blend loses monotonically. Shipped behind
+  `HIST_BETA = 0.0` in `Track_2/submit/submission.py`, gated, off.
+* **THE SEEN/UNSEEN GAP IS 1.10×, NOT 2.1×** (`Track_1/gap.py`, which splits the error
+  exactly into `T‖pm−ym‖² + ‖pf−yf‖²` and the fluctuation again by an oracle amplitude, with
+  `ρ = ⟨pf,yf⟩/(‖pf‖‖yf‖)`). Held-out twin: `val_seen` total 0.0749 / mean 0.0382 / fluct
+  0.0645 / ρ 0.634; `val_unseen` 0.0806 / 0.0452 / 0.0667 / ρ 0.609. **"The binding constraint
+  is 74 trajectories, not the model" comes from round 1's unregularized U-Net and is not true
+  of the current recipe** — which is why every data-side arm has been null. **Amplitude is
+  finished**: 0.0667 against a 0.0645 optimal-rescale floor, and the oracle amplitude
+  correction is *negative*.
+* **THE SHIPPED MODEL UNDERFITS — this is the big one.** Train on only the 8 `val_unseen`
+  trajectories, then score them **in-sample**:
+
+  | model | rel-L2 | ρ |
+  |---|---|---|
+  | w24, 150 ep (the shipped width) | 0.0774 | **0.588** |
+  | w64, 150 ep | 0.0539 | 0.798 |
+  | w64, 400 ep | 0.0403 | 0.903 |
+  | **w96, 400 ep** | **0.0316** | **0.945** |
+  | shipped w24, held-out | 0.0809 | 0.609 |
+
+  → **There is no intrinsic 20-frame predictability barrier.** ρ reaches 0.945; ρ = 0.609 is a
+  property of our model, not of the task. This is the measured bound the file says does not
+  exist, and it is not where anyone assumed it was.
+  → **w24 reaches ρ 0.588 on eight MEMORIZED trajectories against 0.609 held-out on 74. It
+  cannot fit even eight.** The shipped 150-epoch full-split run takes 39 600 optimizer steps,
+  **3.4× more** than the w96/400 run that reached 0.945, so this is capacity, not steps.
+  → Round 8's ladder (w24 82.06 > w48 81.45 > w64 81.36) added capacity with regularization
+  and schedule held **fixed** and scored generalization. That result stands; the corollary the
+  project drew from it — that the model is expressive enough — does not, and **the untested
+  cell is capacity WITH regularization** (`capA`, `capB`).
+  → **It also puts every data-side and regularization null back in play.** `--phases 4`,
+  `--aug-scale`, `--wd`, `--aug-noise` and sim pretraining were all measured on a model that
+  could not fit the data it already had. Extra data cannot help a model that underfits, and
+  weight decay cannot regularize one.
+  → Latency does not block it: round 9 priced a 25× inference-cost increase at ≈1.2 `final`.

@@ -60,10 +60,52 @@ The mechanism is visible in the numbers: dividing by a per-pixel temporal std th
 in the freestream amplifies quiescent regions into noise, and `relo` MVPE goes 0.1110 → 0.1626
 (+46%). **Being blind to what sim gets wrong is worse than matching it.**
 
-The naive `--sim-loss full` — round 5's arm, but now with a domain map under it — is mildly
-positive out of distribution (−1.3% `relo`, −1.9% `rehi`, +0.1% `rein`) on one paired seed.
-`re_split.py`'s own docstring records identical recipes differing by **1.42 `wfinal` on relo**,
-so that is inside the noise until it survives the ROADMAP §1.15 ensemble test.
+The naive `--sim-loss full` — round 5's arm, but now with a domain map under it — looked
+mildly positive out of distribution, and at three paired seeds and 3-vs-3 it looked strongly
+positive (`relo` `wfinal` 82.618 → 84.240, rel-L2 −21.4%; `rehi` +0.45; `rein` flat).
+
+### 1.3 That result was RETRACTED, re-measured, and stands
+
+The map was leaking the held-out data.
+
+`load_sim_mapped` sets each sim trajectory's mean speed, fluctuation amplitude and FOV mask
+from its **real twin**, and it built the twin table from every file in the real directory
+regardless of the split. Under `re_split` that is **26 held-out trajectories** handing all
+three quantities to training — and **mean speed is exactly the quantity the model gets worst
+at an unseen Reynolds number**, so the leak landed precisely where the gain was claimed.
+
+`real_exclude` is now threaded from `train2.py --exclude`, the named trajectories are dropped
+from the twin table, and orphaned conditions fall back to the freestream law and the nearest
+surviving mask — the path sim's 18 twin-less conditions already used. Under `re_split` that is
+**44 of 100** conditions placed by the law. The cache key carries a hash of the exclusion so
+the two variants cannot be confused. An **all-data** run has no held-out set and leaks nothing,
+so a package build is unaffected; the controls use no sim, so only the three `full` arms were
+rebuilt (`simE`, which also reports the contaminated ensemble alongside for the record).
+
+**The rule this earns, which is more valuable than the arm:** *any preprocessing that reads
+statistics from the real dataset must be told the split.* A domain map, a per-condition
+normalizer, a mask — each is a training-time read of data that may be held out, and none of
+them is covered by `--exclude`, which only filters the trajectories the **loss** sees. This is
+the same class of error as round 13's struck transductive conditioning, arriving through a
+different door.
+
+**And the re-run vindicates the arm.** Leak-free, 3-vs-3:
+
+| set | control ×3 | +sim ×3 | Δ |
+|---|---|---|---|
+| `rein` (interior control) | 84.470 | **84.471** | +0.001 |
+| `relo` (Re below the range) | 82.618 | **84.307** | **+1.689** |
+| `rehi` (Re above it) | 79.180 | **79.652** | **+0.472** |
+
+`relo` rel-L2 0.1216 → **0.0949, −22.0 %**, against −21.4 % with the leak in place — so the
+leaked scalars contributed nothing and the gain is sim's Reynolds coverage, which is what
+CLAUDE.md always said sim was for. Per model the low-Re seed spread tightens **3.2×** (σ 0.0132
+→ 0.0041), the same variance collapse `--norm self` bought in round 13 but without its TKE
+penalty. λ 0.3 and 1.0 tie, so the plateau is flat.
+
+It also **deploys free**: a `--sim` checkpoint is architecturally identical to a shipped member
+(the flag changes only the training loss), and `_fno.fuse` puts it in the same single
+invocation — verified. So this direction costs no latency at all.
 
 ---
 
