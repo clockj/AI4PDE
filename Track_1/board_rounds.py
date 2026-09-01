@@ -28,27 +28,37 @@ ROUNDS = [
     ("R11 8 memb/3 inv", "2026-08-10", 885003, 94.570878, 79.080459, 93.350128, 92.777073, 39.545007, 80.609074),
     ("X2  collaborator", "2026-08-11", 886137, 94.461620, 78.843945, 92.926545, 93.263011, 38.878534, 80.372179),
     ("R12 11 memb/4inv", "2026-08-31", 909571, 94.490331, 79.167748, 93.418065, 91.803630, 39.637266, 80.515842),
+    ("R13 8memb/1inv a60", "2026-08-31", 910641, 94.679785, 77.983720, 93.613336, 93.115432, 39.689258, 80.643823),
 ]
 
 UNSCORED = []   # all eight rounds now have full subscores
 
 # ---------------------------------------------------------------------------------------
-# TRACK 2.  Empty until the first LTTTA submission is scored.  Paste rows in the same shape:
-#     (label, date, submission id, rel, tke, mvpe, time, sps, final)
+# TRACK 2.  Same shape:  (label, date, submission id, rel, tke, mvpe, time, sps, final)
 #
-# The first Track-2 round ships the SAME 8 members as Track 1's round 13, so its four error
+# Round 1 shipped the SAME 8 members, band and ALPHA as Track 1's round 13, so its four error
 # subscores are a direct test of whether the two tracks score the same hidden trajectories.
-# Predicted, recorded 2026-08-31 before submitting: rel 94.47 / tke 79.35 / mvpe 93.41 /
-# sps 39.50 (time unknown -- Track 1's board runs 3-5x local, and local is 1.817 ms/step).
+# ANSWERED 2026-08-31, and the answer is YES for three of the four:
 #
-#   * within ~0.15 on all four  -> shared test set; every Track-1 instrument transfers, and
-#     Track 2 only needs its own board-TIME model fitted;
-#   * rel_l2 off by more than ~0.5 -> different sets; Track 2 needs its own calibration, and
-#     nothing in CLAUDE.md's error tables may be quoted for it.
+#     subscore     T1 R13      T2 R1      diff     rel. diff in the ERROR
+#     rel_l2      94.679785  94.694512   +0.015          -0.28 %
+#     tke         77.983720  77.942224   -0.041          +0.24 %
+#     mvpe        93.613336  93.399401   -0.214          +3.59 %
+#     sps         39.689258  39.730331   +0.041          -0.10 %
 #
-# Track 2's `final_score` combination is separately unpublished. Do not assume it is Track 1's:
-# fit it the same way, from its own rounds, once there are enough of them.
-ROUNDS_T2 = []
+# Three of four agree to <=0.3 % of the error -- far inside anything a different test set
+# could produce, and far outside float32 noise being the explanation for mvpe. So the sets
+# are the same or near-identical, and MVPE, which is read at 4 probe COLUMNS (36 points of
+# 2048), is simply the metric with the smallest effective sample size: it is the first place
+# a small difference in the scored window set shows up.  Working conclusion: **Track-1
+# instruments transfer to Track 2**; treat mvpe as the one number to re-measure per track.
+#
+# Track 2's `final_score` combination is separately unpublished. Do not assume it is Track
+# 1's: with one round it is not identified at all.  (For the record, Track 1's fitted weights
+# applied to T2 R1's subscores give 80.667 against the published 80.653.)
+ROUNDS_T2 = [
+    ("T2R1 8memb/1inv a60", "2026-08-31", 910642, 94.694512, 77.942224, 93.399401, 93.287797, 39.730331, 80.652944),
+]
 
 X = np.array([r[3:8] for r in ROUNDS], float)
 Y = np.array([r[8] for r in ROUNDS], float)
@@ -155,8 +165,10 @@ def main():
     print("\n=== Board latency, inverted from time_score ===")
     print(f"  {'round':<17s} {'inv':>4s} {'local ms':>9s} {'board ms':>9s} "
           f"{'model':>7s} {'miss':>7s}")
+    # local ms are 4060-EQUIVALENT (the A100 runs 1.850x faster; CLAUDE.md round 12).
     known = {"R6": (1, 2.648), "R7": (3, 1.282), "R9": (8, 2.211),
-             "R10": (3, 3.598), "R11": (3, 2.002), "R12": (4, 2.235)}
+             "R10": (3, 3.598), "R11": (3, 2.002), "R12": (4, 2.235),
+             "R13": (1, 1.900)}
     for r in ROUNDS:
         key = r[0].split()[0]
         t = 0.72896 * (100.0 / r[6] - 1.0) ** 2 * 1000.0

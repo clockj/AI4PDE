@@ -17,6 +17,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 ALPHA="${1:-0.90}"
+BETA="${RPDE_BETA:-0.0}"
 PY=/users/PAS1187/qwu/.conda/envs/realpde/bin/python
 U=Track_1/unet
 SUB=../sub_candidates
@@ -63,13 +64,24 @@ echo "=== 1/5  band for ALPHA=$ALPHA ===========================================
 $PY Track_1/submit_fno/fit_band.py --ckpt $A --err-ckpt $M --alpha "$ALPHA" --band-p 0.45 \
     --out Track_2/submit/band8.npz || exit 1
 
-echo "=== 2/5  ALPHA into both submission.py files ============================="
+echo "=== 2/5  ALPHA (both tracks) and BLEND_BETA (Track 1 only) ================"
 sed -i "s/^ALPHA = .*/ALPHA = $ALPHA/" Track_1/submit_fno/submission.py Track_2/submit/submission.py
+# The gated mean-blend lives only in Track 1's predict(): Track 2's step runs inside a captured
+# CUDA graph, where a data-dependent early-out is not expressible. It fires only for windows
+# outside the training speed range, so NOTHING LOCAL EXERCISES IT -- `verify/blend_path.py` is
+# the gate for it and the strict gate below is not.
+sed -i "s/^BLEND_BETA = .*/BLEND_BETA = $BETA/" Track_1/submit_fno/submission.py
 grep -H "^ALPHA = " Track_1/submit_fno/submission.py Track_2/submit/submission.py
+grep -H "^BLEND_BETA = " Track_1/submit_fno/submission.py
 
 echo "=== 3/5  Track 1: build + strict gate ==================================="
 $PY Track_1/submit_fno/validate_strict.py --band Track_2/submit/band8.npz \
     --stage Track_1/submit_fno/_package8 --out Track_1/submit_fno/submission8.zip --ckpt $A
+if [ "$BETA" != "0.0" ]; then
+  echo "--- blend gate (validate_strict cannot see this feature) ---"
+  $PY Track_1/verify/blend_path.py --dir Track_1/submit_fno/_package8 --beta "$BETA" \
+    || { echo "REFUSING: the blend verifier failed"; exit 1; }
+fi
 
 echo "=== 4/5  Track 2: build + strict gate ==================================="
 $PY Track_2/build_t2.py --band Track_2/submit/band8.npz --ckpt $A

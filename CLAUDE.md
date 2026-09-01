@@ -4,8 +4,9 @@ Solution code for the **RealPDE** competition (real-world PDE / sim-to-real flui
 Site: https://realpdecompetition.github.io/ · Data: https://huggingface.co/datasets/AI4Science-WestlakeU/RealPDEBench
 Track 1 (Sim2Real): https://www.codabench.org/competitions/17363/ · Track 2 (LTTTA): https://www.codabench.org/competitions/17385/
 
-> **START HERE: [`ROADMAP.md`](ROADMAP.md).** It carries the full eight-round board record, the
-> refitted subscore weights (which overturn several conclusions still written below), and the
+> **START HERE: [`ROADMAP.md`](ROADMAP.md).** It carries the full nine-round board record, the
+> refitted subscore weights (nine rounds: rel_l2 0.582 · tke 0.097 · mvpe 0.011 · time 0.087 ·
+> sps 0.224, which overturn several conclusions still written below), and the
 > current recommendation. This file is the reference manual; the roadmap is the plan.
 
 This repo (`~/RealPDE/AI4PDE`, remote `github.com/clockj/AI4PDE`) holds **our** code.
@@ -1438,3 +1439,85 @@ Plan and submission strategy: `Track_1/plan/plan_20260831.md`. Track-2 detail:
   model memorizes 74 trajectories; weight decay, dropout and `--aug-scale` (freestream
   rescaling — a first-order Reynolds shift, aimed at the hidden set's unseen Re) were never
   swept. That is the current sweep.
+
+### Round 13 BOARD RESULT (2026-09-01) — 80.643823, and `tke` is worth 0.097
+
+Track 1 (910641): rel 94.679785 / tke 77.983720 / mvpe 93.613336 / time 93.115432 /
+sps 39.689258 → **80.643823**, the best score this account has recorded.
+Track 2 (910642), the **identical** package: 94.694512 / 77.942224 / 93.399401 / 93.287797 /
+39.730331 → **80.652944**. Detail: `Track_1/report/report_20260831_round13.md` §32.
+
+* **THE SUBSCORE WEIGHTS MOVED AGAIN, AND `tke` COLLAPSED.** ALPHA 0.90 → 0.60 is a near-pure
+  `rel_l2` ↔ `tke` trade; the board returned rel **+0.189** / tke **−1.184**, worth +0.019 at
+  the eight-round weights and **+0.128** in fact. Nine-round fit (max residual 0.035):
+  **rel_l2 0.582 · tke 0.097 · mvpe 0.011 · time 0.087 · sps 0.224.**
+  → **`tke` is now the cheapest error subscore**, below `time`, a sixth of `rel_l2`. Round
+  10's +7.71 σ-oracle re-prices to +0.75 `final` *for a model that knows the answer*.
+  **The variance branch is retired.** (It is paid ~1.6× its direct weight because SPS's
+  per-sample factor carries a 0.3 TKE branch — still small.)
+  → A 10 % error cut is worth **+0.948 `final`**, split **sps 52 % / rel_l2 39 % / tke 8 % /
+  mvpe 1 %**. **More than half the return on accuracy arrives through per-element
+  containment**, so attack the error TAIL, not the mean. Leader gap 1.118 ⇒ ~11.8 %.
+* **The prediction was right about the subscores and wrong about the price.** Predicted
+  rel 94.66 (actual 94.680), tke 77.75 (77.984), mvpe 93.41 (93.613), sps 40.01 (39.689);
+  `final` 80.491 against 80.644. Those subscore misses explain **+0.028** of the **+0.153**.
+  The forward model works; the pricing model has now been wrong twice, both times by
+  over-valuing `tke`.
+* **THE TWO TRACKS ARE ONE TEST SET AND ONE SCORING RULE.** Track 1's weights applied to
+  Track 2's subscores give **80.650** vs a published **80.653**. Three of four error subscores
+  agree to **≤0.3 % of the error** (rel −0.29 %, tke +0.24 %, sps −0.10 %); `mvpe` is the
+  outlier at **+3.59 %**, which is what a one-window pool difference looks like in the metric
+  with 36 scored points per window. → **Every Track-1 instrument transfers to Track 2**, and
+  **a day's two slots are one controlled A/B** with the test set, the scoring rule and the
+  eval machine held fixed. With ~26 days to 2026-09-27 the board is a **52-run instrument**.
+  Design slots in pairs.
+* **ALPHA = 0.60, settled.** `alpha_board.py` re-anchored on R13's own board errors at the
+  alpha it actually ran, scored with the nine-round weights, on two independent member
+  families: both peak at 0.60 (R13 twins 80.394; dropout twins 80.380) and the **minimax over
+  the admissible weight family picks 0.60 on both**. Rounds 11–12 shipped 0.90 and each gave
+  away ≈0.075 — chosen under weights that priced `tke` at 0.244. **`fit_band.py --alpha` and
+  `submission.py:ALPHA` must move together**; `build_round13.sh` does both.
+* **THE BAND'S ELEMENT TAIL IS NOW MEASURED, NOT ASSUMED — and 1.39 was right.**
+  `Track_1/calib_band13.py` inverts it from a round where two boards returned two SPS values
+  for one band: **f = 1.360 (T1) and 1.350 (T2)**, agreeing to 0.010. Board rel-L2 is only
+  1.075× the AoA 15-20 proxy while the tail is 1.355×, so **the tail is 1.26× heavier than an
+  rms-matched stretch** — round 7's diagnosis replicates. Refitting the band at the calibrated
+  value is worth **+0.000 sps**; every fit from 1.39 to 1.56 lands within 0.02. SPS's ceiling
+  at board accuracy is `100·a` = **70.63** against 39.69 scored, and the missing 31 points are
+  **coverage, i.e. accuracy** — no band captures them. **The band is closed, fourth time.**
+* **Board latency: an invocation costs ~0.55 ms, not 0.324.** R12 and R13 landed the *same
+  day*, which holds the eval machine fixed: 4 → 1 invocation and 2.235 → 1.900 local ms moved
+  board latency 5.811 → 3.985 ms. Refitting all seven known rounds gives
+  `2.616 + 0.435·inv + 0.803·local` at rms 0.690 ms, with residuals **ordered by date** — the
+  machine drifts, so the intercept is not a constant. At ~4 board ms the time curve is steep:
+  **1 board ms = −0.070 `final`** (was −0.05), so an invocation is **≈0.036 `final`** and
+  R13's 4 → 1 collapse was worth **+0.114**, most of the round's gain.
+* **Round 14 is staged as TWO MECHANISMS AGAINST ONE HYPOTHESIS**, exploiting §1.16: *is the
+  hidden set outside the training Reynolds range?* Both arms are clean A/Bs against a package
+  already on their own board.
+  → **Track 1 = the GATED MEAN-BLEND** (`submission.py:BLEND_BETA`), on R13's members and its
+  **bit-identical band**: replace β = 0.15 of the predicted time-mean with the input window's
+  own **measured** mean, but only for windows whose mean speed leaves the training range
+  [0.0375, 0.2969] m/s. Round 6 closed this idea in distribution and was right there; out of
+  distribution the mean part of the error differs **47 %** between identical-recipe seeds
+  while the fluctuation part differs 4 %, and a measured mean cannot be wrong about an unseen
+  Re. Gated at 4 members (report §33): `rein` **bit-identical**, `relo` **−4.2 %**, `rehi`
+  −1.5 % — the **first arm in this project to survive the §1.15 ensemble test**. **It cannot
+  lose**: an in-range window gets the unblended prediction bit for bit, so the floor is R13's
+  four error subscores and **that null is itself the measurement**. Predicted 80.67, bracket
+  80.644 … 80.84.
+  → **Track 2 = DROPOUT**, 8 all-data members against T2 R1. Its sign **flips** between
+  instruments — in distribution worse (AoA 15-20 held-out twins at matched α: rel +0.66 %,
+  tke +2.62 %, mvpe +1.25 %), out of distribution better (`relo` −10.2 %, `rehi` −2.4 %,
+  lowest Re k-fold band −36 %). Predicted **80.74 (+0.084)**, bracket **−0.096 … +0.807**.
+  → **Reading the 2×2**: both null ⇒ the board is in distribution and the whole robustness
+  line closes; both gain ⇒ it is Re-extrapolation and robustness becomes the main work; blend
+  null but dropout gains ⇒ dropout's benefit is not Reynolds extrapolation at all.
+* **A FEATURE NOTHING LOCAL EXERCISES NEEDS ITS OWN VERIFIER.** Every validation window comes
+  from `train_real`, so the blend's gate never fires locally and `validate_strict.py` scores
+  the package **as if the feature did not exist — and passes**. `Track_1/verify/blend_path.py`
+  caught two real defects on its first run: `TRAIN_SPEED` had been measured over
+  **trajectories** and applied per **window** (windows fluctuate around their trajectory mean,
+  so the gate fired at 0.56 strength on real validation data and the bit-identity claim was
+  false), and then a float32 boundary case at 2.5e-4 — fixed by padding the stored range,
+  not by thresholding the gate.

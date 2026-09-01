@@ -62,7 +62,14 @@ _STD_TGT = np.array([0.09681040793657303, 0.015963643789291382], dtype=np.float6
 _A = (_fno.STD.astype(np.float64) / _STD_TGT).astype(np.float32)
 _B = ((_fno.MEAN.astype(np.float64) - _MEAN_TGT) / _STD_TGT).astype(np.float32)
 
-ALPHA = 0.90
+ALPHA = 0.60
+
+# NOTE: Track 1's gated mean-blend (`submit_fno/submission.py:BLEND_BETA`) is NOT here.
+# This step runs inside a captured CUDA graph, where the blend's data-dependent early-out
+# is not expressible, and nothing local would exercise it either way -- the stream never
+# leaves the training speed range. If it earns its place on the board, port it as an
+# unconditional tensor op inside `_body` (gate * beta is 0 for in-range windows anyway)
+# and extend `validate_t2.py` the way `verify/blend_path.py` extends the Track-1 gate.
 
 
 class FrozenEnsemble:

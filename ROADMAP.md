@@ -1,16 +1,19 @@
 # RealPDE — project roadmap
 
-Written 2026-08-31 after the round-12 board result; **revised the same day** after the
-Track-2 build. This is the handoff document: it records what the leaderboard actually says,
+Written 2026-08-31 after the round-12 board result; revised the same day after the Track-2
+build; **revised again 2026-09-01 after the round-13 board result, which changed the subscore
+weights and turned the two boards into one instrument.** This is the handoff document: it records what the leaderboard actually says,
 what is closed, and what to do next. Read it with `CLAUDE.md` (contracts, measurements,
 per-round detail), `Track_1/board_rounds.py` (every number in Part 1 is reproducible from it)
 and `Track_1/plan/plan_20260831.md` (the current round's plan and recorded predictions).
 
-**One-line state:** Track 1 is saturated at ~80.55 and has not measurably improved since
-2026-08-08. **Track 2 is now built, validated and submittable** — and it turned out to be
-Track 1's model streamed, not a new lever: all three test-time-adaptation families were
-measured and are negative. What Track 2 does buy is an equal prize pool for work already done,
-plus a large `time_score` win from CUDA-graphing the batch-1 step.
+**One-line state:** Track 1 sits at **80.643823** (round 13, its best) and Track 2 enters at
+**80.652944** — and round 13 established that *the two tracks score the same hidden data with
+the same combination rule*, so a day's two slots are **one controlled A/B**, not two unrelated
+submissions. The round also refitted the weights: **`tke` fell to 0.097 and `rel_l2` rose to
+0.582**, which retires the variance-head programme and settles ALPHA at 0.60. Model progress
+is still stalled — the accuracy gap to the leader is ~11.8 % of error and nothing in the
+toolkit delivers it.
 
 **Revision, 2026-08-31 evening.** Two things changed the plan:
 
@@ -40,8 +43,16 @@ X1 and X2 are a collaborator's; no package for them is recorded in this repo.
 | R11 8 memb, 3 inv | 08-10 | 885003 | 94.5709 | 79.0805 | 93.3501 | 92.7771 | 39.5450 | **80.60907** |
 | X2 collaborator | 08-11 | 886137 | 94.4616 | 78.8439 | 92.9265 | 93.2630 | 38.8785 | 80.37218 |
 | R12 11 memb, 4 inv | 08-31 | 909571 | 94.4903 | 79.1677 | 93.4181 | 91.8036 | 39.6373 | 80.51584 |
+| **R13 8 memb, 1 inv, α 0.60** | 08-31 | 910641 | 94.6798 | 77.9837 | 93.6133 | 93.1154 | 39.6893 | **80.64382** |
 
-Best other team, read 2026-08-25: **`np-user` 81.76136.** Our best raw score is R11's 80.60907.
+**Track 2**, first submission — the *identical* package, band and ALPHA as R13:
+
+| round | date | id | rel_l2 | tke | mvpe | time | sps | **final** |
+|---|---|---|---|---|---|---|---|---|
+| T2 R1 8 memb, 1 inv, α 0.60 | 08-31 | 910642 | 94.6945 | 77.9422 | 93.3994 | 93.2878 | 39.7303 | **80.65294** |
+
+Best other team on Track 1, read 2026-08-25: **`np-user` 81.76136.** Our best is R13's
+80.64382.
 
 ### 1.2 Round 12 missed its prediction by −0.191, and the reason is latency
 
@@ -85,45 +96,87 @@ member compared against round 10, the wrong baseline, and is withdrawn.
 both mostly board-timing swing. Rounds 11 and 12 — more members, a second architecture family,
 α 0.90, mode-padded fusion, two more seeds — bought **nothing measurable**.
 
-### 1.4 The subscore weights, refitted — and they overturn the strategy
+### 1.4 The subscore weights, refitted twice — `tke` is now worth 0.097
 
-Eight rounds against five weights with Σw = 1 and no intercept is overdetermined (3 dof) and
-fits to a max residual of **0.025**. Unlike rounds 9–10 this is a *tested* model rather than an
-exact interpolation. (Round 10 rejected the no-intercept form on four points; it holds on eight.)
+**Nine** rounds against five weights with Σw = 1 and no intercept fits to a max residual of
+**0.035**. This is a *tested* model, not an exact interpolation. (Round 10 rejected the
+no-intercept form on four points; it holds on eight and on nine.)
 
-| subscore | fitted | admissible | round-9 claim |
-|---|---|---|---|
-| **rel_l2** | **0.545** | 0.327 – 0.637 | 0.266 |
-| tke | 0.170 | 0.048 – 0.293 | 0.244 |
-| **mvpe** | **0.000** | 0.000 – 0.160 | 0.241 |
-| time | 0.081 | 0.054 – 0.130 | 0.069 |
-| sps | 0.204 | 0.170 – 0.237 | 0.181 |
+| subscore | round-9 claim | eight-round | **nine-round** | admissible (9) |
+|---|---|---|---|---|
+| **rel_l2** | 0.266 | 0.545 | **0.582** | 0.319 – 0.672 |
+| **tke** | 0.244 | 0.170 | **0.097** | 0.015 – 0.191 |
+| **mvpe** | 0.241 | 0.000 | 0.011 | 0.000 – 0.218 |
+| time | 0.069 | 0.081 | 0.087 | 0.040 – 0.160 |
+| sps | 0.181 | 0.204 | **0.224** | 0.191 – 0.247 |
+
+**Round 13 was submitted to measure this and it did.** ALPHA 0.90 → 0.60 is a near-pure
+`rel_l2` ↔ `tke` trade — the family's dominant undetermined axis. The board returned
+**rel +0.189 / tke −1.184**, worth **+0.019** at the eight-round weights and **+0.128** in
+fact. The only fit is `tke` down and `rel_l2` up.
 
 Consequences, all of which invalidate advice still sitting in `CLAUDE.md`'s older sections:
 
-* **`rel_l2` is the most valuable subscore, at ~2× the assumed weight.** Round 10's
+* **`rel_l2` is the most valuable subscore, at >2× the round-9 weight.** Round 10's
   "**stop optimizing rel-L2**, TKE and SPS carry the response" is **FALSIFIED**. It read the
   *curve* correctly (`100/(1+0.5e)` is flat near e ≈ 0.1) and paired it with a weight that was
   off by half.
-* **`mvpe` is worth approximately nothing.** Its 96.75 ceiling, its regressions, and the effort
-  round 2 spent chasing it were all noise. Stop scoring it as a decision variable.
-* Re-pricing round 9's exchange rate: **a 10 % error cut is worth +0.93 `final`**, split
-  **sps 49 % / rel_l2 38 % / tke 14 % / mvpe 0 %**. Closing the 1.25 to the leader needs a
-  **~13 % error reduction** — more than rounds 8–12 delivered *combined*.
+* **`tke` is now the cheapest error subscore, below `time` and a sixth of `rel_l2`.** Rounds
+  10–12 spent three campaigns on the variance branch against a price of 0.244 and then 0.170.
+  Re-priced at 0.097, round 10's **+7.71 σ-oracle is worth +0.75 `final` for a model that
+  knows the answer**, and its realistic first quarter +0.19. **The variance branch is retired.**
+  (One correction to that: TKE is paid *twice*, since SPS's per-sample factor
+  `a_i = 0.5g(rel)+0.3g(tke)+0.2g(mvpe)` carries a 0.3 TKE branch. Board TKE 0.565 → 0.50 is
+  `tke_score` +0.19 **plus** +0.12 through SPS ⇒ ~1.6× the direct weight. Still small.)
+* **`mvpe` is worth approximately nothing** (0.011; ≤0.218 at the family's extreme). Its 96.75
+  ceiling and its regressions are not decision variables.
+* Re-pricing round 9's measured exchange rate a third time: **a 10 % error cut is worth
+  +0.948 `final`**, split **sps 52 % / rel_l2 39 % / tke 8 % / mvpe 1 %**. Closing the 1.118
+  to the leader needs a **~11.8 % error reduction**.
+* **More than half the return on accuracy now arrives through SPS**, which is per-element
+  *containment*, not an rms. Attack the error TAIL, not the mean.
 
-### 1.5 The board-time model is overfit; do not trust it
+**Standing rule (earned three times now): when the weights move, re-decide every
+weight-sensitive choice.** ALPHA was set to 0.90 in round 11 under weights that priced `tke` at
+0.244; at 0.097 the optimum is **0.60**, and the two rounds shipped at 0.90 each gave away
+≈0.075. See §1.16.
 
-`board ms = 4.447 + 0.324·inv + 0.431·local ms` fits its own four fitting rounds to ±0.064 ms
-and misses **R11 by −1.86 ms** and **R12 by −0.90 ms**. R7 and R11 both ran 3 invocations at
-similar local cost and landed **1.5 ms apart**. Observed board latency spans 3.80–8.02 ms.
+### 1.5 The board-time model drifts with the eval machine; an invocation costs ~0.55 ms
+
+The old `4.447 + 0.324·inv + 0.431·local` fits its own four rounds to ±0.064 ms and misses
+**R11 by −1.86**, **R12 by −0.90** and **R13 by −1.61 ms**. Refitting over all seven known
+rounds gives `2.616 + 0.435·inv + 0.803·local` at an rms residual of **0.690 ms**, and the
+residuals are ordered by DATE (Aug 4–6 all positive, Aug 10–31 all negative). The eval machine
+gets faster; the intercept is not a constant.
+
+**The one clean measurement** is R12 and R13, submitted the *same day*, which holds the machine
+fixed: 4 → 1 invocation and 2.235 → 1.900 local ms moved board latency 5.811 → 3.985 ms, i.e.
+**0.52 – 0.56 ms per invocation** — 60–70 % above the old slope.
+
+At ~4 board ms the `100/(1+√(t/0.72896))` curve is steep: **1 board ms = −0.070 `final`**
+(was −0.05), so **an invocation costs ≈0.036 `final`**. R13's 4 → 1 collapse was worth
+**+0.114**, most of the round's measured gain.
 
 **Budget for invocation count; do not predict `time_score` to better than ±1 point.**
 
-### 1.6 `predict_board.py` is 1-for-2
+### 1.6 `predict_board.py` predicts SUBSCORES well and `final` badly
 
-Round 11: predicted 80.603, actual 80.60907 (+0.006). Round 12: predicted 80.707, actual
-80.51584 (−0.191). One good call and one bad. Keep predicting before submitting — it is the
-only way any of this stays falsifiable — but do not treat its output as a number you can spend.
+| round | predicted | actual | miss |
+|---|---|---|---|
+| R11 | 80.603 | 80.60907 | +0.006 |
+| R12 | 80.707 | 80.51584 | −0.191 |
+| R13 | 80.491 | 80.64382 | +0.153 |
+
+**Round 13 separates the two error sources for the first time, and they are not the same
+thing.** Its *subscores* were predicted to rel_l2 **0.02**, tke 0.23, mvpe 0.20, sps 0.32 —
+the error projection through `proxy_calib.py`'s inflation ratios worked. Priced at the weights
+in force, those misses account for **+0.028** of a **+0.153** `final` miss. **The rest was the
+weights.**
+
+So: the *forward* model (local errors → board subscores) is in decent shape; the *pricing*
+model is what has been wrong, twice, and each time in the direction of over-valuing `tke`.
+Keep predicting before submitting — it is the only thing keeping this falsifiable — and quote
+the predicted **subscores**, which are testable, alongside the `final`, which is a fit.
 
 The whole round-12 miss was one subscore: `tke` predicted 79.869, actual 79.168. Its fixed
 board/proxy ratio (1.117) was anchored on a single round. `Track_1/proxy_calib.py` reconstructs
@@ -353,6 +406,77 @@ Net: wash single-model, **−0.50 `wfinal` ensembled**, decisively worse in dist
 **Do not ship it**, and do not run the field/σ hybrid either — priced at ~+0.05 after §7.3's
 dilution against a certain −0.04.
 
+### 1.16 THE TWO TRACKS ARE ONE TEST SET AND ONE SCORING RULE — a slot is TWO experiments
+
+Round 13 shipped the **identical** 8 members, band and ALPHA to both boards specifically to
+find this out.
+
+| subscore | T1 R13 | T2 R1 | diff | relative diff **in the error** |
+|---|---|---|---|---|
+| rel_l2 | 94.679785 | 94.694512 | +0.015 | **−0.29 %** |
+| tke | 77.983720 | 77.942224 | −0.041 | **+0.24 %** |
+| mvpe | 93.613336 | 93.399401 | −0.214 | **+3.59 %** |
+| sps | 39.689258 | 39.730331 | +0.041 | **−0.10 %** |
+| final | 80.643823 | 80.652944 | +0.009 | — |
+
+1. **Same combination rule.** Track 1's nine-round weights applied to Track 2's subscores give
+   **80.650** against a published **80.653** — a 0.003 residual, inside the fit's own 0.035.
+   Track 2's `final_score` needs no separate calibration.
+2. **Same (or near-identical) scored data.** Three of four error subscores agree to ≤0.3 % *of
+   the error* — far too close for independently drawn test sets, and far too far for float32
+   noise (`Track_2/verify_space.py` bounds the two code paths at 4e-6 physical, ~3e-5
+   relative). Most likely one hidden set over slightly different window pools (a tail-padding
+   or first-window difference of order one window per trajectory). `mvpe`'s **+3.59 %** is the
+   exception and is what that looks like in the metric with the smallest effective sample size
+   — 36 probe points per window, aggregated as a global ratio rather than a per-window mean.
+
+**Every Track-1 instrument therefore transfers to Track 2** — the AoA proxy, the band, the
+inflation ratios, the weights — carrying a small fixed per-track offset, of which only `mvpe`'s
+is large, and `mvpe` is worth 0.011.
+
+**The strategic consequence is the round's most useful output.** One submission per track per
+day, two tracks scoring the same data with the same rule, and four error subscores that are
+deterministic (§1.7) ⇒ **a day's pair is a controlled A/B with the test set, the scoring rule
+and the eval machine all held fixed.** With ~26 days to 2026-09-27 the board is a **52-run
+instrument, not a 26-run one.** Design slots in pairs.
+
+*Caveat, and the next slot removes it:* the per-track offsets are measured from **one** model.
+Whether they are a fixed property of the two window pools or vary with the model is untested —
+so the round-14 pair also ships one model to both tracks, which turns the offsets into a
+calibrated instrument at zero cost.
+
+### 1.17 ALPHA is 0.60, and the SPS band is closed for the fourth time — against a MEASURED tail
+
+Both settled by round 13's board result, both now anchored on data rather than assumption.
+
+**ALPHA = 0.60.** `alpha_board.py` re-anchored on R13's *own* board errors at the alpha it
+actually ran (rel 0.112383 / tke 0.564638 / mvpe 0.136448), scored with the nine-round weights:
+
+| alpha | 0.00 | 0.30 | 0.45 | **0.60** | 0.75 | 0.90 |
+|---|---|---|---|---|---|---|
+| `final`, R13 twins | 80.106 | 80.308 | 80.367 | **80.394** | 80.384 | 80.319 |
+| `final`, dropout twins | 80.045 | 80.268 | 80.337 | **80.380** | 80.388 | 80.345 |
+
+Both families peak at 0.60 and the **minimax over the admissible weight family picks 0.60 on
+both** — no other alpha has a positive worst case. (`mvpe` is constant to five decimals down
+the column, the sanity check that composition only touches the fluctuation.) Rounds 11 and 12
+shipped 0.90 and each gave away ≈0.075: it was chosen under weights pricing `tke` at 0.244.
+
+**The band's inflation factor is 1.39 and that is exactly right.** The per-element error
+stretch `f` — how much more often the board's elements miss their interval than the AoA 15-20
+proxy's — was measured once, in round 7, on a 3-seed package at ALPHA 0.75 with a flat `.npy`
+band, and used ever since. `Track_1/calib_band13.py` re-inverts it from round 13, where **two
+boards returned two SPS values for one band**:
+
+* **T1 ⇒ f = 1.360, T2 ⇒ f = 1.350.** They agree to 0.010. The tail is a property of the
+  scoring, not of a draw.
+* Board rel-L2 is only **1.075×** the proxy's while the element tail is **1.355×** ⇒ the tail
+  is **1.26× heavier** than an rms-matched stretch. The round-7 diagnosis replicates exactly.
+* Refitting the band at the calibrated stretch is worth **+0.000 sps**. Every fit between 1.39
+  and 1.56 lands within 0.02. **The band is at its optimum; stop.**
+* SPS's ceiling at board accuracy is `100·a = 70.63` and we score 39.69. The remaining 31
+  points are **coverage**, i.e. accuracy — there is no band that captures them.
+
 ## Part 2 — Closed. Do not re-propose without new evidence.
 
 Everything here was closed by measurement, with the file that measured it. The list exists so a
@@ -462,24 +586,43 @@ against a 10-minute limit.
 
 Track 2 needs no further research. It needs submissions.
 
-### P1 — Round 13: the SAME package on both tracks, at ALPHA 0.60 as a deliberate probe
+### P1 — DONE. Round 13 answered both of its questions. Round 14 is staged.
 
-Two questions in one slot.
+Round 13 shipped the same package to both tracks at ALPHA 0.60 to buy two answers, and got
+them: **the tracks share a test set and a scoring rule** (§1.16) and **`tke` is worth 0.097,
+not 0.170** (§1.4). It also became the best Track-1 score to date, 80.643823. The variance
+branch is retired, ALPHA is settled at 0.60 (§1.17), and the band is closed against a measured
+tail rather than an assumed one.
 
-**Whether the two tracks score the same hidden trajectories** is unknown and is the cheapest
-high-value thing left to learn: if they do, every Track-1 instrument (the 1.39× error
-inflation, the band, the AoA proxy, the weight fit) transfers to Track 2 for nothing. One
-identical model on both boards answers it.
+**Round 14, staged in `../sub_candidates/`: two mechanisms, one hypothesis, one slot.**
 
-**And α is the best instrument the board offers.** Re-swept under the eight-round weights
-(§1.4), **0.75 and 0.90 are tied** (+0.004 against a family width of ±0.10) — so round 11's
-adoption of 0.90 was a coin-flip mispriced by the round-9 weights, and α is not a lever. But it
-moves along the family's dominant undetermined axis (§1.10), so shipping **α = 0.60** costs
-**−0.065 `final`** — *below the board's own `time_score` noise of ±0.07* — and resolves **0.637
-of the 1.172** open ambiguity, against 0.026 for the staged package. The cross-track test is
-unaffected: it needs both tracks to ship the *same* model, not a particular α.
+| | package | vs | what it isolates |
+|---|---|---|---|
+| **Track 1** | R13's members and **bit-identical band**, ALPHA 0.60, **+ the gated mean-blend** (β 0.15) | T1 R13 | inference-side robustness, zero training |
+| **Track 2** | 8 all-data **dropout** members, 1 invocation, ALPHA 0.60 | T2 R1 | training-side robustness |
 
-Archives in `../sub_candidates/`, predictions recorded there before upload.
+**The hypothesis is about the TEST SET, not about either arm: is the hidden set outside the
+training Reynolds range?** That is the biggest open question about the board and it decides
+where the remaining month goes. Both arms are aimed at it and they fail differently, so the
+2×2 is readable:
+
+| Track 1 blend | Track 2 dropout | conclusion |
+|---|---|---|
+| null | ≈0 or negative | **The board is in distribution.** Close the robustness line; spend the month on in-distribution accuracy. |
+| gains | gains | **The board is Re-extrapolation.** Robustness is the main line; ship both together. |
+| null | gains | Dropout's benefit is **not** Reynolds extrapolation. Surprising, and worth chasing. |
+| gains | negative | The mean field is the reachable part; training-side regularization is the wrong tool. |
+
+**The Track-1 arm cannot lose.** A window inside the training speed range gets the unblended
+prediction *bit for bit* (`verify/blend_path.py` check A), so the package's floor is R13's four
+error subscores exactly — **and that null is itself the measurement.** Predicted 80.67, bracket
+**80.644 … 80.84**.
+
+**The Track-2 arm can.** Dropout's sign flips between instruments: in distribution it is worse
+(held-out AoA 15–20 twins at matched α: rel **+0.66 %**, tke +2.62 %, mvpe +1.25 %), out of it
+better (`relo` −10.2 %, `rehi` −2.4 %, lowest Re k-fold band −36 %). Predicted **80.74
+(+0.084)**, bracket **−0.096 … +0.807**; the downside is smaller than the board's own
+`time_score` noise.
 
 ### P2 — Regularization: measured, small, and uniform. The family is done.
 
@@ -513,11 +656,35 @@ wrong thing.
 
 Two independent corrections landed on the same square this round.
 
-* **The oracle split re-priced** (`report_20260831_round13.md` §3): σ +5.96, time-mean +1.61,
-  **shape +2.96**. `shape` moves from last to second, above the time-mean, and it is the only
-  piece that moves `rel_l2` (0.1086 → 0.0694, −36 %) — the subscore worth 0.545. Round 10's
-  "the hardest part of the problem is worth the least" was a correct reading of a flat
-  `100/(1+0.5e)` curve paired with a weight that was off by half.
+* **The oracle split, re-priced a THIRD time** — at the nine-round weights, ALPHA 0.60 and the
+  measured element tail 1.355 (`oracle_split_v9.py`, R13 twins, AoA 15–20):
+
+  | piece replaced by the target's | round-9 wts | eight-round | **nine-round** |
+  |---|---|---|---|
+  | σ (per-pixel fluctuation amplitude) | +7.71 | +5.96 | **+4.25** |
+  | **shape** (phase-resolved fluctuation) | +1.95 | +2.96 | **+2.62** |
+  | time-mean | +2.72 | +1.61 | **+1.86** |
+  | everything | — | +21.04 | +20.35 |
+
+  The **ordering σ > shape > mean is stable** across the last two weight vectors; only the
+  round-9 vector ranked the time-mean above shape. What changed is the *mechanism*:
+
+  | piece | rel_l2 | tke | mvpe | **sps** |
+  |---|---|---|---|---|
+  | σ | −2 % | 57 % | 0 | **45 %** |
+  | shape | 44 % | 0 | 0 | **56 %** |
+  | time-mean | 35 % | 0 | 3 % | **62 %** |
+
+  **Between 45 % and 62 % of every oracle now arrives through SPS**, because SPS scores
+  per-element containment and every component reduction shrinks per-element error. `tke` and
+  `mvpe` together are worth almost nothing directly; they are worth something only through the
+  error they carry into the interval test.
+
+  So: σ is still the largest oracle, but **it is the one with five null arms behind it** —
+  rounds 10 (five arms, +0.08 realized against +7.71), 11 (three readouts and two loss weights,
+  all null, `lam_v` U-shaped with its minimum at the shipped 0.3) and 12 (FGN/CRPS failed its
+  pre-registered screen). Its remaining value is also now half SPS, which is reachable only by
+  reducing error, not by predicting amplitude better. **`shape` is the open one.**
 * **The ceiling that closed it was a category error** (§4 of the same report).
   `diag_spectral.py`'s Γ² = 0.308 is computed from **our prediction**, so it is what a round-3
   U-Net achieved, not what is achievable — a perfect predictor scores 1 on the same instrument.
@@ -578,32 +745,34 @@ only ever been swept UP, on the strength of the ceiling that turned out not to e
 **`--lam-tgrad`** (match the target's temporal derivative — a fluctuation-shape loss, and the
 temporal analogue of `--lam-grad`, the only auxiliary loss that has ever worked here).
 
-### P3b — Out of distribution the TIME-MEAN is the failure, and it is reachable without training
+### P3b — DONE and SHIPPING. The gated mean-blend passed the ensemble gate.
 
-`report_20260831_round13.md` §7. Decomposing §1.12's two identical-recipe controls: on `relo`
-the **mean part** differs by 47 % between seeds (0.0764 vs 0.1126) while the **fluctuation
-part** differs by 4 % — and the worse-mean seed is the *better* one there. In distribution both
-agree to three decimals. **Out of distribution the fluctuation transfers and the mean field
-does not.**
+`report_20260831_round13.md` §7 and §33. Out of distribution the fluctuation transfers and the
+mean field does not — decomposing two identical-recipe controls, the **mean part** of the error
+differs by **47 %** between seeds on `relo` while the **fluctuation part** differs by 4 %. So
+round 6's "blending the predicted time-mean toward the input window's mean makes MVPE
+monotonically worse" was measured in the only regime where it is true. The input window's mean
+is a **measurement**; it cannot be wrong about a Reynolds number it has never seen.
 
-That reopens round 6's closed "blend the predicted time-mean toward the input window's mean":
-the input window's mean is a **measurement**, so it cannot be wrong about the Reynolds number
-the way a learned mean can. Round 6's null reproduces exactly on the interior control, and the
-sign **flips** on both extrapolation sets. Gating β on how far the window's **own mean speed**
-falls outside the training range makes it **free in distribution** — `rein` unchanged to four
-decimals at every β — while gaining *more* out of it (ctrl2 `relo` −11.5 %). Safe by
-construction: an in-range window gets exactly the current prediction, bit for bit.
+**Gate (a), at 4 members** — the gate that killed the oscillatory head:
 
-**The dilution, stated up front** (§7.3): over all 82 trajectories the range is
-0.0394–0.2921 m/s and Re 2968 sits only **2.7 %** outside it, against `relo`'s 12.0 %. The gate
-fires at ≈ 0.18 where the experiment fired it at ≈ 0.8. Real, bounded below by zero, smaller
-than §7.2 reads in isolation.
+| set | rel-L2 at β_eff ≈ 0.15 | mean part |
+|---|---|---|
+| `rein` | **0.0698 → 0.0698, unchanged at every β and every ramp** | 0.0366 |
+| `relo` | 0.1080 → **0.1035** (−4.2 %) | 0.0785 → 0.0727 |
+| `rehi` | 0.1137 → **0.1120** (−1.5 %) | 0.0638 → 0.0611 |
 
-**Gates before shipping, in this order.** (a) Does it survive ensembling? An ensemble already
-averages the mean-field variance down, so the single-model gain is an upper bound — `re_var`
-runs the gated sweep on 4 members. (b) Only then, calibrate the ramp width against `relo`'s two
-distances (Re 3750 at 12.0 % outside, Re 5025 at 5.1 %). Doing (b) first would fit a constant
-to a gain that may not exist.
+Single-model was −11.5 % on `relo`, so it dilutes and does not vanish: **the first arm in this
+project to pass the §1.15 shared-versus-independent test.** **Gate (b) is a non-question** — the
+optimum lies entirely in the *product* β × gate-strength, flat over β_eff 0.14–0.20, so the ramp
+width is not an independent lever.
+
+Shipped on Track 1 in round 14 at β 0.15, ramp 0.02, range (0.037523, 0.296857) measured over
+the 3547 training **windows**. §33.1 records the calibration bug `verify/blend_path.py` caught
+(the range had been measured over *trajectories* and applied per *window*, which fired the gate
+at 0.56 strength on real validation data and falsified the whole bit-identity safety claim) —
+and the general lesson: **a feature that nothing local exercises needs its own verifier, because
+the strict gate will score the package as if the feature were absent and pass.**
 
 **A spin-off that does NOT work, recorded so it is not proposed again.** `kfold.py`'s five
 models are a genuine bagged ensemble, so their disagreement would be real epistemic uncertainty
@@ -612,8 +781,7 @@ at only 0.347 correlation with |error| against σ's 0.551. But **with K folds ea
 excluded by exactly ONE model**, so there is no out-of-fold spread to measure: the quantity
 needs several models that all held that window out. Bootstrap bagging gives ~37 % out-of-bag
 per model, so a usable spread (≥ 4 estimates per window) needs **~10 models, ≈ 3 GPU-hours** —
-and the band is measured closed three ways (`band_cv_v9.py`: pooling the fitting split buys
-0.000). Not worth it unless something reopens the band.
+and the band is measured closed four ways now (§1.17). Not worth it unless something reopens it.
 
 ### P4 — The Re-extrapolation split, built
 

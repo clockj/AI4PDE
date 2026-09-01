@@ -4,23 +4,31 @@ v9 does not publish the combination.  Rounds 9 and 10 inferred it from three and
 rounds respectively, where a five-weight linear model fits ANY three points exactly and the
 "fit" carried no evidence.  **This version uses all eight scored rounds.**  Eight equations
 against five weights with sum(w) = 1 leaves 3 degrees of freedom, so for the first time the
-no-intercept linear form is TESTED rather than assumed -- and it survives, to a max residual
-of 0.025 against subscores quoted to six decimals.
+no-intercept linear form is TESTED rather than assumed -- and it survives.  **Round 13 makes
+nine**, at a max residual of 0.035 against subscores quoted to six decimals.
 
     from final_v9 import predict
     mid, lo, hi = predict([rel, tke, mvpe, time, sps])
 
-What changed against the round-9 weights, and it matters:
+What changed, and it matters:
 
-    subscore   round-9 claim    eight-round fit   admissible
-    rel_l2         0.266            0.545         0.327 - 0.637
-    tke            0.244            0.170         0.048 - 0.293
-    mvpe           0.241            0.000         0.000 - 0.160
-    time           0.069            0.081         0.054 - 0.130
-    sps            0.181            0.204         0.170 - 0.237
+    subscore   round-9 claim   eight-round   NINE-round   admissible (9)
+    rel_l2         0.266          0.545        0.582       0.319 - 0.672
+    tke            0.244          0.170        0.097       0.015 - 0.191
+    mvpe           0.241          0.000        0.011       0.000 - 0.218
+    time           0.069          0.081        0.087       0.040 - 0.160
+    sps            0.181          0.204        0.224       0.191 - 0.247
 
-`rel_l2` is worth about twice what round 9 priced it at, and `mvpe` is worth approximately
+`rel_l2` is worth more than twice what round 9 priced it at, and `mvpe` is worth approximately
 nothing.  Round 10's "stop optimizing rel-L2" followed from the old weights and is withdrawn.
+
+Round 13 was submitted FOR this: ALPHA 0.90 -> 0.60 is a near-pure `rel_l2` <-> `tke` trade,
+which is the family's dominant undetermined axis.  It moved the board +0.128 where the
+eight-round weights predicted +0.019, and the only way to fit that is `tke` DOWN (0.170 ->
+0.097) and `rel_l2` UP (0.545 -> 0.582).  **`tke` is now the second-cheapest subscore on the
+board**, below `time`+`sps` and an order of magnitude below `rel_l2` -- so the composition
+(ALPHA) and the variance head, which trade exactly along this axis, are worth re-deciding:
+see `Track_1/alpha_board.py`.
 
 **Still a fit, not a law.**  Report the range, not the midpoint alone, and work in DELTAS
 between rounds wherever possible -- a delta is insensitive to everything the level fit gets
@@ -42,6 +50,7 @@ BOARD = np.array([
     [94.570878, 79.080459, 93.350128, 92.777073, 39.545007, 80.609074],   # R11 8 memb
     [94.461620, 78.843945, 92.926545, 93.263011, 38.878534, 80.372179],   # X2  collaborator
     [94.490331, 79.167748, 93.418065, 91.803630, 39.637266, 80.515842],   # R12 11 memb
+    [94.679785, 77.983720, 93.613336, 93.115432, 39.689258, 80.643823],   # R13 8 memb a=0.60
 ])
 
 _X, _Y = BOARD[:, :5], BOARD[:, 5]
@@ -49,7 +58,7 @@ NAMES = ["rel_l2", "tke", "mvpe", "time", "sps"]
 
 # The subscore matrix is atrociously conditioned -- every column sits in [36, 95] and moves by
 # ~1 across eight rounds -- so this needs a real solver, not a hand-rolled projected gradient
-# (which lands on max|residual| 0.072 against nnls's 0.025 and gets the weights wrong by a
+# (which lands on max|residual| 0.072 against nnls's 0.035 and gets the weights wrong by a
 # factor of two).  scipy is in the `realpde` env; it is absent only from the SUBMISSION
 # container, and nothing shipped imports this module.
 from scipy.optimize import linprog, nnls  # noqa: E402

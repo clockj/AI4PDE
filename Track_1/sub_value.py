@@ -12,7 +12,7 @@ SECOND, so a slot can be spent deliberately.
 
 The measure.  For a candidate package with predicted subscores `x`, every `w` in the admissible
 family predicts a different `final = w . x`.  The width of `[min_w w.x, max_w w.x]` is exactly
-how much the eight rounds FAIL to pin that package down -- so it is what the observation
+how much the nine rounds FAIL to pin that package down -- so it is what the observation
 resolves.  A package whose predicted range is narrow tells us nothing we did not already know,
 however good its score.  `final_v9.predict` already returns that interval; here it becomes a
 design criterion instead of an error bar.
@@ -77,7 +77,7 @@ def span(v, X, Y, tol):
 
 # ------------------------------------------------------------------ what we cannot decide
 # Each entry is a subscore DELTA -- the measured or extrapolated move a change makes -- whose
-# VALUE the eight rounds do not determine.  Sources are cited; nothing here is invented.
+# VALUE the nine rounds do not determine.  Sources are cited; nothing here is invented.
 PENDING = [
     # plan_20260831.md 3c, from round 11's own measured alpha trade extrapolated to 0.60.
     ("ALPHA 0.90 -> 0.60", np.array([+0.28, -1.48, 0.0, 0.0, +0.60])),
@@ -95,22 +95,31 @@ PENDING = [
 # ------------------------------------------------------------------ candidate submissions
 # Predicted subscores.  Anything not measured is marked in `note` and should be treated as
 # soft; `--jitter` shows whether the ranking survives the softest column.
+# Round 13's own board row is the anchor for everything below: 8 members, 1 invocation,
+# ALPHA 0.60.  Its deltas come from measurements, not guesses -- the ALPHA trade is now the
+# BOARD's (R13 - R12, with the member change removed), and dropout's is the held-out twin
+# comparison at matched alpha.
+R13 = np.array([94.679785, 77.983720, 93.613336, 93.115432, 39.689258])
 CANDIDATES = [
-    ("R13  8 memb / 1 inv",
-     np.array([94.47, 79.35, 93.41, 92.59, 39.50]),
-     "staged; predicts +0.06 over R12 mostly from the 1-invocation time draw"),
-    ("R13 + ALPHA 0.60",
-     np.array([94.47 + 0.28, 79.35 - 1.48, 93.41, 92.59, 39.50 + 0.60]),
-     "same package, one constant changed; free to build, sign of value unknown"),
-    ("R13 + ALPHA 1.10",
-     np.array([94.47 - 0.19, 79.35 + 0.99, 93.41, 92.59, 39.50 - 0.40]),
-     "the other direction, extrapolated on the same measured trade"),
-    ("R12 11 memb / 4 inv (resubmit)",
-     X8[7],
-     "known package; buys only a second time draw -- listed as the null candidate"),
-    ("single member, 1 inv",
-     np.array([94.30, 78.60, 93.20, 93.60, 38.20]),
-     "SOFT: ensemble ablation, scaled from the R7->R9 member curve; large, cheap, off-axis"),
+    ("R14 dropout, in-distribution",
+     R13 + np.array([-0.033, -0.447, -0.074, 0.0, -0.147]),
+     "STAGED. what round 14 scores if the board has no low-Re content"),
+    ("R14 dropout, 20% low-Re",
+     R13 + np.array([+0.076, -0.358, -0.035, 0.0, +0.336]),
+     "STAGED. central prediction; where the two-component mixture fits put the board"),
+    ("R14 dropout, Re-extrapolation",
+     R13 + np.array([+0.517, 0.000, +0.120, 0.0, +2.264]),
+     "STAGED. what it scores if the board is dominated by unseen Reynolds numbers"),
+    ("R13 + ALPHA 0.90 (revert)",
+     R13 + np.array([-0.19, +1.60, 0.00, 0.0, -0.51]),
+     "the measured alpha trade run backwards; settled at -0.075, listed for reference"),
+    ("mvpe probe: blend the time-mean 15% toward the input window's",
+     R13 + np.array([-0.10, 0.00, -1.60, 0.0, -0.20]),
+     "moves the family's DOMINANT open axis (rel_l2 +1.00 / mvpe -0.68); round 6 measured "
+     "the blend curve, so the deltas are interpolated, not invented"),
+    ("R13 resubmit unchanged",
+     R13,
+     "the null candidate; buys only a second time draw"),
 ]
 
 
@@ -146,7 +155,7 @@ def run(jitter=0.0, seed=0, without=None):
               f"{len(PENDING)} decisions left\n")
     tol = tol_for(X8, Y8)
     w0, resid = fit(X8, Y8)
-    print(f"eight rounds, max |residual| {np.abs(resid).max():.4f}, tol {tol:.4f}")
+    print(f"nine rounds, max |residual| {np.abs(resid).max():.4f}, tol {tol:.4f}")
     print("fit  " + "  ".join(f"{n} {v:.3f}" for n, v in zip(NAMES, w0)))
 
     print("\n=== decisions currently blocked by weight ambiguity ===")
@@ -172,7 +181,7 @@ def run(jitter=0.0, seed=0, without=None):
         rows.append((label, mid, width, base_total - left, left, worst, note))
     for label, mid, width, res, left, worst, note in sorted(rows, key=lambda r: -r[3]):
         print(f"{label:32s} {mid:10.3f} {width:7.3f} {res:9.3f} {left:7.3f} {worst:7.3f}")
-    print("\n  `range`    how much the eight rounds fail to pin this package's final = raw info")
+    print("\n  `range`    how much the nine rounds fail to pin this package's final = raw info")
     print("  `resolves` total decision-ambiguity removed, averaged over admissible outcomes")
     print("  `worst`    ambiguity left in the worst outcome -- a probe that can fail to settle")
     print("\nnotes:")
@@ -183,7 +192,7 @@ def run(jitter=0.0, seed=0, without=None):
 
 # ------------------------------------------------------------ what a probe SHOULD move
 def undetermined_axes(X, Y, tol, n_dirs=400, seed=0):
-    """The subscore trades the eight rounds price least confidently.
+    """The subscore trades the nine rounds price least confidently.
 
     Informativeness of a candidate is the width of the admissible family's support in the
     direction of its subscore vector.  So the most informative packages to BUILD are the ones

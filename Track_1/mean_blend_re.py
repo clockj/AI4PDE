@@ -98,6 +98,13 @@ def main() -> None:
     ap.add_argument("--exclude", nargs="+", default=None,
                     help="the trajectories held out of training, to define that range. "
                          "Defaults to re_split.py's 26.")
+    ap.add_argument("--ref", type=float, nargs="+", default=[0.15],
+                    help="gate ramp width, as a fraction of the training speed range: the "
+                         "blend reaches full beta at `ref` outside it. NEVER calibrated -- "
+                         "0.15 was a guess, and it is what decides how much of the measured "
+                         "gain a DEPLOYED package sees, since an all-data model's speed range "
+                         "is wide enough that the hidden set's lowest Re sits only ~2.7% "
+                         "outside it (report_20260831_round13.md 7.3).")
     ap.add_argument("--ens", action="store_true",
                     help="score every --ckpt as ONE ensemble. This is the deciding "
                          "measurement: the blend works by reducing the variance of the "
@@ -130,15 +137,23 @@ def main() -> None:
             X, Y = d["x"], d["y"]
             P0 = infer(m, X, dev, a.alpha)
             nrm = np.sqrt((Y[..., :2].astype(np.float64) ** 2).sum((1, 2, 3, 4)))
-            for b in a.betas:
-                P = blend(P0, X, b * gate(X, *rng_) if a.gate else b)
-                dd = (P[..., :2] - Y[..., :2]).astype(np.float64)
-                dm = dd.mean(1)
-                mean_p = float((np.sqrt(20 * (dm ** 2).sum((1, 2, 3))) / nrm).mean())
-                rel = float(np.mean(sc.rel_l2_per_sample(P, Y, 2)))
-                fluc = float(np.sqrt(max(rel ** 2 - mean_p ** 2, 0.0)))
-                print(f"{st if b == a.betas[0] else '':6s} {b:5.2f} {rel:8.4f} {mean_p:10.4f} "
-                      f"{fluc:10.4f} {sc.mvpe_rel_l2(P, Y):8.4f}")
+            first = True
+            for rf in (a.ref if a.gate else [0.0]):
+                g = gate(X, *rng_, ref=rf) if a.gate else None
+                if a.gate:
+                    print(f"{'':6s} ref={rf:.3f}  gate fires on "
+                          f"{float((g > 0).mean())*100:5.1f}% of windows, mean strength "
+                          f"{float(g.mean()):.3f}")
+                for b in a.betas:
+                    P = blend(P0, X, b * g if a.gate else b)
+                    dd = (P[..., :2] - Y[..., :2]).astype(np.float64)
+                    dm = dd.mean(1)
+                    mean_p = float((np.sqrt(20 * (dm ** 2).sum((1, 2, 3))) / nrm).mean())
+                    rel = float(np.mean(sc.rel_l2_per_sample(P, Y, 2)))
+                    fluc = float(np.sqrt(max(rel ** 2 - mean_p ** 2, 0.0)))
+                    print(f"{st if first else '':6s} {b:5.2f} {rel:8.4f} {mean_p:10.4f} "
+                          f"{fluc:10.4f} {sc.mvpe_rel_l2(P, Y):8.4f}")
+                    first = False
         del m
 
 

@@ -1865,3 +1865,253 @@ to keep it and stop measuring it, not a reason to skip it.
    reading.
 2. **A per-band or per-split pool can hide the whole effect.** Dropout's −18.4 % was one band;
    its in-distribution sign flips between two local splits.
+
+---
+
+## 32. ROUND 13 BOARD RESULT (2026-09-01) — the probe worked, and `tke` is now worth 0.097
+
+Both archives were uploaded 2026-08-31 23:50 and are scored. **They shipped the identical
+model, band and ALPHA to the two tracks**, which was the second question the slot was bought to
+answer.
+
+| | id | rel_l2 | tke | mvpe | time | sps | **final** |
+|---|---|---|---|---|---|---|---|
+| **Track 1, R13** | 910641 | 94.679785 | 77.983720 | 93.613336 | 93.115432 | 39.689258 | **80.643823** |
+| **Track 2, R1** | 910642 | 94.694512 | 77.942224 | 93.399401 | 93.287797 | 39.730331 | **80.652944** |
+
+**80.643823 is the best Track-1 score this account has recorded** (previous best R11's
+80.60907), and Track 2 enters at 80.652944.
+
+### 32.1 The prediction, graded
+
+Recorded in `sub_candidates/README.md` before uploading:
+
+| subscore | predicted | actual | miss |
+|---|---|---|---|
+| rel_l2 | 94.66 | 94.680 | **+0.020** |
+| tke | 77.75 | 77.984 | +0.234 |
+| mvpe | 93.41 | 93.613 | +0.203 |
+| time | 92.59 | 93.115 | +0.525 |
+| sps | 40.01 | 39.689 | −0.321 |
+| **final** | **80.491** | **80.644** | **+0.153** |
+
+The *subscores* were predicted well — rel_l2 to 0.02, and the whole four-metric error
+projection through `proxy_calib.py`'s inflation ratios held. Priced at the eight-round weights
+those misses account for only **+0.028** of the **+0.153** `final` miss. **The rest was the
+weights, which is exactly what the probe was bought to measure.**
+
+### 32.2 The refit: `tke` falls to 0.097, `rel_l2` rises to 0.582
+
+Nine rounds against five weights with Σw = 1 (six degrees of freedom now). Max |residual|
+**0.0347**, up from 0.025 on eight — the linear no-intercept form still holds.
+
+| subscore | round-9 claim | eight-round | **nine-round** | admissible (9) |
+|---|---|---|---|---|
+| rel_l2 | 0.266 | 0.545 | **0.582** | 0.319 – 0.672 |
+| tke | 0.244 | 0.170 | **0.097** | 0.015 – 0.191 |
+| mvpe | 0.241 | 0.000 | 0.011 | 0.000 – 0.218 |
+| time | 0.069 | 0.081 | 0.087 | 0.040 – 0.160 |
+| sps | 0.181 | 0.204 | **0.224** | 0.191 – 0.247 |
+
+Why the probe identified it. ALPHA 0.90 → 0.60 is a near-pure `rel_l2` ↔ `tke` trade, and R13
+vs R12 came back **rel +0.189 / tke −1.184**. Priced at the eight-round weights that is
+**+0.019**; the board paid **+0.128**. The only way to fit it is `tke` down and `rel_l2` up:
+
+| subscore | Δ (R13−R12) | × w₈ | × w₉ |
+|---|---|---|---|
+| rel_l2 | +0.189 | +0.103 | +0.110 |
+| tke | −1.184 | **−0.201** | **−0.114** |
+| mvpe | +0.195 | +0.000 | +0.002 |
+| time | +1.312 | +0.106 | +0.114 |
+| sps | +0.052 | +0.011 | +0.012 |
+| **total** | | **+0.019** | **+0.124** (actual **+0.128**) |
+
+**`tke` is now the cheapest error subscore on the board — an order of magnitude below
+`rel_l2`, and below `time` and `sps`.** Three rounds of variance-head work (rounds 10, 11 and
+12's WP-1) were priced against 0.244 and then 0.170. At 0.097, the entire remaining TKE
+envelope — the +7.71 oracle of round 10, re-priced — is worth about **+0.75 `final` for a
+model that knows the answer**, and the +1.21 first quarter of it is worth +0.19. It is not
+where the round goes.
+
+### 32.3 The exchange rate, re-priced a third time
+
+Round 9 measured the per-subscore response to a synthetic 10 % error cut
+(`Track_1/exchange_v9.py`): rel +0.64, tke +0.75, mvpe +0.57, sps +2.22.
+
+| weights | 10 % error cut | split |
+|---|---|---|
+| round-9 | +0.892 | rel 19 % · tke 21 % · mvpe 15 % · sps 45 % |
+| eight-round | +0.929 | rel 38 % · tke 14 % · mvpe 0 % · sps 49 % |
+| **nine-round** | **+0.948** | **rel 39 % · tke 8 % · mvpe 1 % · sps 52 %** |
+
+**More than half the value of any accuracy improvement now arrives through SPS**, and SPS is a
+per-element *containment* score, not an rms. That is a statement about which errors to attack:
+the tail, not the mean. Gap to the leader (81.76136) is **1.118**, i.e. a **11.8 % error
+reduction** — unchanged in substance from round 12's 13 %, because the exchange rate moved as
+much as the score did.
+
+### 32.4 ALPHA is settled at 0.60, on the board's own anchor
+
+`alpha_board.py` re-anchored on **R13's own board errors at the alpha it actually ran**
+(rel 0.112383 / tke 0.564638 / mvpe 0.136448), scored with the nine-round weights, swept over
+two independent member families:
+
+| alpha | rel | tke | mvpe | sps | `final` (R13 twins) | `final` (dropout twins) |
+|---|---|---|---|---|---|---|
+| 0.00 | 94.83 | 74.25 | 93.61 | 38.60 | 80.106 | 80.045 |
+| 0.30 | 94.80 | 76.01 | 93.61 | 38.83 | 80.308 | 80.268 |
+| 0.45 | 94.75 | 77.00 | 93.61 | 38.79 | 80.367 | 80.337 |
+| **0.60** | 94.68 | 77.98 | 93.61 | 38.66 | **80.394** | **80.380** |
+| 0.75 | 94.59 | 78.88 | 93.61 | 38.46 | 80.384 | 80.388 |
+| 0.90 | 94.48 | 79.56 | 93.61 | 38.15 | 80.319 | 80.345 |
+
+Both families peak at 0.60, and the **minimax over the admissible weight family picks 0.60 on
+both** — no other alpha has a positive worst case. MVPE is constant down the column to five
+decimals, which is the sanity check that the composition really only touches the fluctuation.
+
+**Round 11's adoption of 0.90 cost ~0.075 `final` for two rounds.** It was chosen under the
+round-9 weights, which priced `tke` at 0.244 — 2.5× what nine rounds now say. This is the third
+time a decision made under a stale weight vector has had to be reversed; the rule
+(ROADMAP method rule 6) is to re-decide every weight-sensitive choice when the weights move.
+
+### 32.5 The two tracks score the same problem, with the same rule
+
+The whole point of shipping one model to both boards.
+
+| subscore | T1 R13 | T2 R1 | diff | relative diff **in the error** |
+|---|---|---|---|---|
+| rel_l2 | 94.679785 | 94.694512 | +0.015 | **−0.29 %** |
+| tke | 77.983720 | 77.942224 | −0.041 | **+0.24 %** |
+| mvpe | 93.613336 | 93.399401 | −0.214 | **+3.59 %** |
+| time | 93.115432 | 93.287797 | +0.172 | — |
+| sps | 39.689258 | 39.730331 | +0.041 | **−0.10 %** |
+| final | 80.643823 | 80.652944 | +0.009 | — |
+
+**Two conclusions, both load-bearing:**
+
+1. **The combination rule is the same.** Track 1's nine-round weights applied to Track 2's
+   subscores give **80.650** against a published **80.653** — a 0.003 residual, inside the
+   fit's own 0.035. Track 2's `final_score` needs no separate calibration.
+2. **The scored data is the same or near-identical.** Three of the four error subscores agree
+   to ≤0.3 % *of the error*. That is far too close for two independently drawn test sets and
+   far too far for float32 noise to be the whole story (`verify_space.py` bounds the two code
+   paths at 4e-6 physical, ~3e-5 relative). The most likely reading is one hidden set scored
+   over slightly different window pools — a stride/tail-padding or first-window difference of
+   order one window per trajectory. **MVPE is the exception at +3.59 %**, and that is what a
+   small pool difference looks like in the metric with the smallest effective sample size: 36
+   probe points of 2048 per window, aggregated as a global ratio rather than a per-window mean.
+
+   **Therefore every Track-1 instrument transfers to Track 2** — the AoA proxy, the band, the
+   inflation ratios, the weights — with `mvpe` the one number to carry a per-track offset for.
+   Since `mvpe` is worth 0.011, that costs nothing.
+
+### 32.6 The strategic consequence: two submissions a day on one test set
+
+This is the most useful thing the round bought, and it is not about the model.
+
+The competition allows **one submission per track per day** and the two tracks score the same
+hidden data with the same rule. So a slot is not one experiment, it is **two** — and, because
+the four error subscores are deterministic (§1.7), a same-day pair is a **controlled A/B with
+the eval machine, the test set and the scoring rule all held fixed**. The only nuisance
+parameter is the small fixed per-track offset measured above, and only `mvpe`'s is large enough
+to matter.
+
+Concretely, the next slot can ask two independent questions rather than one, or ask one
+question twice on two nearly-disjoint window pools. With ~26 slots left per track before the
+2026-09-27 deadline, the board is a **52-run instrument**, not a 26-run one.
+
+### 32.7 Board latency: the invocation price is ~0.55 ms, not 0.324
+
+R12 and R13 landed **on the same day**, which for the first time holds the eval machine fixed:
+
+| | invocations | local ms (4060-eq) | board ms |
+|---|---|---|---|
+| R12 | 4 | 2.235 | 5.811 |
+| R13 | 1 | 1.900 | 3.985 |
+
+Δ = −1.826 board ms for −3 invocations and −0.335 local ms. At the fitted local slope that is
+**0.52 – 0.56 ms per invocation** — 60–70 % above the four-round regression's 0.324, and the
+first estimate not contaminated by machine drift.
+
+Refitting `board ms = a + b·inv + c·local` over all seven known rounds gives
+`2.616 + 0.435·inv + 0.803·local` at an rms residual of **0.690 ms**, and the residuals are
+ordered by date (Aug 4–6: +0.15…+0.98; Aug 10–31: −0.34…−1.11). **The eval machine drifts, so
+the intercept is not a constant and the model should not be quoted to better than ±0.7 ms.**
+
+At the current operating point (~4 board ms, where the `100/(1+√(t/0.72896))` curve is
+steepest) **one board ms is worth −0.070 `final`**, up from the −0.05 quoted since round 10.
+So an invocation costs **≈0.036 `final`** — still cheap, but the 8→1 invocation collapse this
+round was worth **+0.114**, which is most of the round's measured gain.
+
+---
+
+## 33. P3b gate (a) PASSED — the gated mean-blend survives ensembling, and it ships
+
+`mean_blend_re.py --ens --gate --alpha 0.60`, 4-member ensemble of the `re_split` controls.
+This is the gate that killed the oscillatory head (§27): a single-model gain an ensemble
+already averages away is not a gain.
+
+| set | rel-L2 at β_eff ≈ 0.15 | mean part | fluc part | MVPE |
+|---|---|---|---|---|
+| `rein` (interior control) | **0.0698 → 0.0698, unchanged to 4 dp at every β and every ramp** | 0.0366 | 0.0594 | 0.0568 |
+| `relo` | 0.1080 → **0.1035** (−4.2 %) | 0.0785 → 0.0727 (−7.4 %) | 0.0742 → 0.0737 | 0.1135 → 0.1072 |
+| `rehi` | 0.1137 → **0.1120** (−1.5 %) | 0.0638 → 0.0611 (−4.2 %) | 0.0941 → 0.0938 | 0.1040 → 0.1025 |
+
+**It dilutes but does not vanish**: single-model §7.2 measured ctrl2 `relo` −11.5 %; four
+members give −4.2 %. That is the §1.15 test passing — it removes error the members **share**
+(they all extrapolate the mean the same way), not error that averaging already removes. **It is
+the first arm in this project to pass that test.**
+
+**Gate (b), the ramp width, is a non-question.** Sweeping `--ref 0.03 … 0.30` against β shows
+the optimum lies entirely in the **product** β × gate-strength, flat over β_eff 0.14–0.20 on
+both extrapolation sets. The ramp width is not an independent lever; it only sets how much of β
+a window at a given distance receives.
+
+### 33.1 The deployed gate, and a calibration bug the strict gate could never have caught
+
+The blend is wired into `Track_1/submit_fno/submission.py` behind `BLEND_BETA`, with
+`_blend_gate` returning 0 inside the training speed range. **Nothing local exercises it** —
+every validation window comes from `train_real`, so `validate_strict.py` scores the package as
+if the feature did not exist. `Track_1/verify/blend_path.py` is the gate for it, and it earned
+its existence twice on the first run:
+
+* **`TRAIN_SPEED` was measured over TRAJECTORIES and applied per WINDOW.**
+  `mean_blend_re.train_speed_range` averages a whole trajectory (0.03942–0.29207 m/s), but
+  windows fluctuate around their trajectory's mean, so the fastest trajectory has windows
+  **above its own mean**. The gate fired at **0.56 of full strength on real validation
+  windows**, and the design's central safety claim — *a window inside the training range gets
+  the unblended prediction bit for bit* — was **false**. Re-measured over the 3547 training
+  windows with the official tiling: **0.03804–0.29634 m/s**, and both local sets then sit
+  strictly inside.
+* **Then float32 put it back**, at 0.000248: the fastest validation window *is* the fastest
+  training window, so its float32 mean lands a few ULP above a float64 bound. Fixed by padding
+  the stored range by 0.2 % of its span — pad, do not threshold.
+* A third check failed and it was **the check's fault**: permutation drift is 7.78e-06 with the
+  blend and 7.73e-06 without, on a synthetic input scaled 7× out of distribution. That is the
+  forward pass, not the blend (`validate_strict` measures 5.6e-08 on real windows). The test
+  now compares against the blend-off drift on the same input, which is the only thing it can
+  legitimately ask.
+
+Deployed: **β 0.15, ramp 0.02, range (0.037523, 0.296857)**. The lowest Re the organizers have
+shown us (2968, the Track-2 example file) sits 1.88 % outside ⇒ gate 0.94.
+
+### 33.2 What round 14 measures
+
+Track 1 ships the **round-13 members and the bit-identical round-13 band** (verified 0.0e+00 on
+`base`, `sigma_ref` and `p`) plus the blend, so the board delta is the blend alone. Track 2
+ships dropout against T2 R1 the same way. **Two mechanisms, one hypothesis: is the hidden set
+outside the training Reynolds range?**
+
+The blend's null is the informative outcome *and* a hard floor — a package that changes nothing
+on in-range windows returns R13's four error subscores exactly. Predictions and the 2×2 reading
+are recorded in `../sub_candidates/README.md`.
+
+### 33.3 The `mvpe` probe is dead before it was built
+
+`sub_value.py` at the nine-round weights says the family's dominant open axis is
+**`rel_l2 +1.00 / mvpe −0.68`** (width 0.535), and the mean-blend is the only knob that moves
+`mvpe` hard. But the measured response (val_unseen, 5 twins, ungated) moves them **the same
+way**: β 0.30 gives rel-L2 **+6.6 %** and MVPE **+9.9 %**. A probe along that axis needs them to
+move in *opposite* directions. No such knob exists in the codebase, so the `rel_l2`/`mvpe` split
+stays unidentified — which costs nothing, since `mvpe` is bounded above by 0.218 and
+best-estimated at 0.011.

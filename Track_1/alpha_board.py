@@ -19,9 +19,9 @@ both push the same way:
 
 So the objective here is over the four subscores that actually respond, evaluated on the AoA
 15-20 proxy. `mean4` weights them equally, which is what rounds 6-8 optimized; `final` uses the
-EIGHT-round weights (final_v9.py) and is the one to read. They disagree about ALPHA because
-mean4 implicitly prices `tke` at 0.25 and `sps` at 0.25, where the eight rounds price them
-0.170 and 0.204 -- and ALPHA is precisely a trade between those two.
+NINE-round weights (final_v9.py) and is the one to read. They disagree about ALPHA because
+mean4 implicitly prices `tke` at 0.25 and `sps` at 0.25, where the nine rounds price them
+0.097 and 0.224 -- and ALPHA is precisely a trade between those two.
 
 3. **The weights themselves are uncertain, and ALPHA sits on the axis they are least sure
    about.** The admissible family's dominant spread direction is `rel_l2` against `tke`
@@ -67,25 +67,27 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "submit_fno"))
 
 F_ELEM = 1.39                       # per-element error tail, inverted from the board's SPS
-# Round 12's board errors, and the anchor moved with them: that round shipped ALPHA 0.90, so
-# the per-metric inflation factors are now defined at the alpha actually in use rather than
-# extrapolated from 0.75.  Pair this with the R12 HELD-OUT TWIN set (`fno_vl_s1..s4`,
-# `fno_vl_m1220`, `fno_vl_w48`, `fno_vl_w64`, `unet_g1`), whose proxy errors on AoA 15-20 are
-# 0.10703 / 0.45114 / 0.09132 -- so the factors this script derives come out at 1.090 / 1.167 /
-# 1.543, which is what `proxy_calib.py` measures independently over three rounds.
-BOARD = dict(rel=0.116626, tke=0.526278, mvpe=0.140914)   # R12, 2026-08-31
+# ROUND 13 IS THE ANCHOR, and it is a much better one than round 12 was: that round shipped
+# ALPHA **0.60** precisely to measure this axis, so the per-metric inflation factors are now
+# defined at an alpha the board actually ran, on the 8-member/1-invocation shape the next
+# package also uses.  Pair with the R13 HELD-OUT TWINS (`fno_vl_s1..s4`, `fno_vl_m1220`).
+#
+# Round 13 also moved the weights that this sweep is scored against: `tke` fell 0.170 -> 0.097
+# and `rel_l2` rose 0.545 -> 0.582 (final_v9.py).  ALPHA is the rel<->tke trade, so the answer
+# here is not the answer rounds 6-12 got, and it should not be expected to be.
+BOARD = dict(rel=0.112383, tke=0.564638, mvpe=0.136448)   # R13, 2026-08-31 (ALPHA 0.60)
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt", nargs="+", required=True)
     ap.add_argument("--alphas", type=float, nargs="+",
-                    default=[0.45, 0.6, 0.75, 0.9, 1.0, 1.1])
+                    default=[0.30, 0.45, 0.6, 0.75, 0.9])
     ap.add_argument("--aoa", type=int, nargs="+", default=[15, 20])
     ap.add_argument("--f", type=float, default=F_ELEM)
-    ap.add_argument("--time-score", type=float, default=91.8036,
+    ap.add_argument("--time-score", type=float, default=93.1154,
                     help="board time_score for the `final` column; constant down the sweep")
-    ap.add_argument("--anchor", type=float, default=0.90,
+    ap.add_argument("--anchor", type=float, default=0.60,
                     help="the ALPHA the board numbers were measured at; the per-metric "
                          "inflation factors are defined by this row and applied to the rest")
     args = ap.parse_args()
@@ -119,7 +121,7 @@ def main() -> None:
     print(f"objective: AoA {args.aoa} proxy. per-metric inflation anchored at alpha="
           f"{args.anchor}: " + "  ".join(f"{k} {v:.3f}x" for k, v in fac.items())
           + f"   element tail {args.f:.2f}x")
-    print(f"`final` uses the EIGHT-round weights with time_score = {args.time_score:.3f}; "
+    print(f"`final` uses the NINE-round weights with time_score = {args.time_score:.3f}; "
           f"ALPHA does not change the invocation count, so time is constant DOWN this column.")
     print("`dmid/dlo/dhi` are final_v9.delta against the anchor row -- pick on dlo, the worst "
           "case over\nthe admissible weight family, because ALPHA moves along the axis that "
