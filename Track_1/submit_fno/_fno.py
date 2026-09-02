@@ -598,7 +598,27 @@ def load_any(path: str, device: str):
     handed the mixed list.
     """
     blob = torch.load(path, map_location=device)
-    if blob.get("arch", "fno") != "unet":
+    arch = blob.get("arch", "fno")
+    if arch not in ("fno", "unet"):
+        # ROUND-15 EXPERIMENTAL FAMILIES (afno / dilres / ufno / vit). They live in
+        # `Track_1/unet/models_alt.py`, which is NOT vendored into the submission zip -- so
+        # this branch works for the local instruments (compare_v9, gap, ens_v9, kfold) and
+        # raises, loudly, inside the evaluation container. That is deliberate: a family only
+        # gets vendored once it has won its ensemble test, and until then a package that
+        # silently contained one would be a submission that fails at scoring time.
+        import importlib, os as _os, sys as _sys
+        _sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                                          "..", "unet"))
+        cfg = blob.get("config", {})
+        m = importlib.import_module("models_alt").build(
+            arch, blob.get("width", cfg.get("width", 96)), blob.get("var_head", True), 0,
+            blob.get("modes_y", 8), blob.get("modes_x", 12), blob.get("n_layers", 4),
+            dropout=cfg.get("dropout", 0.0)).to(device)
+        m.load_state_dict(blob["model_state_dict"])
+        m.eval()
+        m.self_norm = _self_norm_of(blob)
+        return m
+    if arch != "unet":
         return _fno_from_blob(blob, device)
     # extra_ch is 0 by construction: `--hist` and `--ctx > 20` both feed the trunk information
     # from OUTSIDE the 20-frame window, which predict() never has and which would make the

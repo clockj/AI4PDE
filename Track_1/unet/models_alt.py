@@ -471,7 +471,21 @@ def build(arch: str, width: int, var_head: bool, extra_ch: int, modes_y: int = 1
     """
     from model import UNetTwoHead
     if arch == "unet":
-        return UNetTwoHead(width, var_head=var_head, extra_ch=extra_ch)
+        # `dropout` is threaded through so the U-Net can be run at round 15's operating point.
+        # Dropout2d adds no parameters and is inert in eval(), so a --dropout U-Net checkpoint
+        # loads unchanged into the submission's vendored UNetTwoHead.
+        return UNetTwoHead(width, var_head=var_head, extra_ch=extra_ch, dropout=dropout)
+    if arch == "afno":
+        return AFNO2d(width, modes_y, modes_x, n_layers, var_head, extra_ch, dropout=dropout)
+    if arch == "dilres":
+        return DilResNet(width, n_layers, var_head, extra_ch, dropout=dropout)
+    if arch == "ufno":
+        return UFNO2d(width, modes_y, modes_x, n_layers, var_head, extra_ch, dropout=dropout)
+    if arch == "vit":
+        # --width is the token dimension and --n-layers the depth, so the sweep flags keep
+        # meaning "how big" and "how deep" across every family. 64 channels per head.
+        return ViT2d(width, n_layers, var_head, extra_ch, heads=max(width // 64, 1),
+                     dropout=dropout)
     if arch == "fno":
         return FNO2d(width, modes_y, modes_x, n_layers, var_head, extra_ch, var_mlp, lift_mlp,
                      point_mlp, var_hidden, var_deep, var_in_std,
@@ -481,3 +495,312 @@ def build(arch: str, width: int, var_head: bool, extra_ch: int, modes_y: int = 1
         return DeepONetCh(p, trunk_width=width * 2, branch_width=width,
                           var_head=var_head, extra_ch=extra_ch)
     raise ValueError(arch)
+
+
+# ===========================================================================
+# Round 15: four more families at the capacity x regularization operating point.
+#
+# WHY THESE FOUR.  Round 14 measured that the shipped width-24 FNO UNDERFITS -- trained on
+# eight trajectories and scored IN SAMPLE it reaches rho 0.588, barely above its own held-out
+# 0.609, while a w96/400-epoch run reaches 0.945. Every architecture verdict this project
+# recorded (rounds 8-11: "capacity is monotonically harmful", "the architecture search is
+# finished") was measured on a model that could not fit the data it already had, with the
+# regularizer held fixed. So the family question is reopened, but only at the new operating
+# point: width 96, dropout 0.30, 400 epochs.
+#
+# Each one is a different answer to "what mixes information across the 32x64 grid":
+#   afno   -- FNO's truncated LINEAR spectral map replaced by a nonlinear block-diagonal MLP
+#             on the modes, with soft-thresholding. Keeps the global receptive field and the
+#             spectral bias that made FNO win here; adds the nonlinearity FNO lacks in k-space.
+#   dilres -- no spectral machinery at all: stacked dilated convolutions reach the whole grid
+#             in one block. The control for "is the Fourier parameterization doing the work,
+#             or just the receptive field?"
+#   ufno   -- FNO block PLUS a small U-Net branch in parallel. The wake is a localized
+#             structure on a uniform background; a mode-truncated operator is a low-pass and
+#             cannot represent the airfoil's sharp zero set, which a conv branch can.
+#   vit    -- global attention over 4x4 patches. The one family whose mixing is DATA-dependent
+#             rather than fixed, and the one the project has never run (Transolver was
+#             disqualified on latency at 12.5M params and 109 ms; at 128 tokens this is not
+#             that model).
+#
+# All four expose FNO2d's exact interface -- forward(prev, detach_var) -> (field, logstd) on
+# (B, CH+extra+2 -> CH, H, W) -- so train2.py, compare_v9, gap and ens_v9 drive them unchanged
+# and every comparison is on identical footing. All four take `dropout` because that is the
+# axis the round is testing, and none of them takes var_mlp/lift_mlp: those flags exist to give
+# FNO2d's LINEAR 1x1 boundaries a hidden layer, and every model below already has MLP heads.
+# ===========================================================================
+
+
+def _heads(width: int, var_head: bool):
+    """The two readouts FNO2d uses, so head capacity is not a confound between families.
+
+    A 128-wide MLP on each. `--var-mlp` and `--lift-mlp` were each worth +0.08 on FNO2d
+    precisely because its defaults were linear 1x1 probes; starting the new families at the
+    linear default would re-run that experiment inside every one of them.
+    """
+    head_field = nn.Sequential(nn.Conv2d(width, 128, 1), nn.GELU(), nn.Conv2d(128, CH, 1))
+    head_logstd = None
+    if var_head:
+        head_logstd = nn.Sequential(nn.Conv2d(width, 128, 1), nn.GELU(), nn.Conv2d(128, C, 1))
+        nn.init.zeros_(head_logstd[-1].weight)
+        nn.init.constant_(head_logstd[-1].bias, float(np.log(0.3)))
+    return head_field, head_logstd
+
+
+class _GridIn(nn.Module):
+    """Shared input stage: concat the (x, y) coordinate grid, exactly as FNO2d does."""
+
+    def __init__(self):
+        super().__init__()
+        yy, xx = torch.meshgrid(torch.linspace(-1, 1, H), torch.linspace(-1, 1, W),
+                                indexing="ij")
+        self.register_buffer("grid", torch.stack([xx, yy])[None])
+
+    def cat(self, prev: torch.Tensor) -> torch.Tensor:
+        return torch.cat([prev, self.grid.expand(len(prev), -1, -1, -1)], 1)
+
+
+class AFNO2d(_GridIn):
+    """Adaptive FNO (Guibas et al., ICLR 2022), at this project's operating point.
+
+    FNO's spectral block is a LINEAR map per retained mode: `out[k] = W[k] @ in[k]`, with one
+    complex matrix per (ky, kx). That is where its parameters live (2*width^2*my*mx) and it is
+    exactly the term round 8 measured as monotonically harmful once width grew. AFNO replaces
+    it with a two-layer MLP whose weights are SHARED across modes and block-diagonal across
+    channels, so parameters go as 2*(width/blocks)^2*blocks = 2*width^2/blocks, independent of
+    how many modes are kept -- 8x fewer here at blocks=8 -- and the map becomes nonlinear in
+    k-space, which FNO's never is.
+
+    The soft-threshold after the MLP is AFNO's own regularizer: it zeroes modes whose response
+    is below `lam`, so the operator's spectral SUPPORT is learned per input rather than fixed
+    by a truncation constant. That is the property this round wants -- sparsity chosen by the
+    data instead of capacity chosen by hand.
+
+    Modes are still truncated at (modes_y, modes_x) so the comparison against FNO2d holds the
+    receptive field in k-space fixed and varies only what happens to the modes that are kept.
+
+    CAVEAT, and it is the whole risk of this arm: because the spectral weights no longer scale
+    with the mode count, an AFNO at width 96 has ~0.3 M parameters against the w96 FNO's ~14 M.
+    Round 14's diagnosis is that this model class UNDERFITS, so a family that is 40x smaller is
+    being asked to win from the wrong side of that. `blocks` and `mlp_ratio` are the two knobs
+    that buy it back; the honest screen is rule 4 -- read the training `field` loss against the
+    w96 FNO's 0.0391 before scoring anything, and drop the arm if it cannot fit.
+    """
+
+    def __init__(self, width: int = 96, modes_y: int = 8, modes_x: int = 12,
+                 n_layers: int = 4, var_head: bool = True, extra_ch: int = 0,
+                 blocks: int = 4, mlp_ratio: float = 4.0, lam: float = 0.01,
+                 dropout: float = 0.0):
+        super().__init__()
+        assert width % blocks == 0, f"width {width} must divide into {blocks} blocks"
+        self.my, self.mx, self.blocks, self.lam = modes_y, modes_x, blocks, lam
+        d = width // blocks
+        hid = max(1, int(d * mlp_ratio))
+        self.lift = nn.Sequential(nn.Conv2d(CH + extra_ch + 2, 128, 1), nn.GELU(),
+                                  nn.Conv2d(128, width, 1))
+        s = 1.0 / d
+        # (L, blocks, d, hid, 2) -- the trailing 2 is (real, imag), viewed as complex at use.
+        self.w1 = nn.Parameter(s * torch.randn(n_layers, blocks, d, hid, 2))
+        self.b1 = nn.Parameter(torch.zeros(n_layers, blocks, hid, 2))
+        self.w2 = nn.Parameter(s * torch.randn(n_layers, blocks, hid, d, 2))
+        self.b2 = nn.Parameter(torch.zeros(n_layers, blocks, d, 2))
+        self.point = nn.ModuleList([nn.Conv2d(width, width, 1) for _ in range(n_layers)])
+        self.norm = nn.ModuleList([nn.GroupNorm(8, width) for _ in range(n_layers)])
+        self.drop = nn.Dropout2d(dropout) if dropout > 0 else nn.Identity()
+        self.head_field, self.head_logstd = _heads(width, var_head)
+
+    def _spectral(self, x: torch.Tensor, i: int) -> torch.Tensor:
+        b, cw, h, w = x.shape
+        ft = torch.fft.rfft2(x)
+        out = torch.zeros_like(ft)
+        my, mx = min(self.my, h // 2), min(self.mx, w // 2 + 1)
+        w1, b1 = torch.view_as_complex(self.w1[i]), torch.view_as_complex(self.b1[i])
+        w2, b2 = torch.view_as_complex(self.w2[i]), torch.view_as_complex(self.b2[i])
+        for sl in (slice(0, my), slice(h - my, h)):
+            # (B, blocks, d, ky, kx) -> block-diagonal complex MLP, shared over (ky, kx).
+            z = ft[:, :, sl, :mx].reshape(b, self.blocks, -1, my, mx)
+            z = torch.einsum("bkdyx,kdh->bkhyx", z, w1) + b1[None, :, :, None, None]
+            # Complex GELU applied to the two parts separately: the standard AFNO nonlinearity,
+            # and the only one that keeps the map equivariant to the real-input symmetry.
+            z = torch.complex(torch.nn.functional.gelu(z.real),
+                              torch.nn.functional.gelu(z.imag))
+            z = torch.einsum("bkhyx,khd->bkdyx", z, w2) + b2[None, :, :, None, None]
+            # Soft-threshold on the magnitude: shrink toward zero, keep the phase.
+            mag = z.abs()
+            z = z * (torch.clamp(mag - self.lam, min=0.0) / (mag + 1e-9))
+            out[:, :, sl, :mx] = z.reshape(b, cw, my, mx)
+        return torch.fft.irfft2(out, s=(h, w))
+
+    def forward(self, prev: torch.Tensor, detach_var: bool = False):
+        h = self.lift(self.cat(prev))
+        for i, (p, n) in enumerate(zip(self.point, self.norm)):
+            h = h + self.drop(torch.nn.functional.gelu(n(self._spectral(h, i) + p(h))))
+        logstd = None
+        if self.head_logstd is not None:
+            logstd = self.head_logstd(h.detach() if detach_var else h)
+        return self.head_field(h), logstd
+
+
+class DilResNet(_GridIn):
+    """Dilated ResNet (Stachenfeld et al., ICLR 2022) -- the no-spectral-machinery control.
+
+    Four residual blocks, each a stack of 3x3 convolutions at dilations 1, 2, 4, 8, 4, 2, 1.
+    One block's receptive field is 1 + 2*(1+2+4+8+4+2+1) = 45 cells, larger than the 32x64
+    grid's short axis, so like an FNO block it mixes the whole field in one step -- but with a
+    LOCAL, translation-equivariant parameterization and no mode truncation.
+
+    That makes it the discriminating control for the project's oldest architectural claim.
+    CLAUDE.md attributes FNO's win to "a global spectral convolution with few modes" capturing
+    quasi-periodic shedding directly. If the mechanism is really the global receptive field
+    rather than the Fourier basis, this matches it; if the Fourier basis is doing the work,
+    this loses, and the truncation is confirmed as the useful prior rather than an accident.
+    It is also the cheapest family here per parameter, which matters because latency is scored.
+    """
+
+    DIL = (1, 2, 4, 8, 4, 2, 1)
+
+    def __init__(self, width: int = 96, n_layers: int = 4, var_head: bool = True,
+                 extra_ch: int = 0, dropout: float = 0.0):
+        super().__init__()
+        self.lift = nn.Sequential(nn.Conv2d(CH + extra_ch + 2, 128, 1), nn.GELU(),
+                                  nn.Conv2d(128, width, 1))
+        self.blocks = nn.ModuleList()
+        for _ in range(n_layers):
+            seq = []
+            for d in self.DIL:
+                seq += [nn.Conv2d(width, width, 3, padding=d, dilation=d),
+                        nn.GroupNorm(8, width), nn.GELU()]
+            self.blocks.append(nn.Sequential(*seq[:-1]))     # no GELU before the residual add
+        self.drop = nn.Dropout2d(dropout) if dropout > 0 else nn.Identity()
+        self.head_field, self.head_logstd = _heads(width, var_head)
+
+    def forward(self, prev: torch.Tensor, detach_var: bool = False):
+        h = self.lift(self.cat(prev))
+        for blk in self.blocks:
+            h = h + self.drop(torch.nn.functional.gelu(blk(h)))
+        logstd = None
+        if self.head_logstd is not None:
+            logstd = self.head_logstd(h.detach() if detach_var else h)
+        return self.head_field(h), logstd
+
+
+class UFNO2d(_GridIn):
+    """U-FNO (Wen et al., Adv. Water Resour. 2022): an FNO block with a U-Net branch beside it.
+
+    Each block computes spectral(h) + point(h) + unet(h) instead of spectral(h) + point(h).
+    The motivation is specific to this data and measurable in it: mode truncation is a
+    LOW-PASS, and 3.3 % of the scored elements are exactly zero (outside the PIV field of view
+    and inside the airfoil body), i.e. a sharp indicator function that no band-limited operator
+    can represent. The pointwise 1x1 branch cannot fix that either -- it has no spatial extent.
+    A two-level U-Net branch does, at a fraction of the spectral block's parameters.
+
+    The U-Net branch is deliberately SMALL (width -> width, one down/up level, 3x3 convs). This
+    is meant to be an FNO with a local correction, not a U-Net with a spectral correction; the
+    plain U-Net is already in the family list as its own arm.
+    """
+
+    def __init__(self, width: int = 96, modes_y: int = 8, modes_x: int = 12,
+                 n_layers: int = 4, var_head: bool = True, extra_ch: int = 0,
+                 dropout: float = 0.0):
+        super().__init__()
+        self.lift = nn.Sequential(nn.Conv2d(CH + extra_ch + 2, 128, 1), nn.GELU(),
+                                  nn.Conv2d(128, width, 1))
+        self.spec = nn.ModuleList(
+            [SpectralConv2d(width, modes_y, modes_x) for _ in range(n_layers)])
+        self.point = nn.ModuleList([nn.Conv2d(width, width, 1) for _ in range(n_layers)])
+        self.norm = nn.ModuleList([nn.GroupNorm(8, width) for _ in range(n_layers)])
+        self.down = nn.ModuleList()
+        self.up = nn.ModuleList()
+        for _ in range(n_layers):
+            self.down.append(nn.Sequential(nn.Conv2d(width, width, 3, stride=2, padding=1),
+                                           nn.GroupNorm(8, width), nn.GELU(),
+                                           nn.Conv2d(width, width, 3, padding=1),
+                                           nn.GroupNorm(8, width), nn.GELU()))
+            self.up.append(nn.Sequential(nn.Conv2d(2 * width, width, 3, padding=1),
+                                         nn.GroupNorm(8, width), nn.GELU()))
+        self.drop = nn.Dropout2d(dropout) if dropout > 0 else nn.Identity()
+        self.head_field, self.head_logstd = _heads(width, var_head)
+
+    def forward(self, prev: torch.Tensor, detach_var: bool = False):
+        h = self.lift(self.cat(prev))
+        for s, p, n, dn, up in zip(self.spec, self.point, self.norm, self.down, self.up):
+            d = nn.functional.interpolate(dn(h), size=h.shape[-2:], mode="nearest")
+            h = h + self.drop(torch.nn.functional.gelu(n(s(h) + p(h) + up(torch.cat([d, h], 1)))))
+        logstd = None
+        if self.head_logstd is not None:
+            logstd = self.head_logstd(h.detach() if detach_var else h)
+        return self.head_field(h), logstd
+
+
+class ViT2d(_GridIn):
+    """A plain space-time ViT over 4x4 patches: 8 x 16 = 128 tokens of the 32x64 grid.
+
+    Time is already folded into channels, so one token is a 4x4x20-frame space-time block and
+    self-attention mixes every such block with every other in ONE layer -- a global,
+    input-DEPENDENT mixing, which is the property no other family here has (FNO's spectral
+    map, the dilated stack and the U-Net branch are all fixed linear operators over space).
+
+    Transolver's disqualification does not carry over. It scored 74.82 at 109 ms/window, but
+    that is 12.5M parameters doing slice-attention over 2048 points; this is 128 tokens, where
+    the attention matrix is 128x128 and the cost is dominated by the MLPs, not the attention.
+    Latency is measured before anything is shipped.
+
+    Regularization is the round's axis, so both of the transformer-specific regularizers are
+    on: `dropout` inside attention and the MLPs, and stochastic depth (drop-path) at a fixed
+    0.1 linearly scaled over depth, which is what makes deep ViTs trainable on small data.
+    Unpatchify returns a (B, width, H, W) map so the SAME two conv heads as every other family
+    read it out -- the comparison is of trunks, not of readouts.
+    """
+
+    def __init__(self, dim: int = 384, depth: int = 8, var_head: bool = True,
+                 extra_ch: int = 0, patch: int = 4, heads: int = 6, mlp_ratio: float = 4.0,
+                 dropout: float = 0.0, drop_path: float = 0.1):
+        super().__init__()
+        self.patch = patch
+        gh, gw = H // patch, W // patch
+        self.gh, self.gw = gh, gw
+        self.embed = nn.Conv2d(CH + extra_ch + 2, dim, patch, stride=patch)
+        self.pos = nn.Parameter(torch.zeros(1, gh * gw, dim))
+        nn.init.trunc_normal_(self.pos, std=0.02)
+        self.blocks = nn.ModuleList()
+        for i in range(depth):
+            self.blocks.append(nn.ModuleDict({
+                "n1": nn.LayerNorm(dim),
+                "attn": nn.MultiheadAttention(dim, heads, dropout=dropout, batch_first=True),
+                "n2": nn.LayerNorm(dim),
+                "mlp": nn.Sequential(nn.Linear(dim, int(dim * mlp_ratio)), nn.GELU(),
+                                     nn.Dropout(dropout),
+                                     nn.Linear(int(dim * mlp_ratio), dim), nn.Dropout(dropout)),
+            }))
+        # Linearly increasing drop-path rate with depth, the standard schedule.
+        self.dp = [drop_path * i / max(depth - 1, 1) for i in range(depth)]
+        self.norm_out = nn.LayerNorm(dim)
+        # Unpatchify to a per-pixel feature map of `width = dim // patch**2` channels, then the
+        # shared conv heads. Going straight from a token to 4x4x40 outputs would put the whole
+        # readout in one linear layer and make the family incomparable to the others.
+        self.wid = max(dim // (patch * patch), 8)
+        self.proj = nn.Linear(dim, self.wid * patch * patch)
+        self.head_field, self.head_logstd = _heads(self.wid, var_head)
+
+    def _drop_path(self, x: torch.Tensor, p: float) -> torch.Tensor:
+        if p <= 0.0 or not self.training:
+            return x
+        keep = 1.0 - p
+        mask = x.new_empty(len(x), 1, 1).bernoulli_(keep)
+        return x * mask / keep
+
+    def forward(self, prev: torch.Tensor, detach_var: bool = False):
+        b = len(prev)
+        t = self.embed(self.cat(prev)).flatten(2).transpose(1, 2) + self.pos   # (B, N, dim)
+        for blk, p in zip(self.blocks, self.dp):
+            q = blk["n1"](t)
+            t = t + self._drop_path(blk["attn"](q, q, q, need_weights=False)[0], p)
+            t = t + self._drop_path(blk["mlp"](blk["n2"](t)), p)
+        t = self.proj(self.norm_out(t))                        # (B, N, wid*patch*patch)
+        pp = self.patch
+        h = (t.reshape(b, self.gh, self.gw, self.wid, pp, pp)
+              .permute(0, 3, 1, 4, 2, 5).reshape(b, self.wid, H, W))
+        logstd = None
+        if self.head_logstd is not None:
+            logstd = self.head_logstd(h.detach() if detach_var else h)
+        return self.head_field(h), logstd

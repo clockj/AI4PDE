@@ -199,7 +199,8 @@ class UNetTwoHead(nn.Module):
     that encodes the mean field. The split costs ~130 parameters.
     """
 
-    def __init__(self, width: int = 64, var_head: bool = True, extra_ch: int = 0):
+    def __init__(self, width: int = 64, var_head: bool = True, extra_ch: int = 0,
+                 dropout: float = 0.0):
         super().__init__()
         w1, w2, w3 = width, width * 2, width * 4
         self.inc = block(CH + extra_ch, w1)
@@ -210,6 +211,17 @@ class UNetTwoHead(nn.Module):
         self.head_field = nn.Conv2d(w1, CH, 1)
         self.head_logstd = nn.Conv2d(w1, C, 1) if var_head else None
         self.pool = nn.AvgPool2d(2)
+        # Round 15. Dropout2d on the two ENCODER feature maps that feed the skip connections,
+        # i.e. between stages and not inside a `block`. It adds NO parameters and is inert in
+        # eval(), so a --dropout checkpoint is byte-compatible with the submission's vendored
+        # copy of this class (`Track_1/submit_fno/_fno.py`), which does not know the flag.
+        #
+        # Dropout2d rather than Dropout for the same reason as FNO2d's: these are spatial
+        # feature maps, and zeroing single pixels of one is nearly a no-op once the next stage
+        # convolves over them. The decoder is left alone -- dropping a channel of `u1` would
+        # blank it in the field head and the logstd head simultaneously, which couples the two
+        # readouts through the regularizer rather than through the trunk.
+        self.drop = nn.Dropout2d(dropout) if dropout > 0 else nn.Identity()
 
         if self.head_logstd is not None:
             # Start the head predicting a uniform, roughly correct std (targets sit near 0.3 in
@@ -222,8 +234,8 @@ class UNetTwoHead(nn.Module):
 
     def forward(self, prev: torch.Tensor,
                 detach_var: bool = False) -> tuple[torch.Tensor, torch.Tensor | None]:
-        h1 = self.inc(prev)
-        h2 = self.down1(self.pool(h1))
+        h1 = self.drop(self.inc(prev))
+        h2 = self.drop(self.down1(self.pool(h1)))
         h3 = self.down2(self.pool(h2))
         u2 = self.up1(torch.cat([nn.functional.interpolate(h3, scale_factor=2), h2], 1))
         u1 = self.up2(torch.cat([nn.functional.interpolate(u2, scale_factor=2), h1], 1))

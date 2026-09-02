@@ -181,7 +181,12 @@ def main() -> None:
                          "+2.0 subscore on real but costs 3x latency; weight averaging chases "
                          "the same variance reduction at 1x. Safe here because the network uses "
                          "GroupNorm, which carries no running statistics to recompute.")
-    ap.add_argument("--arch", choices=["unet", "fno", "deeponet"], default="unet")
+    ap.add_argument("--arch",
+                    choices=["unet", "fno", "deeponet", "afno", "dilres", "ufno", "vit"],
+                    default="unet",
+                    help="round 15 adds afno / dilres / ufno / vit, all with FNO2d's "
+                         "interface. --width is the trunk width (the token dim for "
+                         "vit) and --n-layers the depth for all of them.")
     ap.add_argument("--modes-y", type=int, default=12, help="FNO: retained ky modes")
     ap.add_argument("--modes-x", type=int, default=16, help="FNO: retained kx modes")
     ap.add_argument("--n-layers", type=int, default=4, help="FNO: spectral blocks")
