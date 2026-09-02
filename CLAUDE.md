@@ -4,10 +4,12 @@ Solution code for the **RealPDE** competition (real-world PDE / sim-to-real flui
 Site: https://realpdecompetition.github.io/ · Data: https://huggingface.co/datasets/AI4Science-WestlakeU/RealPDEBench
 Track 1 (Sim2Real): https://www.codabench.org/competitions/17363/ · Track 2 (LTTTA): https://www.codabench.org/competitions/17385/
 
-> **START HERE: [`ROADMAP.md`](ROADMAP.md).** It carries the full nine-round board record, the
-> refitted subscore weights (nine rounds: rel_l2 0.582 · tke 0.097 · mvpe 0.011 · time 0.087 ·
-> sps 0.224, which overturn several conclusions still written below), and the
-> current recommendation. This file is the reference manual; the roadmap is the plan.
+> **START HERE: [`ROADMAP.md`](ROADMAP.md).** It carries the full **twelve-round** board record
+> across both tracks, the refitted subscore weights (twelve rounds, pooled: rel_l2 **0.568** ·
+> tke **0.085** · mvpe **0.029** · time **0.091** · sps **0.226**, max residual 0.038, which
+> overturn several conclusions still written below), and the current recommendation. This file
+> is the reference manual; the roadmap is the plan. Current plan:
+> [`Track_1/plan/plan_20260902.md`](Track_1/plan/plan_20260902.md).
 
 This repo (`~/RealPDE/AI4PDE`, remote `github.com/clockj/AI4PDE`) holds **our** code.
 Datasets, starting kits and official checkpoints live one level up in `~/RealPDE/` and are **not**
@@ -1623,3 +1625,68 @@ corrections came out of closing them.
   could not fit the data it already had. Extra data cannot help a model that underfits, and
   weight decay cannot regularize one.
   → Latency does not block it: round 9 priced a 25× inference-cost increase at ≈1.2 `final`.
+
+
+### Round 14 BOARD RESULT (2026-09-02) — the hidden set is in range, and dropout is +0.200
+
+Two submissions at 14:57, both clean A/Bs against a package already on their own board — the
+2×2 that round 13 pre-registered. Plan for round 15: `Track_1/plan/plan_20260902.md`.
+
+| | id | rel_l2 | tke | mvpe | time | sps | **final** | vs its baseline |
+|---|---|---|---|---|---|---|---|---|
+| **T1 R14** gated mean-blend β 0.15 on R13's members + R13's bit-identical band | 912521 | 94.679785 | 77.983720 | 93.613336 | 92.978725 | 39.689258 | **80.630755** | R13: four error subscores **bit-identical**, `time` −0.137 |
+| **T2 R2** 8 all-data dropout members (4×0.05, 4×0.15), α 0.60 | 912522 | 94.787655 | 77.667926 | 93.882222 | 93.633350 | 40.148056 | **80.852826** | T2 R1: **+0.200** |
+
+* **THE HIDDEN SET IS INSIDE THE TRAINING SPEED RANGE — φ = 0.** The blend fires only for
+  windows whose mean streamwise speed leaves [0.0375, 0.2969] m/s, and all four error
+  subscores came back identical to R13's **to six decimals**. Not one hidden window is
+  outside. The competition's promised "unseen Reynolds numbers" are **interior** — Reynolds
+  *interpolation*, not extrapolation. **The null IS the measurement**, exactly as the arm was
+  designed: it could not lose, and what it bought was the answer.
+  → **RETIRED as decision instruments: `val_relo`, `val_rehi`, band 0 of the Re-band k-fold,
+  and the `--sim-loss full` gain that lived entirely in them** (round 14's `relo` −22.0 %).
+  They measure a regime the board does not contain. Keep them for the record; never decide a
+  package on them again. Sim must now re-prove itself **in distribution**.
+  → **`BLEND_BETA` goes back to 0.0** in every package. The code stays (it is inert when the
+  gate never fires, and `Track_1/verify/blend_path.py` exists); the feature does not.
+* **DROPOUT TRANSFERRED: +0.200, the largest real gain since round 10.** In error terms against
+  T2 R1: rel-L2 **−1.85 %**, TKE +1.60 %, MVPE −7.8 %, SPS **+1.05 %** (+0.418). Priced with
+  the refit weights that is +0.169; the rest is `time` luck and fit noise.
+  → **Reading the 2×2 exactly as pre-registered — blend null, dropout gains — dropout's benefit
+  is NOT Reynolds extrapolation.** It is in-range regularization. The **Re-band k-fold's
+  interior bands 1–4** (rel −2.6 %, TKE +0.1 %) are the local numbers closest to the board; the
+  AoA 15-20 proxy had the sign of rel **wrong** (+0.66 %); `relo`/`rehi` measured a regime that
+  does not exist here. All three sit inside the **~4 % resolution limit** (refit with this
+  transition; it was ~3 %), so the honest verdict is **"the closest instrument had the sign
+  right", not "the instrument is confirmed"**.
+  → **Track 1's best is still 80.644 (R13)** — the dropout package has never been submitted
+  there. Ship it on the next Track-1 slot; predicted 80.85 ± 0.07.
+* **`w_time` IS NOW MEASURED, NOT FITTED: 0.0956.** R13 and R14 differ in `time_score` alone
+  (−0.136707) and `final` moved −0.013068. That is the first weight in this project read off a
+  **single-subscore A/B** rather than a regression, and it lands on the twelve-round fit's
+  0.091 (admissible 0.038–0.169). The pricing model has one honest calibration point at last.
+* **THE WEIGHTS, REFIT ON TWELVE ROUNDS POOLED ACROSS BOTH TRACKS** (9 T1 + R14 + T2R1 + T2R2;
+  the two tracks share the rule to 0.003, ROADMAP 1.16). Max residual **0.038** — no worse than
+  the nine Track-1 rounds alone (0.035), which is the evidence that pooling did not hide a
+  second rule. `Track_1/board_rounds.py`, `Track_1/final_v9.py`:
+
+  | | rel_l2 | tke | mvpe | time | sps |
+  |---|---|---|---|---|---|
+  | **twelve-round** | **0.568** | 0.085 | 0.029 | 0.091 | **0.226** |
+  | admissible | 0.294–0.679 | 0.010–0.187 | 0.000–0.237 | 0.038–0.169 | 0.192–0.248 |
+  | nine-round (before) | 0.582 | 0.097 | 0.011 | 0.087 | 0.224 |
+
+  **Nothing moved by more than its own interval.** Same conclusions as round 13: `rel_l2` and
+  `sps` carry ~80 % of the value, a 10 % error cut is worth ~**+0.95** `final`, `tke` is cheap,
+  `mvpe` is nothing. Leader (read 08-25) 81.761 ⇒ gap **0.909 on Track 2 ≈ 9.6 % of error**.
+* **THE DECISION INSTRUMENT FOR A PACKAGE IS NOW THE Re-BAND K-FOLD ON INTERIOR BANDS.**
+  `kfold.py --split re`, decision number = **bands 1–3 pooled** (Re 8850–22875 — unseen
+  Reynolds numbers *inside* the training range, ≈2150 windows). It matches the board's
+  situation and has 6× the AoA proxy's sample. Cost is K trainings, so it is a **confirmation**
+  step for a package candidate, not a screen: screen on the AoA 15-20 proxy + full split, and
+  **always at ensemble size (ROADMAP 1.15)** before confirming. Bands 0 and 4 are reported and
+  not decided on.
+* Proxy calibration gained two points (T2R2: r_rel **1.045**, r_tke **1.126**, r_mvpe
+  **1.377** — every ratio *below* the R10–R13 mean, i.e. dropout moved the board more than the
+  proxy said). Pooled level ratios are now rel **1.072** / tke **1.140** / mvpe **1.477**;
+  delta residual rms **4.01 %**. `leaderboard/` regenerates all of it.

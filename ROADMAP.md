@@ -1,19 +1,25 @@
 # RealPDE — project roadmap
 
 Written 2026-08-31 after the round-12 board result; revised the same day after the Track-2
-build; **revised again 2026-09-01 after the round-13 board result, which changed the subscore
-weights and turned the two boards into one instrument.** This is the handoff document: it records what the leaderboard actually says,
-what is closed, and what to do next. Read it with `CLAUDE.md` (contracts, measurements,
-per-round detail), `Track_1/board_rounds.py` (every number in Part 1 is reproducible from it)
-and `Track_1/plan/plan_20260831.md` (the current round's plan and recorded predictions).
+build; revised again 2026-09-01 after the round-13 board result, which changed the subscore
+weights and turned the two boards into one instrument; **revised 2026-09-02 after the round-14
+PAIR, which answered where the hidden set lives and put dropout on the board.** This is the
+handoff document: it records what the leaderboard actually says, what is closed, and what to do
+next. Read it with `CLAUDE.md` (contracts, measurements, per-round detail),
+`Track_1/board_rounds.py` (every number in Part 1 is reproducible from it) and
+**`Track_1/plan/plan_20260902.md` (the CURRENT round's plan and recorded predictions)**.
 
-**One-line state:** Track 1 sits at **80.643823** (round 13, its best) and Track 2 enters at
-**80.652944** — and round 13 established that *the two tracks score the same hidden data with
-the same combination rule*, so a day's two slots are **one controlled A/B**, not two unrelated
-submissions. The round also refitted the weights: **`tke` fell to 0.097 and `rel_l2` rose to
-0.582**, which retires the variance-head programme and settles ALPHA at 0.60. Model progress
-is still stalled — the accuracy gap to the leader is ~11.8 % of error and nothing in the
-toolkit delivers it.
+**One-line state:** **Track 2 sits at 80.852826** (round 2, 8 all-data dropout members —
+the account's best on either board) and **Track 1 at 80.643823** (round 13), the difference
+being only that the dropout package has never been submitted on Track 1. Leader 81.76136 ⇒
+**gap 0.909 ≈ 9.6 % of error.** Round 14's pre-registered 2×2 came back *blend null, dropout
+gains*: the gated mean-blend returned **all four error subscores bit-identical** to round 13's,
+so **the hidden set is INSIDE the training speed range** — the promised unseen Reynolds numbers
+are interior, and every Re-*extrapolation* instrument (`relo`, `rehi`, band 0) is retired — while
+**dropout transferred at +0.200**, which is therefore in-range regularization and not
+extrapolation robustness. Weights refit on **twelve pooled rounds**: rel_l2 0.568 · tke 0.085 ·
+mvpe 0.029 · time 0.091 · sps 0.226, and `w_time` is now *measured* at 0.0956 off the R13/R14
+pair. Model progress is no longer flat, but it moved through **regularization**, not capacity.
 
 **Revision, 2026-08-31 evening.** Two things changed the plan:
 
@@ -477,6 +483,63 @@ boards returned two SPS values for one band**:
 * SPS's ceiling at board accuracy is `100·a = 70.63` and we score 39.69. The remaining 31
   points are **coverage**, i.e. accuracy — there is no band that captures them.
 
+### 1.18 Round 14: the hidden set is inside the training range; dropout +0.200
+
+Two submissions on 2026-09-02 14:57, both clean A/Bs against a package already on their own
+board. Plan and full reasoning: `Track_1/plan/plan_20260902.md`.
+
+| | id | rel_l2 | tke | mvpe | time | sps | **final** | vs baseline |
+|---|---|---|---|---|---|---|---|---|
+| **T1 R14** gated mean-blend β 0.15, R13's members and R13's bit-identical band | 912521 | 94.679785 | 77.983720 | 93.613336 | 92.978725 | 39.689258 | **80.630755** | R13: four error subscores **bit-identical**, `time` −0.137 |
+| **T2 R2** 8 all-data dropout members (4×0.05, 4×0.15), α 0.60 | 912522 | 94.787655 | 77.667926 | 93.882222 | 93.633350 | 40.148056 | **80.852826** | T2 R1: **+0.200** |
+
+**1. φ = 0. The hidden set is inside the training speed range.** The blend fires only for
+windows whose mean streamwise speed leaves [0.0375, 0.2969] m/s, and all four error subscores
+came back identical to six decimals — not one hidden window is outside. The "unseen Reynolds
+numbers" are **interior**: interpolation, not extrapolation. `BLEND_BETA` returns to 0.0 in
+every package (keep the code, drop the feature), and **`val_relo`, `val_rehi` and band 0 of the
+Re-band k-fold are retired as decision instruments**, along with the `--sim-loss full` gain
+that lived entirely inside them (§P4, round 14). The arm was designed so it could not lose;
+what it bought was the answer, and **the null is the measurement**.
+
+**2. Dropout transferred: +0.200, the largest real gain since round 10.** In error terms
+against T2 R1: rel-L2 **−1.85 %**, TKE +1.60 %, MVPE −7.8 %, SPS **+1.05 %** (+0.418). Read
+with arm 1 — *blend null, dropout gains* — the benefit is **not** Reynolds extrapolation but
+in-range regularization. The **Re-band k-fold's interior bands 1–4** (rel −2.6 %) are the local
+numbers closest to the board; the AoA 15-20 proxy had rel's **sign wrong** (+0.66 %). Every
+instrument sits inside the **~4 % resolution limit**, so this is *"the closest instrument had
+the sign right"*, not *"the instrument is confirmed"*.
+→ **Track 1's best is still 80.644** only because dropout8 was never submitted there. It is the
+next Track-1 slot, predicted 80.85 ± 0.07.
+
+**3. `w_time` is measured, not fitted: 0.0956.** R13 and R14 differ in `time_score` alone
+(−0.136707) and `final` moved −0.013068. First weight in this project read off a
+single-subscore A/B, and it agrees with the fit (0.091, admissible 0.038–0.169).
+
+**4. Twelve-round weights, POOLED across both tracks** (§1.16 licenses the pooling; the pooled
+max residual 0.038 is no worse than the nine T1 rounds' 0.035, which is the evidence pooling
+hid no second rule):
+
+| | rel_l2 | tke | mvpe | time | sps |
+|---|---|---|---|---|---|
+| **twelve-round** | **0.568** | 0.085 | 0.029 | 0.091 | **0.226** |
+| admissible | 0.294–0.679 | 0.010–0.187 | 0.000–0.237 | 0.038–0.169 | 0.192–0.248 |
+| nine-round | 0.582 | 0.097 | 0.011 | 0.087 | 0.224 |
+
+Nothing moved by more than its own interval; every round-13 conclusion stands. A 10 % error cut
+is worth ~+0.95 `final`.
+
+**5. Harness changes (plan §2), all committed.** `board_rounds.py` and `final_v9.py` carry all
+twelve rounds and fit pooled across tracks; `leaderboard/lb.py` re-derives everything from them
+and its calibration section now includes Track-2 rounds (level ratios over both tracks, delta
+chains *within* a track, and a transition whose proxy did not move — R13→R14 — skipped). Pooled
+ratios: rel **1.072**, tke **1.140**, mvpe **1.477**; **delta residual rms 4.01 %**, the
+refitted resolution limit. **The decision instrument for a package candidate is now the Re-band
+k-fold on INTERIOR bands 1–3 pooled** (Re 8850–22875, ≈2150 windows) — it matches the board's
+situation and has 6× the AoA proxy's sample, but costs K trainings, so it *confirms* a
+candidate; screening stays on the AoA 15-20 proxy + full split, always at ensemble size
+(§1.15).
+
 ## Part 2 — Closed. Do not re-propose without new evidence.
 
 Everything here was closed by measurement, with the file that measured it. The list exists so a
@@ -745,7 +808,15 @@ only ever been swept UP, on the strength of the ceiling that turned out not to e
 **`--lam-tgrad`** (match the target's temporal derivative — a fluctuation-shape loss, and the
 temporal analogue of `--lam-grad`, the only auxiliary loss that has ever worked here).
 
-### P3b — DONE and SHIPPING. The gated mean-blend passed the ensemble gate.
+### P3b — CLOSED-NULL on the board. The gated mean-blend measured where the hidden set is.
+
+> **CLOSED 2026-09-02 (§1.18).** Round 14 shipped it and the board returned R13's four error
+> subscores **bit-identical**: the gate never fired, φ = 0, the hidden set is inside the
+> training speed range. The arm was built so that the null would itself be informative, and
+> that is what it delivered. **`BLEND_BETA` → 0.0 in every package** — the code stays (with
+> `verify/blend_path.py`), the feature does not. Everything below is the pre-board record; its
+> `relo`/`rehi` numbers are correct and now measure a regime the board does not contain. Next
+> steps: `Track_1/plan/plan_20260902.md`.
 
 `report_20260831_round13.md` §7 and §33. Out of distribution the fluctuation transfers and the
 mean field does not — decomposing two identical-recipe controls, the **mean part** of the error
