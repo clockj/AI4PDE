@@ -111,21 +111,51 @@ def section_progress(B, w):
 
 
 # ---------------------------------------------------------------------------------------
+def calib(B):
+    """Level ratios (all rounds, both tracks) and delta residuals (WITHIN each track).
+
+    The two tracks share one test set and one scoring rule (ROADMAP 1.16), so a Track-2 round
+    with a recorded proxy calibrates exactly as a Track-1 one does.  The DELTA chain is
+    per-track, though: a round-to-round move only means something between two packages scored
+    on the same board in sequence.  Transitions whose proxy is bit-identical to the previous
+    round's are skipped -- R13 -> R14 changed nothing locally (the blend gate never fires on
+    validation data), so it carries no information about transfer and would only pad the
+    residual set with zeros.
+    """
+    R = [r for r in B if r.get("actual") and r.get("proxy")]
+    rat = {m: [] for m in M}
+    for r in R:
+        for m in M:
+            rat[m].append(err(r["actual"][m]) / r["proxy"][m])
+    rows, res = [], []
+    for tr in sorted({r["track"] for r in R}):
+        Rt = [r for r in R if r["track"] == tr]
+        for i in range(1, len(Rt)):
+            a, b = Rt[i - 1], Rt[i]
+            if all(b["proxy"][m] == a["proxy"][m] for m in M):
+                continue
+            for m in M:
+                pd = (b["proxy"][m] / a["proxy"][m] - 1) * 100
+                bd = (err(b["actual"][m]) / err(a["actual"][m]) - 1) * 100
+                res.append(bd - pd)
+                rows.append((a["round"], b["round"], m, pd, bd, bd - pd))
+    rms = float(np.sqrt(np.mean(np.square(res)))) if res else float("nan")
+    return R, rat, rows, res, rms
+
+
 def section_calib(B):
     print("\n=== 3. Local -> board calibration, and the resolution limit ===\n")
-    R = [r for r in B if r.get("actual") and r.get("proxy") and r["track"] == 1]
+    R, rat, rows, res, rms = calib(B)
     print("  The proxy is the held-out TWIN set on the AoA 15-20 slice of val_unseen, scored at")
-    print("  the ALPHA the package ships. `r_x` is board error / proxy error.\n")
-    print(f"  {'round':<6s} " + "  ".join(f"{'proxy ' + m:>10s}" for m in M)
+    print("  the ALPHA the package ships. `r_x` is board error / proxy error.  BOTH TRACKS are")
+    print("  listed: they share one test set and one scoring rule (ROADMAP 1.16).\n")
+    print(f"  {'round':<6s} {'tr':>2s} " + "  ".join(f"{'proxy ' + m:>10s}" for m in M)
           + "  " + "  ".join(f"{'board ' + m:>10s}" for m in M)
           + "  " + "  ".join(f"{'r_' + m:>6s}" for m in M))
-    rat = {m: [] for m in M}
     for r in R:
         p, a = r["proxy"], r["actual"]
         b = {m: err(a[m]) for m in M}
-        for m in M:
-            rat[m].append(b[m] / p[m])
-        print(f"  {r['round']:<6s} " + "  ".join(f"{p[m]:10.5f}" for m in M)
+        print(f"  {r['round']:<6s} {r['track']:>2d} " + "  ".join(f"{p[m]:10.5f}" for m in M)
               + "  " + "  ".join(f"{b[m]:10.5f}" for m in M)
               + "  " + "  ".join(f"{b[m]/p[m]:6.3f}" for m in M))
     print("\n  LEVELS are well calibrated:")
@@ -134,31 +164,30 @@ def section_calib(B):
         print(f"    r_{m:<5s} mean {v.mean():.3f}   spread {v.min():.3f}-{v.max():.3f} "
               f"(+-{(v.max()-v.min())/2/v.mean()*100:.1f} %)")
 
-    print("\n  DELTAS are not. Round-to-round, how much of the board's move did the proxy")
-    print("  explain? (`residual` = board move - proxy move, in percent of the error.)\n")
+    print("\n  DELTAS are not. Round-to-round WITHIN A TRACK, how much of the board's move did")
+    print("  the proxy explain? (`residual` = board move - proxy move, in percent of the error.)\n")
     print(f"  {'transition':<16s} {'metric':<6s} {'proxy d%':>9s} {'board d%':>9s} {'residual':>9s}")
-    res = []
-    for i in range(1, len(R)):
-        a, b = R[i - 1], R[i]
-        for m in M:
-            pd = (b["proxy"][m] / a["proxy"][m] - 1) * 100
-            bd = (err(b["actual"][m]) / err(a["actual"][m]) - 1) * 100
-            res.append(bd - pd)
-            print(f"  {a['round'] + ' -> ' + b['round']:<16s} {m:<6s} {pd:+9.2f} {bd:+9.2f} "
-                  f"{bd - pd:+9.2f}")
+    for a, b, m, pd, bd, rr in rows:
+        print(f"  {a + ' -> ' + b:<16s} {m:<6s} {pd:+9.2f} {bd:+9.2f} {rr:+9.2f}")
     res = np.array(res)
-    print(f"\n  residual rms {np.sqrt((res**2).mean()):.2f} %, range {res.min():+.2f} .. "
-          f"{res.max():+.2f} %")
-    print("\n  >>> THE RESOLUTION LIMIT. A local delta smaller than ~"
-          f"{np.sqrt((res**2).mean()):.0f} % of the error does not")
+    print(f"\n  residual rms {rms:.2f} %, range {res.min():+.2f} .. {res.max():+.2f} %")
+    print(f"\n  >>> THE RESOLUTION LIMIT. A local delta smaller than ~{rms:.0f} % of the error"
+          " does not")
     print("  >>> survive the trip to the board, and MUST NOT be used to choose a package.")
-    print("  >>> Every measured improvement since 2026-08-08 has been smaller than this.")
-    print("  >>> `mvpe` even inverts sign between the proxy and the board (R12->R13:")
-    print("  >>> proxy +2.34 %, board -3.17 %), which is why it is worth 0.011 and ignored.")
+    print("  >>> Every measured improvement since 2026-08-08 has been smaller than this, and so")
+    print("  >>> was dropout's (-2.6 % on the interior Re bands, +0.66 % on the AoA proxy) --")
+    print("  >>> which is why T2R2's +0.200 is 'the closest instrument was right about the")
+    print("  >>> sign', not 'the instrument is confirmed'.")
+    print("  >>> `mvpe` inverts sign between the proxy and the board in BOTH tracks (R12->R13:")
+    print("  >>> proxy +2.34 %, board -3.17 %; T2R1->T2R2: proxy +1.25 %, board -7.79 %), which")
+    print("  >>> is why it is worth 0.029 and ignored.")
 
     print("\n  Other calibrated constants, and where they came from:")
     print("    SPS element-tail stretch f   1.360 (T1) / 1.350 (T2)   calib_band13.py, round 13")
     print("      -- two boards returned two SPS values for one band, so this is measured twice")
+    print("    w_time = 0.0956   R13 vs R14: identical error subscores, `time` alone moved")
+    print("      -- the only weight in the family read off a single-subscore A/B, and it agrees")
+    print("         with the twelve-round fit (0.091, admissible 0.038-0.169)")
     print("    board ms = 2.616 + 0.435*inv + 0.803*local_ms   rms 0.690 ms, 7 rounds")
     print("      -- residuals are ordered by DATE: the eval machine drifts, the intercept is not")
     print("         a constant. The one clean number is the same-day R12/R13 pair: an")
@@ -352,18 +381,19 @@ def html(B, Rn, w, path):
     norm = [r["actual"]["final"] + (ref - r["actual"]["time"]) * w[3] for r in T]
     resid = [r["actual"]["final"] - r["pred"]["final"] for r in B
              if r.get("actual") and (r.get("pred") or {}).get("final")]
-    R = [r for r in B if r.get("actual") and r.get("proxy") and r["track"] == 1]
-    rows, res = [], []
-    for i in range(1, len(R)):
-        a, b = R[i - 1], R[i]
-        for m in M:
-            pd = (b["proxy"][m] / a["proxy"][m] - 1) * 100
-            bd = (err(b["actual"][m]) / err(a["actual"][m]) - 1) * 100
-            res.append(bd - pd)
-            rows.append((f'{a["round"]}&#8594;{b["round"]}', m, pd, bd, bd - pd))
-    rms = float(np.sqrt(np.mean(np.square(res))))
+    R, rat0, rawrows, res, rms = calib(B)
+    rows = [(f"{a}&#8594;{b}", m, pd, bd, rr) for a, b, m, pd, bd, rr in rawrows]
     span = max(norm[-4:]) - min(norm[-4:])
     best = max(T, key=lambda r: r["actual"]["final"])
+    # Best on either board, and the constant-latency series for Track 2 alongside Track 1's.
+    scored = [r for r in B if r.get("actual")]
+    best_any = max(scored, key=lambda r: r["actual"]["final"])
+    T2 = [r for r in scored if r["track"] == 2]
+    norm2 = [r["actual"]["final"] + (ref - r["actual"]["time"]) * w[3] for r in T2]
+    gap = 81.76136 - best_any["actual"]["final"]
+    # Exchange rate, re-priced with the twelve-round weights: 10 % of error removed is worth
+    # ~0.948 `final` (Track_1/exchange_v9.py, round 9's instrument, round 13's weights).
+    gap_pct = gap / 0.0948
 
     o = [HTML_HEAD, '<div class="wrap">',
          "<h1>RealPDE calibration log</h1>",
@@ -377,10 +407,11 @@ def html(B, Rn, w, path):
     o.append('<div class="strip">')
     for k, v, n in [
             ("best, track 1", f"{best['actual']['final']:.3f}", f"round {best['round']}"),
+            ("best, track 2", f"{max(r['actual']['final'] for r in T2):.3f}",
+             f"round {max(T2, key=lambda r: r['actual']['final'])['round']}"),
             ("leader", "81.761", "np-user &middot; 08-25"),
-            ("gap", f"{81.76136 - T[-1]['actual']['final']:.3f}",
-             "&asymp;&thinsp;11.8% of error"),
-            ("last 4 @ const t", f"{span:.3f}", "span, four rounds"),
+            ("gap", f"{gap:.3f}", f"&asymp;&thinsp;{gap_pct:.1f}% of error"),
+            ("track 1, last 4 @ const t", f"{span:.3f}", "span, four rounds"),
             ("prediction rms", f"{np.sqrt(np.mean(np.square(resid))):.3f}",
              f"{len(resid)} predicted rounds"),
             ("resolution limit", f"{rms:.1f}%", "of error, to transfer")]:
@@ -389,12 +420,18 @@ def html(B, Rn, w, path):
     o.append("</div>")
 
     o.append(f'<div class="thesis"><span class="eyebrow">read this first</span>'
-             f'At constant board latency the last four rounds span <b>{span:.3f}</b> points. '
-             f'The model has not measurably improved since 2026-08-08 &mdash; what improved is '
-             f'latency, one composition constant, and our knowledge of the scoring rule. '
-             f'Section&nbsp;3 measures why: the proxy predicts the board&rsquo;s <i>level</i> '
-             f'to &plusmn;1&ndash;3%, but explains almost none of its <i>movement</i>, and every '
-             f'gain we have chased has been smaller than that residual.</div>')
+             f'At constant board latency Track&nbsp;1&rsquo;s last four rounds span '
+             f'<b>{span:.3f}</b> points &mdash; the plateau since 2026-08-08 is unbroken there, '
+             f'and what improved was latency, one composition constant, and our knowledge of '
+             f'the scoring rule. <b>The first thing to break it is Track&nbsp;2&rsquo;s dropout '
+             f'package</b>: T2R2 normalises to <b>{max(norm2):.3f}</b>, +{max(norm2) - max(norm):.3f} '
+             f'over the best Track-1 round at the same latency, for +0.200 raw. Its stablemate '
+             f'R14 is the other half of the pair &mdash; a gated mean-blend that returned all '
+             f'four error subscores <i>bit-identical</i> to R13, proving the hidden set lies '
+             f'inside the training speed range. Section&nbsp;3 is why both readings are hedged: '
+             f'the proxy predicts the board&rsquo;s <i>level</i> to &plusmn;1&ndash;3%, but '
+             f'explains almost none of its <i>movement</i> ({rms:.1f}% residual rms), and '
+             f'dropout&rsquo;s local signal was smaller than that on every instrument.</div>')
 
     # 1 -----------------------------------------------------------------------------------
     o.append('<section><div class="head"><h2>Submissions</h2>'
@@ -454,8 +491,11 @@ def html(B, Rn, w, path):
              '<span class="eyebrow">% of error</span>'
              '<p>Proxy = the held-out <i>twin</i> members on the AoA&nbsp;15&ndash;20 slice of '
              '<code>val_unseen</code>, scored at the ALPHA that package ships. '
-             '<code>r</code> is board error divided by proxy error.</p></div>'
-             "<div class='scroll'><table><thead><tr><th class='l'>Round</th>"
+             '<code>r</code> is board error divided by proxy error. Both tracks are listed &mdash; '
+             'they share one test set and one scoring rule &mdash; but the delta chain below is '
+             'computed <i>within</i> a track, and a transition whose proxy did not move '
+             '(R13&#8594;R14) is skipped.</p></div>'
+             "<div class='scroll'><table><thead><tr><th class='l'>Round</th><th>Tr</th>"
              + "".join(f"<th>proxy {m}</th>" for m in M)
              + "".join(f"<th>board {m}</th>" for m in M)
              + "".join(f"<th>r_{m}</th>" for m in M) + "</tr></thead><tbody>")
@@ -464,12 +504,12 @@ def html(B, Rn, w, path):
         pp, aa = r["proxy"], {m: err(r["actual"][m]) for m in M}
         for m in M:
             rat[m].append(aa[m] / pp[m])
-        o.append(f"<tr><td class='l'><b>{r['round']}</b></td>"
+        o.append(f"<tr><td class='l'><b>{r['round']}</b></td><td class='d'>{r['track']}</td>"
                  + "".join(f"<td class='d'>{pp[m]:.5f}</td>" for m in M)
                  + "".join(f"<td class='d'>{aa[m]:.5f}</td>" for m in M)
                  + "".join(f"<td><b>{aa[m]/pp[m]:.3f}</b></td>" for m in M) + "</tr>")
     o.append("<tr><td class='l d'>mean &plusmn;&frac12;range</td>"
-             + "<td></td>" * 6
+             + "<td></td>" * 7
              + "".join(f"<td class='d'>{np.mean(rat[m]):.3f}&#177;"
                        f"{(max(rat[m])-min(rat[m]))/2:.3f}</td>" for m in M)
              + "</tr></tbody></table></div>")
@@ -478,15 +518,21 @@ def html(B, Rn, w, path):
              f'&plusmn;1&ndash;3%, so the proxy predicts the board&rsquo;s level well. Round to '
              f'round it explains almost none of the board&rsquo;s movement &mdash; residual rms '
              f'<b>{rms:.1f}%</b> of the error, range {min(res):+.1f} to {max(res):+.1f}%, and '
-             f'<code>mvpe</code> inverts sign between R12 and R13. <b>A local delta below '
-             f'~{rms:.0f}% of the error does not survive the trip and must not be used to choose '
-             f'a package</b> &mdash; and every improvement measured since 2026-08-08 has been '
-             f'smaller than it.</div>')
+             f'<code>mvpe</code> inverts sign in both tracks (R12&#8594;R13 proxy +2.34%, board '
+             f'&minus;3.17%; T2R1&#8594;T2R2 proxy +1.25%, board &minus;7.79%). <b>A local delta '
+             f'below ~{rms:.0f}% of the error does not survive the trip and must not be used to '
+             f'choose a package</b> &mdash; every improvement measured since 2026-08-08 has been '
+             f'smaller than it, dropout&rsquo;s included. That is why T2R2&rsquo;s +0.200 reads '
+             f'as <i>the closest instrument had the sign right</i> (interior Re-band k-fold, rel '
+             f'&minus;2.6%; the AoA&nbsp;15&ndash;20 proxy said +0.66%, the wrong way) rather '
+             f'than as a confirmed local&rarr;board law.</div>')
     o.append(_residual_svg(rows, rms))
     o.append("<p class='stamp' style='margin:14px 0 0'>also calibrated &mdash; sps element-tail "
              "f 1.360 (T1) / 1.350 (T2), calib_band13.py &middot; board ms = 2.616 + "
              "0.435&times;inv + 0.803&times;local, rms 0.690 over 7 rounds, residuals ordered "
-             "by date &middot; one invocation = 0.52&ndash;0.56 board ms = 0.036 final</p>"
+             "by date &middot; one invocation = 0.52&ndash;0.56 board ms = 0.036 final "
+             "&middot; w_time = 0.0956, measured directly from R13 vs R14 (identical error "
+             "subscores, <code>time</code> alone moved)</p>"
              "</section>")
 
     # 4 -----------------------------------------------------------------------------------
@@ -514,7 +560,10 @@ def html(B, Rn, w, path):
                  f"<td class='l'>{r.get('shipped') or '<span class=d>&mdash;</span>'}</td></tr>")
     o.append("</tbody></table></div></section>")
 
-    o.append("<footer>subscore weights, nine rounds, max residual 0.035 &nbsp;&mdash;&nbsp; "
+    import final_v9                       # the fit also carries two collaborator rounds that
+    n_fit = len(final_v9.BOARD)           # were never staged here, so it is wider than board.jsonl
+    o.append(f"<footer>subscore weights, {n_fit} rounds pooled across both tracks, "
+             f"max residual {abs(final_v9.RESID).max():.3f} &nbsp;&mdash;&nbsp; "
              + " &nbsp; ".join(f"{n} {v:.3f}" for n, v in zip(SUB, w))
              + "<br>sources: leaderboard/board.jsonl &middot; leaderboard/runs.jsonl "
                "&middot; Track_1/final_v9.py &middot; Track_1/proxy_calib.py</footer></div>")

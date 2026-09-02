@@ -1,9 +1,15 @@
 """Every scored Codabench round, and what the five subscores imply about `final_score`.
 
 v9 stopped publishing the combination rule.  Round 9 inferred a weight family from three
-rounds; round 10 falsified the no-intercept form with a fourth.  This is the fifth, and with
-five rounds the family is tight enough to be useful -- and, for the first time, the
-no-intercept model is OVERDETERMINED and can be tested rather than assumed.
+rounds; round 10 falsified the no-intercept form with a fourth.  With TWELVE scored rounds the
+no-intercept model is comfortably OVERDETERMINED (7 dof) and is tested, not assumed.
+
+**The fit POOLS BOTH TRACKS.**  Round 13 shipped the identical package to Track 1 and Track 2
+on the same day and the two boards returned the same four error subscores to <=0.3 % of the
+error (mvpe excepted, and even that is one window's worth), and Track 1's fitted weights
+reprice Track 2's subscores to 80.650 against a published 80.653 -- so the two tracks are one
+test set under one scoring rule (ROADMAP 1.16).  Pooling costs nothing and buys three rounds.
+Set `POOL_TRACKS = False` to recover the Track-1-only fit.
 
     python board_rounds.py
 """
@@ -29,9 +35,15 @@ ROUNDS = [
     ("X2  collaborator", "2026-08-11", 886137, 94.461620, 78.843945, 92.926545, 93.263011, 38.878534, 80.372179),
     ("R12 11 memb/4inv", "2026-08-31", 909571, 94.490331, 79.167748, 93.418065, 91.803630, 39.637266, 80.515842),
     ("R13 8memb/1inv a60", "2026-08-31", 910641, 94.679785, 77.983720, 93.613336, 93.115432, 39.689258, 80.643823),
+    # R14 is R13's members, R13's band and R13's ALPHA plus the GATED MEAN-BLEND (beta 0.15,
+    # fired only for windows whose mean speed leaves the training range).  All four error
+    # subscores came back BIT-IDENTICAL to R13's, so the gate never fired on a single hidden
+    # window: the hidden set is INSIDE the training speed range and phi = 0.  The only moving
+    # part is `time`, which makes the pair a direct measurement of `w_time` (see main()).
+    ("R14 blend8/1inv a60", "2026-09-02", 912521, 94.679785, 77.983720, 93.613336, 92.978725, 39.689258, 80.630755),
 ]
 
-UNSCORED = []   # all eight rounds now have full subscores
+UNSCORED = []   # every round on both tracks now has full subscores
 
 # ---------------------------------------------------------------------------------------
 # TRACK 2.  Same shape:  (label, date, submission id, rel, tke, mvpe, time, sps, final)
@@ -56,20 +68,37 @@ UNSCORED = []   # all eight rounds now have full subscores
 # Track 2's `final_score` combination is separately unpublished. Do not assume it is Track
 # 1's: with one round it is not identified at all.  (For the record, Track 1's fitted weights
 # applied to T2 R1's subscores give 80.667 against the published 80.653.)
+#
+# CONFIRMED 2026-09-02: with T2 R2 the pooled twelve-round fit has max residual 0.038, no worse
+# than the nine Track-1 rounds alone (0.035), which is the direct evidence that pooling is
+# legitimate -- a different combination rule on Track 2 would have shown up as a residual.
 ROUNDS_T2 = [
     ("T2R1 8memb/1inv a60", "2026-08-31", 910642, 94.694512, 77.942224, 93.399401, 93.287797, 39.730331, 80.652944),
+    # 8 all-data DROPOUT members (4x0.05, 4x0.15), 1 invocation, ALPHA 0.60.  +0.200 over T2R1
+    # and the account's best score on either board.
+    ("T2R2 dropout8/1inv a60", "2026-09-02", 912522, 94.787655, 77.667926, 93.882222, 93.633350, 40.148056, 80.852826),
 ]
 
-X = np.array([r[3:8] for r in ROUNDS], float)
-Y = np.array([r[8] for r in ROUNDS], float)
+# The fit pools both tracks -- see the module docstring.  ROUNDS first, then ROUNDS_T2, so the
+# row order matches Track_1/final_v9.py:BOARD exactly.
+POOL_TRACKS = True
+
+FIT_ROUNDS = ROUNDS + ROUNDS_T2 if POOL_TRACKS else ROUNDS
+X = np.array([r[3:8] for r in FIT_ROUNDS], float)
+Y = np.array([r[8] for r in FIT_ROUNDS], float)
+
+# `w_time`, MEASURED DIRECTLY rather than fitted.  R13 and R14 differ in `time_score` alone
+# (the blend gate never fired, so the four error subscores are bit-identical):
+#   d time = 92.978725 - 93.115432 = -0.136707,   d final = 80.630755 - 80.643823 = -0.013068
+W_TIME_DIRECT = (80.630755 - 80.643823) / (92.978725 - 93.115432)   # = 0.0956
 
 
 def fit(nonneg: bool = True):
     """Least squares for `final = w . subscores`, with sum(w) = 1 and no intercept.
 
-    Eight rounds against five weights plus one constraint is comfortably overdetermined, so
-    unlike rounds 9-10 this is a TESTABLE model rather than an exact interpolation: the
-    residual is now evidence.
+    Twelve pooled rounds against five weights plus one constraint is comfortably
+    overdetermined (7 dof), so unlike rounds 9-10 this is a TESTABLE model rather than an
+    exact interpolation: the residual is now evidence.
     """
     from scipy.optimize import nnls
     A = np.vstack([X, np.ones(5) * 100.0])       # scale the constraint row into range
@@ -107,11 +136,11 @@ def weight_bounds(tol_mult: float = 2.0, tol_floor: float = 0.01):
 
 def compare(a_label, b_label):
     """Subscore-by-subscore delta between two rounds, priced with the fitted weights."""
-    ia = [r[0].startswith(a_label) for r in ROUNDS].index(True)
-    ib = [r[0].startswith(b_label) for r in ROUNDS].index(True)
+    ia = [r[0].startswith(a_label) for r in FIT_ROUNDS].index(True)
+    ib = [r[0].startswith(b_label) for r in FIT_ROUNDS].index(True)
     w, _ = fit()
     d = X[ib] - X[ia]
-    print(f"\n=== {ROUNDS[ib][0].strip()} vs {ROUNDS[ia][0].strip()} ===")
+    print(f"\n=== {FIT_ROUNDS[ib][0].strip()} vs {FIT_ROUNDS[ia][0].strip()} ===")
     print(f"  {'subscore':<10s} {'delta':>9s} {'x weight':>9s} {'= final':>9s}")
     for n, dv, wv in zip(NAMES, d, w):
         print(f"  {n:<10s} {dv:>+9.3f} {wv:>9.3f} {dv * wv:>+9.3f}")
@@ -121,15 +150,18 @@ def compare(a_label, b_label):
 
 def main():
     print("=== Scored rounds ===")
-    print(f"{'round':<17s} {'date':<11s} {'id':>7s}  " +
+    print(f"{'round':<22s} {'tr':>2s} {'date':<11s} {'id':>7s}  " +
           "  ".join(f"{n:>9s}" for n in NAMES) + "      final")
-    for r in ROUNDS:
-        print(f"{r[0]:<17s} {r[1]:<11s} {r[2]:>7d}  " +
+    for r in FIT_ROUNDS:
+        tr = 2 if r in ROUNDS_T2 else 1
+        print(f"{r[0]:<22s} {tr:>2d} {r[1]:<11s} {r[2]:>7d}  " +
               "  ".join(f"{v:9.4f}" for v in r[3:8]) + f"  {r[8]:9.5f}")
 
     w, res, tol, bounds = weight_bounds()
     print("\n=== final_score = w . subscores,  sum(w) = 1,  w >= 0 ===")
-    print(f"  eight rounds, five weights -> 3 degrees of freedom")
+    print(f"  {len(FIT_ROUNDS)} rounds"
+          f"{' POOLED across both tracks' if POOL_TRACKS else ' (Track 1 only)'}"
+          f", five weights -> {len(FIT_ROUNDS) - 4} degrees of freedom")
     print(f"  max |residual| {res:.4f}   (an exact-fit artefact would be ~0 with 0 dof)")
     print(f"  weight interval = every non-negative weighting fitting to within {tol:.4f}\n")
     print(f"  {'subscore':<10s} {'fitted':>8s}   {'admissible':>18s}   round-9 claim")
@@ -138,46 +170,60 @@ def main():
         lo, hi = bounds[n]
         print(f"  {n:<10s} {v:>8.3f}   {lo:>8.3f} - {hi:<7.3f}   {r9[n]}")
 
+    print("\n  --- and one weight is MEASURED, not fitted ---")
+    print("  R13 and R14 differ in `time_score` alone: the gated mean-blend never fired on a")
+    print("  single hidden window, so all four error subscores came back bit-identical.")
+    print(f"    d time  {92.978725 - 93.115432:+.6f}")
+    print(f"    d final {80.630755 - 80.643823:+.6f}")
+    print(f"    => w_time = {W_TIME_DIRECT:.4f}   (fit {w[3]:.4f}, "
+          f"admissible {bounds['time'][0]:.3f}-{bounds['time'][1]:.3f})")
+    print("  A single-subscore A/B is the only way to read a weight without the fit; this one")
+    print("  lands at the fitted value, which is the first independent check the family has.")
+
     print("\n=== Deltas, R12 vs the two rounds that matter ===")
     compare("R10", "R12")
     compare("R11", "R12")
 
     print("\n=== Time-normalised final: what each round scores at a COMMON board latency ===")
-    print("  Board `time_score` swings 2.8 points across the eight rounds and is only partly")
+    print("  Board `time_score` swings 2.8 points across the twelve rounds and is only partly")
     print("  under our control, so the raw ranking conflates model quality with eval-machine")
     print("  luck. This holds time_score fixed at the median and re-prices the other four.")
     ref = float(np.median(X[:, 3]))
     lo_t, hi_t = bounds["time"]
     print(f"\n  reference time_score = {ref:.3f}\n")
-    print(f"  {'round':<17s} {'final':>9s} {'time adj':>9s} {'normalised':>11s}"
+    print(f"  {'round':<22s} {'final':>9s} {'time adj':>9s} {'normalised':>11s}"
           f" {'(range)':>16s}")
     rows = []
-    for r, x, y in zip(ROUNDS, X, Y):
+    for r, x, y in zip(FIT_ROUNDS, X, Y):
         adj = (ref - x[3]) * w[3]
         rng = sorted([(ref - x[3]) * lo_t, (ref - x[3]) * hi_t])
         rows.append((r[0], y, adj, y + adj, y + rng[0], y + rng[1]))
     for lab, y, adj, norm, a, b in rows:
-        print(f"  {lab:<17s} {y:>9.3f} {adj:>+9.3f} {norm:>11.3f}"
+        print(f"  {lab:<22s} {y:>9.3f} {adj:>+9.3f} {norm:>11.3f}"
               f" {a:>7.3f}-{b:<7.3f}")
     best = max(rows, key=lambda t: t[3])
     print(f"\n  best at constant latency: {best[0].strip()} ({best[3]:.3f})")
 
     print("\n=== Board latency, inverted from time_score ===")
-    print(f"  {'round':<17s} {'inv':>4s} {'local ms':>9s} {'board ms':>9s} "
+    print(f"  {'round':<22s} {'inv':>4s} {'local ms':>9s} {'board ms':>9s} "
           f"{'model':>7s} {'miss':>7s}")
     # local ms are 4060-EQUIVALENT (the A100 runs 1.850x faster; CLAUDE.md round 12).
     known = {"R6": (1, 2.648), "R7": (3, 1.282), "R9": (8, 2.211),
              "R10": (3, 3.598), "R11": (3, 2.002), "R12": (4, 2.235),
-             "R13": (1, 1.900)}
-    for r in ROUNDS:
+             "R13": (1, 1.900),
+             # R14: R13's package + the (never-firing) blend gate. 1.033 ms/window measured on
+             # the A100; x1.850 = 1.911 4060-equivalent.
+             "R14": (1, 1.911),
+             "T2R1": (1, 1.900), "T2R2": (1, 2.546)}
+    for r in FIT_ROUNDS:
         key = r[0].split()[0]
         t = 0.72896 * (100.0 / r[6] - 1.0) ** 2 * 1000.0
         if key in known:
             inv, loc = known[key]
             m = 4.447 + 0.324 * inv + 0.431 * loc
-            print(f"  {r[0]:<17s} {inv:>4d} {loc:>9.3f} {t:>9.3f} {m:>7.3f} {t - m:>+7.3f}")
+            print(f"  {r[0]:<22s} {inv:>4d} {loc:>9.3f} {t:>9.3f} {m:>7.3f} {t - m:>+7.3f}")
         else:
-            print(f"  {r[0]:<17s} {'?':>4s} {'?':>9s} {t:>9.3f}")
+            print(f"  {r[0]:<22s} {'?':>4s} {'?':>9s} {t:>9.3f}")
 
 
 if __name__ == "__main__":
