@@ -484,6 +484,69 @@ class UNetTwoHead(nn.Module):
         return self.head_field(u1), logstd
 
 
+class UFNO2d(nn.Module):
+    """Copy of `Track_1/unet/models_alt.py:UFNO2d` -- U-FNO (Wen et al., 2022), 15.6M at w96.
+
+    Vendored because `models_alt.py` is not in the archive and `load_any`'s repo-import branch
+    raises inside the evaluation container by design. Keep the two definitions in step: the
+    parameter NAMES and shapes are the contract, and `verify/diff_ufno.py` checks a checkpoint
+    loads into both and produces the same field to float32 noise.
+
+    Each block is spectral(h) + point(h) + unet(h) instead of the FNO's spectral + point. Mode
+    truncation is a low-pass and cannot represent the sharp zero set of the PIV field of view
+    and the airfoil body (3.3 % of elements, exactly zero); the 1x1 pointwise branch has no
+    spatial extent and cannot either. A two-level conv branch can, at a fraction of the
+    spectral block's parameters. Round 15 measured it as the largest single-model gain of the
+    project, with both of its controls negative -- a dilated ResNet with the same global
+    receptive field and no spectral machinery LOSES, and a plain U-Net at the same width loses
+    harder, so this is the FNO plus a local branch and not a conv net in disguise.
+
+    `dropout` is accepted and ignored: it is a training-time regularizer, the module is only
+    ever run in eval() here, and Dropout2d holds no parameters, so a --dropout checkpoint loads
+    into this class unchanged.
+    """
+
+    def __init__(self, width: int = 96, modes_y: int = 8, modes_x: int = 12,
+                 n_layers: int = 4, var_head: bool = True, extra_ch: int = 0,
+                 dropout: float = 0.0):
+        super().__init__()
+        self.lift = nn.Sequential(nn.Conv2d(CH + extra_ch + 2, 128, 1), nn.GELU(),
+                                  nn.Conv2d(128, width, 1))
+        self.spec = nn.ModuleList(
+            [SpectralConv2d(width, modes_y, modes_x) for _ in range(n_layers)])
+        self.point = nn.ModuleList([nn.Conv2d(width, width, 1) for _ in range(n_layers)])
+        self.norm = nn.ModuleList([nn.GroupNorm(8, width) for _ in range(n_layers)])
+        self.down = nn.ModuleList()
+        self.up = nn.ModuleList()
+        for _ in range(n_layers):
+            self.down.append(nn.Sequential(nn.Conv2d(width, width, 3, stride=2, padding=1),
+                                           nn.GroupNorm(8, width), nn.GELU(),
+                                           nn.Conv2d(width, width, 3, padding=1),
+                                           nn.GroupNorm(8, width), nn.GELU()))
+            self.up.append(nn.Sequential(nn.Conv2d(2 * width, width, 3, padding=1),
+                                         nn.GroupNorm(8, width), nn.GELU()))
+        self.drop = nn.Identity()
+        self.head_field = nn.Sequential(nn.Conv2d(width, 128, 1), nn.GELU(),
+                                        nn.Conv2d(128, CH, 1))
+        self.head_logstd = None
+        if var_head:
+            self.head_logstd = nn.Sequential(nn.Conv2d(width, 128, 1), nn.GELU(),
+                                             nn.Conv2d(128, C, 1))
+        yy, xx = torch.meshgrid(torch.linspace(-1, 1, H), torch.linspace(-1, 1, W),
+                                indexing="ij")
+        self.register_buffer("grid", torch.stack([xx, yy])[None])
+
+    def forward(self, prev: torch.Tensor, detach_var: bool = False):
+        h = self.lift(torch.cat([prev, self.grid.expand(len(prev), -1, -1, -1)], 1))
+        for s, p, n, dn, up in zip(self.spec, self.point, self.norm, self.down, self.up):
+            d = nn.functional.interpolate(dn(h), size=h.shape[-2:], mode="nearest")
+            h = h + self.drop(torch.nn.functional.gelu(n(s(h) + p(h) + up(torch.cat([d, h], 1)))))
+        logstd = None
+        if self.head_logstd is not None:
+            logstd = self.head_logstd(h.detach() if detach_var else h)
+        return self.head_field(h), logstd
+
+
 def fuse(models):
     """Group `models` by architecture and fuse each FNO group. Order-preserving by first sight.
 
@@ -599,6 +662,15 @@ def load_any(path: str, device: str):
     """
     blob = torch.load(path, map_location=device)
     arch = blob.get("arch", "fno")
+    cfg0 = blob.get("config", {})
+    if arch == "ufno":
+        m = UFNO2d(blob.get("width", cfg0.get("width", 96)),
+                   blob.get("modes_y", 8), blob.get("modes_x", 12),
+                   blob.get("n_layers", 4), blob.get("var_head", True)).to(device)
+        m.load_state_dict(blob["model_state_dict"])
+        m.eval()
+        m.self_norm = _self_norm_of(blob)
+        return m
     if arch not in ("fno", "unet"):
         # ROUND-15 EXPERIMENTAL FAMILIES (afno / dilres / ufno / vit). They live in
         # `Track_1/unet/models_alt.py`, which is NOT vendored into the submission zip -- so

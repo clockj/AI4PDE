@@ -74,8 +74,14 @@ sed -i "s/^BLEND_BETA = .*/BLEND_BETA = $BETA/" Track_1/submit_fno/submission.py
 grep -H "^ALPHA = " Track_1/submit_fno/submission.py Track_2/submit/submission.py
 grep -H "^BLEND_BETA = " Track_1/submit_fno/submission.py
 
+# RPDE_FP16=1 stores the members' weights as float16. A width-24 package does not need it
+# (8 members = 32 MB); a width-96 one does -- 8 x 57.0 MB is 456 MB against a 256 MB cap, and
+# 8 x 28.5 MB is 228 MB. Measured cost: rel-L2 of the difference 5.5e-4 against a model rel-L2
+# of 0.078, which adds in quadrature to 2e-6 of the error. The strict gate below re-scores the
+# built archive through the official scoring.py, so a real degradation cannot slip past.
+FP16=""; [ "${RPDE_FP16:-0}" = "1" ] && FP16="--fp16"
 echo "=== 3/5  Track 1: build + strict gate ==================================="
-$PY Track_1/submit_fno/validate_strict.py --band Track_2/submit/band8.npz \
+$PY Track_1/submit_fno/validate_strict.py --band Track_2/submit/band8.npz $FP16 \
     --stage Track_1/submit_fno/_package8 --out Track_1/submit_fno/submission8.zip --ckpt $A
 if [ "$BETA" != "0.0" ]; then
   echo "--- blend gate (validate_strict cannot see this feature) ---"
@@ -84,7 +90,7 @@ if [ "$BETA" != "0.0" ]; then
 fi
 
 echo "=== 4/5  Track 2: build + strict gate ==================================="
-$PY Track_2/build_t2.py --band Track_2/submit/band8.npz --ckpt $A
+$PY Track_2/build_t2.py --band Track_2/submit/band8.npz $FP16 --ckpt $A
 $PY Track_2/validate_t2.py --zip Track_2/submission_t2.zip
 
 echo "=== 5/5  stage for upload =============================================="
