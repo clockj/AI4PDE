@@ -17,22 +17,29 @@ python leaderboard/lb.py --html     # also write ../../leaderboard.html — OUTS
 
 ## What it currently says
 
-* **At constant board latency Track 1 has not moved since 2026-08-08** — its last four rounds
-  span 0.008 points. **Track 2's dropout package is the first thing to break the plateau**:
-  T2R2 scores 80.853 raw (80.744 at the reference latency), +0.200 over the identical-but-for-
-  dropout T2R1.
+* **The plateau since 2026-08-08 is broken, and both breaks are regularization.** Dropout
+  (+0.200, T2R2) and then capacity at width 96 regularized harder (+0.166, **T2R3 81.019** —
+  the account's best on either board). Rounds R12–R14 still sit within 0.013 of each other at
+  constant latency.
+* **T2R3's gain arrived through `sps` (+1.01) and `tke`, while `rel_l2` got WORSE.** Capacity ×
+  dropout removes the per-element **tail**, not the rms — which is what SPS's containment
+  scoring pays for, and the first board demonstration of round 9's "tail reduction beats mean
+  reduction". `rel_l2` alone would have called the package a regression.
 * **R14's null is a measurement.** It shipped R13's package plus a mean-blend gated on the
   window's own speed, and the board returned all four error subscores *bit-identical* to R13's
   — the gate never fired, so the hidden set is inside the training speed range and the whole
   Re-*extrapolation* line is retired as a decision instrument. As a bonus the pair differs in
   `time_score` alone, which measures `w_time = 0.0956` directly.
-* **Levels calibrate, deltas do not.** The proxy→board ratios are stable to ±2–6 % (`rel` 1.072,
-  `tke` 1.140, `mvpe` 1.477), so the proxy predicts the board's *level* well. Round to round it
-  explains almost none of the board's *movement*: **residual rms 4.0 % of the error**, range
-  −9.0 to +5.9 %. `mvpe` inverts sign in both tracks.
-* **⇒ The resolution limit is ~4 % of error.** A local delta below that does not survive the
-  trip — dropout's included (−2.6 % on the interior Re bands, +0.66 % and the wrong sign on the
-  AoA proxy). T2R2 says the closest instrument had the sign right, not that it is confirmed.
+* **Levels calibrate, deltas do not.** The proxy→board ratios are stable to ±2–8 % (`rel` 1.068,
+  `tke` 1.136, `mvpe` 1.454), so the proxy predicts the board's *level* well. Round to round it
+  explains almost none of the board's *movement*: **residual rms 4.15 % of the error**, range
+  −9.7 to +5.9 %. `mvpe` inverts sign in both tracks.
+* **⇒ The resolution limit is ~4 % of error — but it is BLUNT, not conservative.** Dropout
+  (−2.6 % locally) and w96 (−1.2 % at 3-vs-3) both sat under it and both transferred. It gets
+  the sign right and the size wrong; do not read a margin off it either way. Corroboration that
+  the residual belongs to the proxy and not to a board draw: R14→R15 and T2R1→T2R2 are the
+  **same package change scored on the two boards** and their residuals agree to 0.7 pp on all
+  three metrics.
 * **`ens` is the most predictive column in `runs.jsonl`.** `ozdo` was +3.84 σ per model and
   −0.012 at four members; `--var-mlp`'s 3.9 % fixed-field TKE cut became +0.08. An arm that has
   not been measured at the ensemble size that ships has not been measured.
@@ -93,8 +100,8 @@ strings go through `tdata(en, zh)`, which is the fallback path above. SVG chart 
 
 | quantity | source | last measured |
 |---|---|---|
-| subscore weights | `Track_1/board_rounds.py` → `Track_1/final_v9.py`, nnls + LP over all board rounds, **pooled across both tracks** | 12 rounds, max residual 0.038 |
-| proxy → board ratios | `Track_1/proxy_calib.py` (needs a GPU; run once per round) | R10–R14 + T2R1/T2R2 |
+| subscore weights | `Track_1/board_rounds.py` → `Track_1/final_v9.py`, nnls + LP over all board rounds, **pooled across both tracks** | 14 rounds, max residual 0.044 |
+| proxy → board ratios | `predict_board.py --anchor` / `Track_1/proxy_calib.py` (needs a GPU; run once per round) | R10–R15 + T2R1…T2R3 |
 | SPS element-tail `f` | `Track_1/calib_band13.py`, inverted from a board SPS for a known band | 1.360 (T1) / 1.350 (T2) |
 | board latency | inverted from `time_score`; the clean number is the same-day R12/R13 pair | 0.52–0.56 ms per invocation |
 | `w_time` | R13 vs R14 — identical error subscores, `time` alone moved | 0.0956 (fit: 0.091) |

@@ -1,8 +1,8 @@
 """Every scored Codabench round, and what the five subscores imply about `final_score`.
 
 v9 stopped publishing the combination rule.  Round 9 inferred a weight family from three
-rounds; round 10 falsified the no-intercept form with a fourth.  With TWELVE scored rounds the
-no-intercept model is comfortably OVERDETERMINED (7 dof) and is tested, not assumed.
+rounds; round 10 falsified the no-intercept form with a fourth.  With FOURTEEN scored rounds the
+no-intercept model is comfortably OVERDETERMINED (9 dof) and is tested, not assumed.
 
 **The fit POOLS BOTH TRACKS.**  Round 13 shipped the identical package to Track 1 and Track 2
 on the same day and the two boards returned the same four error subscores to <=0.3 % of the
@@ -41,6 +41,11 @@ ROUNDS = [
     # window: the hidden set is INSIDE the training speed range and phi = 0.  The only moving
     # part is `time`, which makes the pair a direct measurement of `w_time` (see main()).
     ("R14 blend8/1inv a60", "2026-09-02", 912521, 94.679785, 77.983720, 93.613336, 92.978725, 39.689258, 80.630755),
+    # R15 is T2R2's EXACT member set on the Track-1 board -- the third cross-track identity
+    # check, and it passes: rel +0.15 %, tke -0.46 %, sps -0.02 % of the error against 912522,
+    # with mvpe the outlier again at -4.17 % (36 scored probe points per window, the smallest
+    # effective sample of the five, so the first place a one-window pool difference shows).
+    ("R15 dropout8/1inv a60", "2026-09-03", 913176, 94.780094, 77.747643, 94.122329, 93.180177, 40.140948, 80.835124),
 ]
 
 UNSCORED = []   # every round on both tracks now has full subscores
@@ -69,14 +74,22 @@ UNSCORED = []   # every round on both tracks now has full subscores
 # 1's: with one round it is not identified at all.  (For the record, Track 1's fitted weights
 # applied to T2 R1's subscores give 80.667 against the published 80.653.)
 #
-# CONFIRMED 2026-09-02: with T2 R2 the pooled twelve-round fit has max residual 0.038, no worse
-# than the nine Track-1 rounds alone (0.035), which is the direct evidence that pooling is
-# legitimate -- a different combination rule on Track 2 would have shown up as a residual.
+# CONFIRMED 2026-09-02, and again 2026-09-03: the pooled fit's max residual is 0.038 at twelve
+# rounds and 0.044 at fourteen, no worse than the nine Track-1 rounds alone (0.035) -- the
+# direct evidence that pooling is legitimate, since a different combination rule on Track 2
+# would have shown up as a residual.  Round 15 tightens it further: R15 shipped T2R2's EXACT
+# members to the Track-1 board and three of four error subscores came back within 0.5 % of the
+# error (rel +0.15 %, tke -0.46 %, sps -0.02 %; mvpe -4.17 %, the usual outlier).
 ROUNDS_T2 = [
     ("T2R1 8memb/1inv a60", "2026-08-31", 910642, 94.694512, 77.942224, 93.399401, 93.287797, 39.730331, 80.652944),
     # 8 all-data DROPOUT members (4x0.05, 4x0.15), 1 invocation, ALPHA 0.60.  +0.200 over T2R1
     # and the account's best score on either board.
     ("T2R2 dropout8/1inv a60", "2026-09-02", 912522, 94.787655, 77.667926, 93.882222, 93.633350, 40.148056, 80.852826),
+    # 8 all-data WIDTH-96 FNOs (4x dropout 0.30, 4x 0.45), 400 epochs, fp16-packed, ALPHA 0.60.
+    # NEW BEST on either board.  The gain is `sps` (+1.013) and `tke` (-2.9 % of error) while
+    # `rel_l2` got fractionally WORSE (+0.64 %): capacity x dropout buys the per-element TAIL,
+    # not the rms.  It paid 1.41 board ms for it (3.370 -> 4.780).
+    ("T2R3 w96x8/1inv a60 fp16", "2026-09-03", 913187, 94.755824, 78.174302, 93.739707, 92.508902, 41.160630, 81.019213),
 ]
 
 # The fit pools both tracks -- see the module docstring.  ROUNDS first, then ROUNDS_T2, so the
@@ -150,11 +163,11 @@ def compare(a_label, b_label):
 
 def main():
     print("=== Scored rounds ===")
-    print(f"{'round':<22s} {'tr':>2s} {'date':<11s} {'id':>7s}  " +
+    print(f"{'round':<24s} {'tr':>2s} {'date':<11s} {'id':>7s}  " +
           "  ".join(f"{n:>9s}" for n in NAMES) + "      final")
     for r in FIT_ROUNDS:
         tr = 2 if r in ROUNDS_T2 else 1
-        print(f"{r[0]:<22s} {tr:>2d} {r[1]:<11s} {r[2]:>7d}  " +
+        print(f"{r[0]:<24s} {tr:>2d} {r[1]:<11s} {r[2]:>7d}  " +
               "  ".join(f"{v:9.4f}" for v in r[3:8]) + f"  {r[8]:9.5f}")
 
     w, res, tol, bounds = weight_bounds()
@@ -191,7 +204,7 @@ def main():
     ref = float(np.median(X[:, 3]))
     lo_t, hi_t = bounds["time"]
     print(f"\n  reference time_score = {ref:.3f}\n")
-    print(f"  {'round':<22s} {'final':>9s} {'time adj':>9s} {'normalised':>11s}"
+    print(f"  {'round':<24s} {'final':>9s} {'time adj':>9s} {'normalised':>11s}"
           f" {'(range)':>16s}")
     rows = []
     for r, x, y in zip(FIT_ROUNDS, X, Y):
@@ -199,13 +212,13 @@ def main():
         rng = sorted([(ref - x[3]) * lo_t, (ref - x[3]) * hi_t])
         rows.append((r[0], y, adj, y + adj, y + rng[0], y + rng[1]))
     for lab, y, adj, norm, a, b in rows:
-        print(f"  {lab:<22s} {y:>9.3f} {adj:>+9.3f} {norm:>11.3f}"
+        print(f"  {lab:<24s} {y:>9.3f} {adj:>+9.3f} {norm:>11.3f}"
               f" {a:>7.3f}-{b:<7.3f}")
     best = max(rows, key=lambda t: t[3])
     print(f"\n  best at constant latency: {best[0].strip()} ({best[3]:.3f})")
 
     print("\n=== Board latency, inverted from time_score ===")
-    print(f"  {'round':<22s} {'inv':>4s} {'local ms':>9s} {'board ms':>9s} "
+    print(f"  {'round':<24s} {'inv':>4s} {'local ms':>9s} {'board ms':>9s} "
           f"{'model':>7s} {'miss':>7s}")
     # local ms are 4060-EQUIVALENT (the A100 runs 1.850x faster; CLAUDE.md round 12).
     known = {"R6": (1, 2.648), "R7": (3, 1.282), "R9": (8, 2.211),
@@ -214,16 +227,20 @@ def main():
              # R14: R13's package + the (never-firing) blend gate. 1.033 ms/window measured on
              # the A100; x1.850 = 1.911 4060-equivalent.
              "R14": (1, 1.911),
-             "T2R1": (1, 1.900), "T2R2": (1, 2.546)}
+             # R15: T2R2's members on Track 1, 1.023 ms A100 x1.850 = 1.893.
+             "R15": (1, 1.893),
+             "T2R1": (1, 1.900), "T2R2": (1, 2.546),
+             # T2R3: 8 fused width-96 members, 1.631 ms A100 x1.850 = 3.017.
+             "T2R3": (1, 3.017)}
     for r in FIT_ROUNDS:
         key = r[0].split()[0]
         t = 0.72896 * (100.0 / r[6] - 1.0) ** 2 * 1000.0
         if key in known:
             inv, loc = known[key]
             m = 4.447 + 0.324 * inv + 0.431 * loc
-            print(f"  {r[0]:<22s} {inv:>4d} {loc:>9.3f} {t:>9.3f} {m:>7.3f} {t - m:>+7.3f}")
+            print(f"  {r[0]:<24s} {inv:>4d} {loc:>9.3f} {t:>9.3f} {m:>7.3f} {t - m:>+7.3f}")
         else:
-            print(f"  {r[0]:<22s} {'?':>4s} {'?':>9s} {t:>9.3f}")
+            print(f"  {r[0]:<24s} {'?':>4s} {'?':>9s} {t:>9.3f}")
 
 
 if __name__ == "__main__":

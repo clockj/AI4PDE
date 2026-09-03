@@ -9,17 +9,19 @@ next. Read it with `CLAUDE.md` (contracts, measurements, per-round detail),
 `Track_1/board_rounds.py` (every number in Part 1 is reproducible from it) and
 **`Track_1/plan/plan_20260902.md` (the CURRENT round's plan and recorded predictions)**.
 
-**One-line state:** **Track 2 sits at 80.852826** (round 2, 8 all-data dropout members —
-the account's best on either board) and **Track 1 at 80.643823** (round 13), the difference
-being only that the dropout package has never been submitted on Track 1. Leader 81.76136 ⇒
-**gap 0.909 ≈ 9.6 % of error.** Round 14's pre-registered 2×2 came back *blend null, dropout
-gains*: the gated mean-blend returned **all four error subscores bit-identical** to round 13's,
-so **the hidden set is INSIDE the training speed range** — the promised unseen Reynolds numbers
-are interior, and every Re-*extrapolation* instrument (`relo`, `rehi`, band 0) is retired — while
-**dropout transferred at +0.200**, which is therefore in-range regularization and not
-extrapolation robustness. Weights refit on **twelve pooled rounds**: rel_l2 0.568 · tke 0.085 ·
-mvpe 0.029 · time 0.091 · sps 0.226, and `w_time` is now *measured* at 0.0956 off the R13/R14
-pair. Model progress is no longer flat, but it moved through **regularization**, not capacity.
+**One-line state:** **Track 2 sits at 81.019213** (round 3, 8 all-data **width-96** dropout
+FNOs — the account's best on either board) and **Track 1 at 80.835124** (round 15, which is
+T2 R2's member set submitted on the other board). Leader 81.76136 ⇒ **gap 0.742 ≈ 7.8 % of
+error**, down from 0.909. **The plateau since 2026-08-08 is broken, and both breaks are
+regularization**: dropout (+0.200, T2 R2) and then capacity at width 96 regularized harder
+(+0.166, T2 R3). Round 14 settled where the hidden set lives — the gated mean-blend returned
+**all four error subscores bit-identical** to round 13's, so **it is INSIDE the training speed
+range** and every Re-*extrapolation* instrument (`relo`, `rehi`, band 0) is retired. Round 15
+settled how to attack it: **T2 R3's whole gain arrived through `sps` (+1.01) and `tke` while
+`rel_l2` got WORSE** — capacity × dropout removes the per-element **tail**, not the rms, which
+is what SPS's containment scoring pays for. Weights refit on **fourteen pooled rounds**: rel_l2
+0.573 · tke 0.075 · mvpe 0.035 · time 0.088 · sps 0.229 (`w_time` *measured* at 0.0956 off the
+R13/R14 pair).
 
 **Revision, 2026-08-31 evening.** Two things changed the plan:
 
@@ -539,6 +541,59 @@ k-fold on INTERIOR bands 1–3 pooled** (Re 8850–22875, ≈2150 windows) — i
 situation and has 6× the AoA proxy's sample, but costs K trainings, so it *confirms* a
 candidate; screening stays on the AoA 15-20 proxy + full split, always at ensemble size
 (§1.15).
+
+### 1.19 Round 15: capacity × dropout, and the gain is the TAIL
+
+Two submissions on 2026-09-03. Predictions recorded before upload in
+`../sub_candidates/README.md`; the round's work is `Track_1/report/report_20260902_round15.md`.
+
+| | id | rel_l2 | tke | mvpe | time | sps | **final** | predicted |
+|---|---|---|---|---|---|---|---|---|
+| **T1 R15** T2R2's exact members, other board | 913176 | 94.780094 | 77.747643 | 94.122329 | 93.180177 | 40.140948 | **80.835124** | 80.853 |
+| **T2 R3** 8 all-data w96 (4×do 0.30, 4×do 0.45), 400 ep, fp16, 1 inv | 913187 | 94.755824 | 78.174302 | 93.739707 | 92.508902 | 41.160630 | **81.019213** | 80.962 |
+
+**1. The gain is the error TAIL, not the rms.** T2R3 against its T2R2 anchor, priced with the
+fourteen-round weights:
+
+| subscore | Δ | error Δ | × w | = final |
+|---|---|---|---|---|
+| rel_l2 | −0.032 | **+0.64 % (worse)** | 0.573 | −0.018 |
+| tke | +0.506 | −2.90 % | 0.075 | +0.038 |
+| mvpe | −0.143 | +2.49 % (worse) | 0.035 | −0.005 |
+| time | −1.124 | 1.41 board ms | 0.088 | −0.099 |
+| **sps** | **+1.013** | | 0.229 | **+0.232** |
+| **total** | | | | **+0.148** (actual **+0.166**) |
+
+The package is *worse* on rel-L2 and *better* on containment. That is round 9's corollary —
+**tail reduction beats mean reduction** — demonstrated on the board for the first time rather
+than derived from a re-pricing, and it says what to design for: robustness and regularization
+over average-case accuracy. `rel_l2` alone would have called this a regression.
+
+**2. The transfer beat the instrument.** The local 3-vs-3 delta was **−1.2 % of error**, below
+the ~4 % transfer resolution, and it transferred anyway (+0.166); dropout's −2.6 % transferred
+at +0.200. **The proxy is blunt, not conservative** — right sign, wrong size. Corroboration
+that the residual is the *proxy's* and not a board draw: R14→R15 and T2R1→T2R2 are the **same
+package change scored on the two boards**, and their residuals agree to 0.7 pp on all three
+metrics (rel −2.66/−2.54, tke −1.29/−1.02, mvpe −9.71/−9.04).
+
+**3. Latency: 1.41 board ms** (3.370 → 4.780) against **+0.93 predicted** by `lat_r15.py`. At
+~4 ms one board ms is **−0.070 `final`**, so w96 handed back −0.099 of its +0.265 of accuracy.
+fp16 packing was required by the 256 MB cap and is free (5.5e-4 rel-L2 of difference).
+
+**4. Third cross-track identity check, and it passes.** R15 is T2R2's exact member set on the
+other board: rel **+0.15 %**, tke **−0.46 %**, sps **−0.02 %** of the error, `mvpe` the
+outlier again at −4.17 %. §1.16 now holds three times. **Track 1 gained +0.191 for nothing
+new** — always submit a scored package on the other board.
+
+**5. Weights, fourteen pooled rounds** (max residual 0.044): rel_l2 **0.573** · tke 0.075 ·
+mvpe 0.035 · time 0.088 · sps **0.229**. Nothing moved beyond its own interval; `rel_l2 + sps`
+have carried ~0.80 across the nine-, twelve- and fourteen-round fits. Calibration refit: level
+ratios rel 1.068 / tke 1.136 / mvpe 1.454, delta residual rms **4.15 %**.
+
+**6. What was skipped.** The interior Re-band k-fold confirmation (§1.18, `kfold.py --split re`,
+bands 1–3) was not run for this package; it shipped on the 3-vs-3 alone. It worked. Run it
+before the next capacity step anyway — the instrument was installed precisely so a package is
+not chosen on the proxy's ±4 %.
 
 ## Part 2 — Closed. Do not re-propose without new evidence.
 

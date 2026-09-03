@@ -4,11 +4,12 @@ Solution code for the **RealPDE** competition (real-world PDE / sim-to-real flui
 Site: https://realpdecompetition.github.io/ · Data: https://huggingface.co/datasets/AI4Science-WestlakeU/RealPDEBench
 Track 1 (Sim2Real): https://www.codabench.org/competitions/17363/ · Track 2 (LTTTA): https://www.codabench.org/competitions/17385/
 
-> **START HERE: [`ROADMAP.md`](ROADMAP.md).** It carries the full **twelve-round** board record
-> across both tracks, the refitted subscore weights (twelve rounds, pooled: rel_l2 **0.568** ·
-> tke **0.085** · mvpe **0.029** · time **0.091** · sps **0.226**, max residual 0.038, which
-> overturn several conclusions still written below), and the current recommendation. This file
-> is the reference manual; the roadmap is the plan. Current plan:
+> **START HERE: [`ROADMAP.md`](ROADMAP.md).** It carries the full **fourteen-round** board
+> record across both tracks, the refitted subscore weights (fourteen rounds, pooled: rel_l2
+> **0.573** · tke **0.075** · mvpe **0.035** · time **0.088** · sps **0.229**, max residual
+> 0.044, which overturn several conclusions still written below), and the current
+> recommendation. This file is the reference manual; the roadmap is the plan. Best score:
+> **81.019** (Track 2 round 3, 8 all-data width-96 dropout FNOs). Current plan:
 > [`Track_1/plan/plan_20260902.md`](Track_1/plan/plan_20260902.md).
 
 This repo (`~/RealPDE/AI4PDE`, remote `github.com/clockj/AI4PDE`) holds **our** code.
@@ -1690,3 +1691,73 @@ Two submissions at 14:57, both clean A/Bs against a package already on their own
   **1.377** — every ratio *below* the R10–R13 mean, i.e. dropout moved the board more than the
   proxy said). Pooled level ratios are now rel **1.072** / tke **1.140** / mvpe **1.477**;
   delta residual rms **4.01 %**. `leaderboard/` regenerates all of it.
+
+
+### Round 15 BOARD RESULT (2026-09-03) — 81.019, capacity × dropout pays through SPS
+
+Two submissions. Full staging record and the pre-upload predictions:
+`../sub_candidates/README.md`; the round's work is `Track_1/report/report_20260902_round15.md`.
+
+| | id | rel_l2 | tke | mvpe | time | sps | **final** | predicted |
+|---|---|---|---|---|---|---|---|---|
+| **T1 R15** T2R2's exact members on the Track-1 board | 913176 | 94.780094 | 77.747643 | 94.122329 | 93.180177 | 40.140948 | **80.835124** | 80.853 |
+| **T2 R3** 8 all-data **width-96** FNOs (4×do 0.30, 4×do 0.45), 400 ep, fp16, 1 inv | 913187 | 94.755824 | 78.174302 | 93.739707 | 92.508902 | 41.160630 | **81.019213** | 80.962 |
+
+**T2 R3 is the account's best score on either board**, and the first Track-1 number above
+80.7. Leader (read 08-25) 81.76136 ⇒ **gap 0.742 ≈ 7.8 % of error**, down from 0.909.
+
+* **THE GAIN IS THE ERROR TAIL, NOT THE RMS — and this is the round's one real finding.**
+  T2R3 vs its T2R2 anchor, priced with the fourteen-round weights:
+
+  | subscore | Δ | error Δ | × weight | = final |
+  |---|---|---|---|---|
+  | rel_l2 | −0.032 | **+0.64 % (WORSE)** | 0.573 | −0.018 |
+  | tke | +0.506 | −2.90 % | 0.075 | +0.038 |
+  | mvpe | −0.143 | +2.49 % (worse) | 0.035 | −0.005 |
+  | time | −1.124 | (1.41 board ms) | 0.088 | −0.099 |
+  | **sps** | **+1.013** | | 0.229 | **+0.232** |
+  | **total** | | | | **+0.148** (actual **+0.166**, residual +0.018) |
+
+  Capacity × dropout **made the rms slightly worse and the per-element containment much
+  better.** That is exactly the corollary round 9 derived from SPS's containment scoring —
+  *tail reduction beats mean reduction* — and it is the first time an arm has demonstrated it
+  on the board rather than in a re-pricing. **Design against the tail: robustness and
+  regularization, not average-case accuracy.** Note also that `rel_l2` alone would have called
+  this package a regression.
+* **The transfer beat the instrument.** The local 3-vs-3 delta was −1.2 % of error, *below*
+  the board's ~4 % transfer resolution, and it transferred at +0.166 anyway. Together with
+  dropout's −2.6 %/+0.200 the reading changes: **the proxy is blunt, not conservative** — it
+  gets the sign right and the size wrong. It still must not be trusted for a margin.
+* **Latency cost 1.41 board ms** (3.370 → 4.780), against **+0.93 predicted** by `lat_r15.py`.
+  At ~4 ms, 1 board ms = **−0.070 `final`**, so w96 paid −0.099 of its +0.265 of accuracy.
+  fp16 packing was required (8 × 57.0 MB > 256 MB cap) and is free (rel-L2 of the difference
+  5.5e-4 against a model rel-L2 of 0.078).
+* **THIRD CROSS-TRACK IDENTITY CHECK, and it passes.** R15 is T2R2's *exact* member set on the
+  other board: rel **+0.15 %**, tke **−0.46 %**, sps **−0.02 %** of the error — and `mvpe` the
+  outlier again at **−4.17 %** (it was +3.59 % in round 13). Same conclusion as §1.16, now
+  three times: one test set, one rule, `mvpe` the one number to re-measure per track.
+  → **Track 1 gained +0.191 for nothing new** (80.644 → 80.835). A package that has scored on
+  one board is worth submitting on the other.
+* **THE WEIGHTS, REFIT ON FOURTEEN POOLED ROUNDS** (max residual **0.044**; `board_rounds.py`,
+  `final_v9.py`):
+
+  | | rel_l2 | tke | mvpe | time | sps |
+  |---|---|---|---|---|---|
+  | **fourteen-round** | **0.573** | 0.075 | 0.035 | 0.088 | **0.229** |
+  | admissible | 0.271–0.699 | 0.000–0.153 | 0.000–0.278 | 0.026–0.184 | 0.206–0.252 |
+  | twelve-round | 0.568 | 0.085 | 0.029 | 0.091 | 0.226 |
+
+  Nothing moved beyond its own interval; `rel_l2 + sps` have carried ~0.80 across the nine-,
+  twelve- and fourteen-round fits. `w_time` measured directly (R13/R14) is 0.0956 against a
+  fitted 0.088.
+* **Calibration refit**: level ratios rel **1.068** / tke **1.136** / mvpe **1.454**; delta
+  residual rms **4.15 %**. New corroboration that the residual belongs to the *proxy* and not
+  to a board draw: **R14→R15 and T2R1→T2R2 are the same package change (blend8 → dropout8)
+  scored on the two different boards, and their residuals agree to 0.7 pp on all three
+  metrics** (rel −2.66/−2.54, tke −1.29/−1.02, mvpe −9.71/−9.04).
+* **Still missing for this package: the interior Re-band k-fold confirmation** (`kfold.py
+  --split re`, bands 1–3 pooled), the decision instrument round 14 installed. It was skipped
+  under time pressure and the package shipped on the 3-vs-3 alone. It worked; run it anyway
+  before the next capacity step.
+* **Next Track-1 slot is `track1_r15_w96x8_a060.zip`** — the same members as T2R3, staged and
+  gated, predicted to reproduce T2R3's four error subscores to ≲0.5 % of the error.

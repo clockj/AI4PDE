@@ -2,33 +2,37 @@
 
 v9 does not publish the combination.  Rounds 9 and 10 inferred it from three and four board
 rounds respectively, where a five-weight linear model fits ANY three points exactly and the
-"fit" carried no evidence.  **This version uses all TWELVE scored rounds, POOLED ACROSS BOTH
-TRACKS** -- ten on Track 1 (two of them a collaborator's) and two on Track 2.  Twelve
-equations against five weights with sum(w) = 1 leaves 8 degrees of freedom, so the
+"fit" carried no evidence.  **This version uses all FOURTEEN scored rounds, POOLED ACROSS BOTH
+TRACKS** -- eleven on Track 1 (two of them a collaborator's) and three on Track 2.  Fourteen
+equations against five weights with sum(w) = 1 leaves 9 degrees of freedom, so the
 no-intercept linear form is TESTED rather than assumed -- and it survives, at a max residual
-of 0.038 against subscores quoted to six decimals.
+of 0.044 against subscores quoted to six decimals.
 
 Pooling is licensed by round 13, which shipped the IDENTICAL package to both boards on the
-same day: three of the four error subscores agreed to <=0.3 % of the error, and Track 1's
-weights reprice Track 2's subscores to 80.650 against a published 80.653.  One test set, one
-rule (ROADMAP 1.16).  The pooled residual (0.038) is no worse than the Track-1-only fit
-(0.035), which is the evidence that pooling did not paper over a second rule.
+same day, and re-confirmed by round 15, which did it again with a different member set: three
+of the four error subscores agree to <=0.5 % of the error both times (R15 vs T2R2: rel
++0.15 %, tke -0.46 %, sps -0.02 %; mvpe is the outlier at -4.17 %, as it was at +3.59 % in
+round 13 -- 36 scored probe points per window is the smallest effective sample of the five).
+One test set, one rule (ROADMAP 1.16).  The pooled residual (0.044) is no worse than the
+Track-1-only fit (0.035), which is the evidence that pooling did not paper over a second
+rule.
 
     from final_v9 import predict
     mid, lo, hi = predict([rel, tke, mvpe, time, sps])
 
 What changed, and it matters:
 
-    subscore   round-9 claim   eight-round   nine-round   TWELVE-round   admissible (12)
-    rel_l2         0.266          0.545        0.582         0.568       0.294 - 0.679
-    tke            0.244          0.170        0.097         0.085       0.010 - 0.187
-    mvpe           0.241          0.000        0.011         0.029       0.000 - 0.237
-    time           0.069          0.081        0.087         0.091       0.038 - 0.169
-    sps            0.181          0.204        0.224         0.226       0.192 - 0.248
+    subscore   round-9 claim   nine-round   twelve-round   FOURTEEN-round   admissible (14)
+    rel_l2         0.266           0.582         0.568           0.573        0.271 - 0.699
+    tke            0.244           0.097         0.085           0.075        0.000 - 0.153
+    mvpe           0.241           0.011         0.029           0.035        0.000 - 0.278
+    time           0.069           0.087         0.091           0.088        0.026 - 0.184
+    sps            0.181           0.224         0.226           0.229        0.206 - 0.252
 
 `rel_l2` is worth more than twice what round 9 priced it at, and `mvpe` is worth approximately
 nothing.  Round 10's "stop optimizing rel-L2" followed from the old weights and is withdrawn.
-Nothing moved by more than its own interval between the nine- and twelve-round fits.
+Nothing has moved by more than its own interval across the nine-, twelve- and fourteen-round
+fits: `rel_l2` + `sps` have carried ~0.80 of the total weight in every one of them.
 
 Round 13 was submitted FOR this: ALPHA 0.90 -> 0.60 is a near-pure `rel_l2` <-> `tke` trade,
 which is the family's dominant undetermined axis.  It moved the board +0.128 where the
@@ -52,8 +56,9 @@ from __future__ import annotations
 import numpy as np
 
 # rel_l2, tke, mvpe, time, sps, final -- every scored round from the shared account on BOTH
-# tracks, read off Codabench (2026-08-31 for R6..T2R1, 2026-09-02 for R14 and T2R2).  Kept in
-# sync with Track_1/board_rounds.py: rows are ROUNDS then ROUNDS_T2, in that order.
+# tracks, read off Codabench (2026-08-31 for R6..T2R1, 2026-09-02 for R14/T2R2, 2026-09-03 for
+# R15/T2R3).  Kept in sync with Track_1/board_rounds.py: rows are ROUNDS then ROUNDS_T2, in
+# that order.
 BOARD = np.array([
     [94.4342,   78.1660,   93.7922,   91.6973,   36.9374,   79.733],      # R6   U-Net
     [94.5754,   78.5278,   93.9100,   91.7264,   37.4680,   79.984883],   # R7   FNO x3
@@ -67,13 +72,15 @@ BOARD = np.array([
     [94.679785, 77.983720, 93.613336, 92.978725, 39.689258, 80.630755],   # R14  R13 + blend
     [94.694512, 77.942224, 93.399401, 93.287797, 39.730331, 80.652944],   # T2R1 = R13's pkg
     [94.787655, 77.667926, 93.882222, 93.633350, 40.148056, 80.852826],   # T2R2 dropout x8
+    [94.780094, 77.747643, 94.122329, 93.180177, 40.140948, 80.835124],   # R15  = T2R2's members
+    [94.755824, 78.174302, 93.739707, 92.508902, 41.160630, 81.019213],   # T2R3 w96 x8, fp16
 ])
 _X, _Y = BOARD[:, :5], BOARD[:, 5]
 NAMES = ["rel_l2", "tke", "mvpe", "time", "sps"]
 
 # The subscore matrix is atrociously conditioned -- every column sits in [36, 95] and moves by
-# ~1 across twelve rounds -- so this needs a real solver, not a hand-rolled projected gradient
-# (which lands on max|residual| 0.072 against nnls's 0.038 and gets the weights wrong by a
+# ~1 across fourteen rounds -- so this needs a real solver, not a hand-rolled projected gradient
+# (which lands on max|residual| 0.072 against nnls's 0.044 and gets the weights wrong by a
 # factor of two).  scipy is in the `realpde` env; it is absent only from the SUBMISSION
 # container, and nothing shipped imports this module.
 from scipy.optimize import linprog, nnls  # noqa: E402
@@ -118,7 +125,7 @@ def delta(subs_a, subs_b) -> tuple[float, float, float]:
     """(midpoint, min, max) of `final(b) - final(a)`.
 
     Prefer this to two `predict` calls whenever both packages are ours: the level fit's
-    common-mode error cancels in a difference, so a delta is the number the twelve rounds
+    common-mode error cancels in a difference, so a delta is the number the fourteen rounds
     actually constrain.  Round 12's post-mortem turns on exactly this distinction.
     """
     d = np.asarray(subs_b, float) - np.asarray(subs_a, float)

@@ -182,9 +182,12 @@ def section_calib(B):
     print("  >>> was dropout's (-2.6 % on the interior Re bands, +0.66 % on the AoA proxy) --")
     print("  >>> which is why T2R2's +0.200 is 'the closest instrument was right about the")
     print("  >>> sign', not 'the instrument is confirmed'.")
+    print("  >>> R14->R15 and T2R1->T2R2 are the SAME package change measured on the two")
+    print("  >>> boards (blend8 -> dropout8), and their residuals agree to 0.7 pp on all three")
+    print("  >>> metrics -- the residual is a property of the proxy, not of a board draw.")
     print("  >>> `mvpe` inverts sign between the proxy and the board in BOTH tracks (R12->R13:")
     print("  >>> proxy +2.34 %, board -3.17 %; T2R1->T2R2: proxy +1.25 %, board -7.79 %), which")
-    print("  >>> is why it is worth 0.029 and ignored.")
+    print("  >>> is why it is worth 0.035 and ignored.")
 
     print("\n  Other calibrated constants, and where they came from:")
     print("    SPS element-tail stretch f   1.360 (T1) / 1.350 (T2)   calib_band13.py, round 13")
@@ -618,43 +621,47 @@ def html(B, Rn, w, path):
 
     o.append('<div class="thesis"><span class="eyebrow">'
              + t("read this first", "先读这里") + "</span>"
-             + t(f"At constant board latency Track&nbsp;1&rsquo;s last four rounds span "
-                 f"<b>{span:.3f}</b> points &mdash; the plateau since 2026-08-08 is unbroken "
-                 f"there, and what improved was latency, one composition constant, and our "
-                 f"knowledge of the scoring rule. <b>The first thing to break it is "
-                 f"Track&nbsp;2&rsquo;s dropout package</b>: T2R2 normalises to "
-                 f"<b>{max(norm2):.3f}</b>, +{max(norm2) - max(norm):.3f} over the best "
-                 f"Track-1 round at the same latency, for +0.200 raw. Its stablemate R14 is "
-                 f"the other half of the pair &mdash; a gated mean-blend that returned all "
-                 f"four error subscores <i>bit-identical</i> to R13, proving the hidden set "
-                 f"lies inside the training speed range. Section&nbsp;3 is why both readings "
-                 f"are hedged: the proxy predicts the board&rsquo;s <i>level</i> to "
-                 f"&plusmn;1&ndash;3%, but explains almost none of its <i>movement</i> "
-                 f"({rms:.1f}% residual rms), and dropout&rsquo;s local signal was smaller "
-                 f"than that on every instrument.",
-                 f"在恒定的 board 延迟下，Track&nbsp;1 "
-                 f"最近四轮的跨度只有 <b>{span:.3f}</b> "
-                 f"分——自 2026-08-08 起的平台期在"
-                 f"那里从未被打破，真正改善"
-                 f"的是延迟、一个合成常数 ALPHA"
-                 f"，以及我们对评分规则的"
-                 f"认识。<b>第一个打破它的是 "
-                 f"Track&nbsp;2 的 dropout 包</b>：T2R2 归一化后"
-                 f"为 <b>{max(norm2):.3f}</b>，在同一延迟下"
-                 f"比最好的 Track-1 轮次高 "
-                 f"+{max(norm2) - max(norm):.3f}，原始分高 +0.200。"
-                 f"与它成对的 R14 是这次探针的"
-                 f"另一半——一个带门控的"
-                 f"时均混合，board 返回的四个"
-                 f"误差子分数与 R13 <i>逐位相同</i>"
-                 f"，证明隐藏集落在训练速度"
-                 f"范围之内。第 3 节说明为什"
-                 f"么两个读数都要打折：proxy 能"
-                 f"把 board 的<i>水平</i>预测到 "
-                 f"&plusmn;1&ndash;3%，却几乎解释不了它"
+             + t(f"<b>The plateau broke.</b> From 2026-08-08 to round 14 the board was flat at "
+                 f"constant latency: R12&ndash;R14 sit within <b>0.013</b> points of each "
+                 f"other, and the whole <b>{span:.3f}</b> span of Track&nbsp;1&rsquo;s last "
+                 f"four rounds is round&nbsp;15 alone. Two changes moved it: <b>dropout</b> "
+                 f"(+0.200, T2R2) and then <b>capacity at width&nbsp;96 regularized harder</b> "
+                 f"(+0.166, T2R3 &rarr; <b>{max(norm2):.3f}</b> normalised, the account&rsquo;s "
+                 f"best on either board). Both are regularization, not architecture. And "
+                 f"T2R3&rsquo;s gain arrived entirely through <code>sps</code> (+1.01) and "
+                 f"<code>tke</code>, while <code>rel_l2</code> got <i>worse</i> &mdash; it "
+                 f"removes per-element <b>tail</b>, not rms, which is what SPS&rsquo;s "
+                 f"containment scoring pays for. Section&nbsp;3 is why every reading here is "
+                 f"hedged: the proxy predicts the board&rsquo;s <i>level</i> to "
+                 f"&plusmn;2&ndash;8%, but explains almost none of its <i>movement</i> "
+                 f"({rms:.1f}% residual rms), and both winning arms had a local signal smaller "
+                 f"than that.",
+                 f"<b>平台期被打破了。</b>从 2026-08-08 "
+                 f"到第 14 轮，恒定延迟下的 board "
+                 f"一直是平的：R12&ndash;R14 彼此相差"
+                 f"不到 <b>0.013</b> 分，而 Track&nbsp;1 "
+                 f"最近四轮 <b>{span:.3f}</b> 的全部跨度"
+                 f"都来自第 15 轮一轮。"
+                 f"两处改动推动了它：<b>dropout</b>"
+                 f"（+0.200，T2R2），以及随后"
+                 f"<b>把容量提到 width&nbsp;96 并加重"
+                 f"正则</b>（+0.166，T2R3 归一化后为 "
+                 f"<b>{max(norm2):.3f}</b>，本账号在两个 "
+                 f"board 上的最好成绩）。两者都是"
+                 f"正则化，而不是架构。而且 T2R3 "
+                 f"的收益完全来自 <code>sps</code>"
+                 f"（+1.01）和 <code>tke</code>，"
+                 f"<code>rel_l2</code> 反而<i>变差</i>"
+                 f"——它削掉的是逐元素的<b>尾部</b>"
+                 f"，不是 rms，而这正是 SPS 的"
+                 f"区间覆盖评分所支付的东西。"
+                 f"第 3 节说明为什么这里每个"
+                 f"读数都要打折：proxy 能把 board "
+                 f"的<i>水平</i>预测到 "
+                 f"&plusmn;2&ndash;8%，却几乎解释不了它"
                  f"的<i>变化</i>（残差 rms {rms:.1f}%），"
-                 f"而 dropout 的本地信号在每一台"
-                 f"仪器上都小于这个值。")
+                 f"而两个成功的实验在本地的"
+                 f"信号都小于这个值。")
              + "</div></div>")
 
     # 1 -----------------------------------------------------------------------------------
@@ -790,10 +797,13 @@ def html(B, Rn, w, path):
                  f"+1.25%, board &minus;7.79%). <b>A local delta below ~{rms:.0f}% of the "
                  f"error does not survive the trip and must not be used to choose a "
                  f"package</b> &mdash; every improvement measured since 2026-08-08 has been "
-                 f"smaller than it, dropout&rsquo;s included. That is why T2R2&rsquo;s +0.200 "
-                 f"reads as <i>the closest instrument had the sign right</i> (interior Re-band "
-                 f"k-fold, rel &minus;2.6%; the AoA&nbsp;15&ndash;20 proxy said +0.66%, the "
-                 f"wrong way) rather than as a confirmed local&rarr;board law.",
+                 f"smaller than it &mdash; dropout&rsquo;s (&minus;2.6% on the interior "
+                 f"Re bands) and w96&rsquo;s (&minus;1.2% at 3-vs-3) included, and both "
+                 f"transferred anyway. The instrument is not conservative, it is <i>blunt</i>: "
+                 f"it gets the sign right and the size wrong. Corroboration: "
+                 f"R14&#8594;R15 and T2R1&#8594;T2R2 are the SAME package change scored on the "
+                 f"two boards, and their residuals agree to 0.7&nbsp;pp on all three metrics "
+                 f"&mdash; the residual belongs to the proxy, not to a board draw.",
                  f"<b>水平可校准，增量不可。</b>"
                  f"这些比值稳定在 &plusmn;1&ndash;3%，"
                  f"所以 proxy 能很好地预测 board 的"
@@ -807,13 +817,18 @@ def html(B, Rn, w, path):
                  f"~{rms:.0f}% 的本地增量无法完成到 "
                  f"board 的迁移，不得用于选包</b>"
                  f"——2026-08-08 以来测到的每一项"
-                 f"改进都小于它，dropout 也不例"
-                 f"外。因此 T2R2 的 +0.200 只能读作"
-                 f"<i>最接近的仪器把符号判对"
-                 f"了</i>（内部 Re 段 k-fold，rel &minus;2.6%；"
-                 f"AoA&nbsp;15&ndash;20 proxy 给的是 +0.66%，方向"
-                 f"相反），而不是一条已确"
-                 f"证的 local&rarr;board 定律。")
+                 f"改进都小于它——dropout"
+                 f"（内部 Re 段 &minus;2.6%）和 w96"
+                 f"（3-vs-3 下 &minus;1.2%）都在其中，"
+                 f"而两者仍然迁移成功了。"
+                 f"这台仪器不是保守，而是"
+                 f"<i>粗</i>：符号判得对，幅度"
+                 f"判不准。旁证：R14&#8594;R15 与 "
+                 f"T2R1&#8594;T2R2 是同一处改动在两个 "
+                 f"board 上的读数，三项指标的"
+                 f"残差彼此相差不到 0.7&nbsp;pp"
+                 f"——残差属于 proxy，而不"
+                 f"属于某一次 board 抽签。")
              + "</div>")
     o.append(_residual_svg(rows, rms))
     o.append('<p class="stamp" style="margin:14px 0 0">'
