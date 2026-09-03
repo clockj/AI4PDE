@@ -88,6 +88,12 @@ LAT_C, LAT_INV, LAT_LOC = 2.616, 0.435, 0.803
 
 # Recorded board rounds usable as anchors: the five actual subscores, and `final`.
 ANCHORS = {
+    # 2026-09-03, 8 all-data width-96 FNOs at ALPHA 0.60, one fused invocation. The account's
+    # best on either board, and the right anchor for anything built on top of it.
+    "t2r15w96": dict(rel_l2=94.755824, tke=78.174302, mvpe=93.739707, time=92.508902,
+                     sps=41.160630, final=81.019213),
+    "t1r15drop": dict(rel_l2=94.780094, tke=77.747643, mvpe=94.122329, time=93.180177,
+                      sps=40.140948, final=80.835124),
     "t2r2": dict(rel_l2=94.787655, tke=77.667926, mvpe=93.882222, time=93.633350,
                  sps=40.148056, final=80.852826),
     "t1r14": dict(rel_l2=94.679785, tke=77.983720, mvpe=93.613336, time=92.978725,

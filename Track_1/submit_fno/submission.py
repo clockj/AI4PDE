@@ -56,6 +56,28 @@ import torch  # noqa: E402
 
 import _fno  # noqa: E402  (must follow the sys.path insertion above)
 
+# TF32 OFF, on both the matmul and the cuDNN paths. This is a CORRECTNESS fix, not a tuning
+# knob, and `verify/cpu_smoke_submission.py` is what found it.
+#
+# TF32 tiles a GEMM/convolution across the BATCH axis, so a window's position in the batch
+# decides which accumulation order it lands in, and a 10-bit mantissa makes that visible.
+# Measured on 8 val_unseen windows, same input permuted (job 7144657):
+#
+#                            repeat        permute (TF32 on)   permute (TF32 off)
+#     w96 FNO x3 (fused)     0.00e+00           9.10e-06            5.07e-07
+#     U-FNO x3               0.00e+00           1.80e-04            8.64e-07
+#     U-FNO x1               0.00e+00           2.93e-04            7.15e-07
+#
+# The model is bit-exact on a repeat either way, so this is not nondeterminism -- it is batch
+# position dependence, and the U-FNO's 3x3 convolutions carry ~20x more of it than the FNO's
+# 1x1 + FFT path. 1.8e-4 fails the submission gate's 1e-4 permutation bound outright, and even
+# where it passes it means the evaluator's batching order perturbs our score.
+#
+# It is free: round 11 measured TF32 on the spectral matmul at +0.05 ms and no subscore change
+# past 1e-5, so there is nothing to trade against.
+torch.backends.cuda.matmul.allow_tf32 = False
+torch.backends.cudnn.allow_tf32 = False
+
 _BAND = os.path.join(_HERE, "band.npz")
 _BAND_LEGACY = os.path.join(_HERE, "band.npy")
 

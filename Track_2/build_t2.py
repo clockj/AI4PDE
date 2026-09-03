@@ -31,6 +31,13 @@ def main():
     ap.add_argument("--band", default=os.path.join(HERE, "submit", "band8.npz"))
     ap.add_argument("--stage", default=os.path.join(HERE, "_pkg"))
     ap.add_argument("--out", default=os.path.join(HERE, "submission_t2.zip"))
+    ap.add_argument("--fp16", action="store_true",
+                    help="store the members' floating tensors as float16, exactly as "
+                         "Track_1/submit_fno/build_zip.py --fp16 does. Needed for width-96 "
+                         "members: 8 x 57.0 MB is 456 MB against the 256 MB cap, 8 x 28.5 MB "
+                         "is 228 MB. The two tracks MUST use the same setting or they stop "
+                         "shipping the same model, which is the only reason to submit one "
+                         "package to both boards.")
     a = ap.parse_args()
 
     # `_fno.py` is a symlink to Track 1's, and is resolved below -- the two tracks must ship
@@ -50,7 +57,14 @@ def main():
         src = os.path.realpath(src)
         if not os.path.exists(src):
             raise SystemExit(f"missing {src}")
-        shutil.copy2(src, os.path.join(a.stage, name))
+        if a.fp16 and name.startswith("fno") and name.endswith(".pth"):
+            import torch
+            blob = torch.load(src, map_location="cpu")
+            blob["model_state_dict"] = {k: (v.half() if v.is_floating_point() else v)
+                                        for k, v in blob["model_state_dict"].items()}
+            torch.save(blob, os.path.join(a.stage, name))
+        else:
+            shutil.copy2(src, os.path.join(a.stage, name))
         if name.startswith("fno") and name.endswith(".pth"):
             print(f"  {os.path.basename(src):26s} -> {name}")
     mb = sum(os.path.getsize(os.path.join(a.stage, n)) for _, n in files) / 1e6
