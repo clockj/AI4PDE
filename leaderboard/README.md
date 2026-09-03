@@ -7,13 +7,12 @@ could not: **does a local gain transfer to the board, and by how much?**
 leaderboard/
 ├── board.jsonl   one record per SUBMISSION  — package, thesis, PREDICTION, actual, local numbers
 ├── runs.jsonl    one record per LOCAL EXPERIMENT — arm, instrument, effect, verdict, did it ship
-├── lb.py         loads both, fits the local→board correction, renders index.html
-└── index.html    generated; open it, or publish it
+└── lb.py         loads both, fits the local→board correction, renders the page
 ```
 
 ```bash
 python leaderboard/lb.py            # text
-python leaderboard/lb.py --html     # also regenerate index.html
+python leaderboard/lb.py --html     # also write ../../leaderboard.html — OUTSIDE the git tree (env RPDE_LB_HTML overrides)
 ```
 
 ## What it currently says
@@ -67,7 +66,7 @@ scored at the ALPHA that package ships — this is the column the correction is 
 `runs.jsonl` — `date`, `round`, `arm`, `direction`, `instrument`, `effect`, `ensemble_tested`,
 `verdict` (`SHIPPED` / `OPEN` / `MARGINAL` / `CLOSED` / `REJECTED`), `shipped`, `note`.
 
-**Optional `_zh` fields.** `index.html` is bilingual (English / 中文), so the ledgers carry
+**Optional `_zh` fields.** The rendered page (`/users/PAS1187/qwu/workspace/realpde/leaderboard.html`, not committed) is bilingual (English / 中文), so the ledgers carry
 optional translations alongside the English: `thesis_zh` in `board.jsonl`, `direction_zh` and
 `effect_zh` in `runs.jsonl`. They are **optional** — the renderer falls back to the English
 string when the field is absent, so a newly appended row needs nothing extra and the page stays
@@ -77,7 +76,7 @@ prose around them. Nothing else in the schema changed.
 
 ## The page
 
-`index.html` is a two-column instrument page: a sticky ~220 px left rail carrying the page
+The rendered page is a two-column instrument page: a sticky ~220 px left rail carrying the page
 name, an **EN / 中文** toggle, one nav anchor per section (read this first · submissions ·
 progress at constant latency · local→board correction · experiment ledger) and the generated
 stamp, next to a 1200 px content column. Under ~880 px the rail becomes a top bar with a

@@ -11,3 +11,4 @@ Track_2/_pkg/
 # Slurm writes slurm-<jobid>.out into the SUBMIT directory, which is the repo root when a
 # job is queued from here. The logs belong in $SCRATCH/logs, never in a commit.
 slurm-*.out
+leaderboard/index.html

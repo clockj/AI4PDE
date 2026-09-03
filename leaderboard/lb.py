@@ -1,7 +1,7 @@
 """The internal leaderboard: what we tried, what we predicted, what the board actually said.
 
     python leaderboard/lb.py                 # everything, as text
-    python leaderboard/lb.py --html          # also write leaderboard/index.html
+    python leaderboard/lb.py --html          # also write ../leaderboard.html (OUTSIDE the git tree)
 
 Two append-only ledgers, both JSONL, both edited by hand:
 
@@ -33,6 +33,10 @@ import sys
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# The rendered page lives OUTSIDE the git tree (user request, 2026-09-02): generated files are
+# not source. Override with RPDE_LB_HTML if the workspace moves.
+HTML_OUT = os.environ.get("RPDE_LB_HTML",
+                          os.path.join(os.path.dirname(os.path.dirname(HERE)), "leaderboard.html"))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "Track_1"))
 
 M = ["rel", "tke", "mvpe"]
@@ -912,7 +916,7 @@ def main():
     section_calib(B)
     section_runs(Rn)
     if a.html:
-        html(B, Rn, w, os.path.join(HERE, "index.html"))
+        html(B, Rn, w, HTML_OUT)
 
 
 if __name__ == "__main__":
