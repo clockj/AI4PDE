@@ -67,6 +67,29 @@ scored at the ALPHA that package ships — this is the column the correction is 
 `runs.jsonl` — `date`, `round`, `arm`, `direction`, `instrument`, `effect`, `ensemble_tested`,
 `verdict` (`SHIPPED` / `OPEN` / `MARGINAL` / `CLOSED` / `REJECTED`), `shipped`, `note`.
 
+**Optional `_zh` fields.** `index.html` is bilingual (English / 中文), so the ledgers carry
+optional translations alongside the English: `thesis_zh` in `board.jsonl`, `direction_zh` and
+`effect_zh` in `runs.jsonl`. They are **optional** — the renderer falls back to the English
+string when the field is absent, so a newly appended row needs nothing extra and the page stays
+correct. Keep code names, flags, numbers and file names in Latin inside the Chinese
+(`rel_l2`, `tke`, `sps`, `final`, `ALPHA`, `band`, `--dropout`, `wfinal`); translate only the
+prose around them. Nothing else in the schema changed.
+
+## The page
+
+`index.html` is a two-column instrument page: a sticky ~220 px left rail carrying the page
+name, an **EN / 中文** toggle, one nav anchor per section (read this first · submissions ·
+progress at constant latency · local→board correction · experiment ledger) and the generated
+stamp, next to a 1200 px content column. Under ~880 px the rail becomes a top bar with a
+horizontally scrollable nav.
+
+Both languages are emitted into the DOM and CSS hides one (`html[data-lang]`), so the page is
+complete at rest with no JavaScript — English is what a JS-less reader sees. A small inline
+script picks the language from `localStorage`, else `navigator.language`, and the toggle writes
+both. Authored strings are declared once, side by side, through `lb.py`'s `t(en, zh)`; ledger
+strings go through `tdata(en, zh)`, which is the fallback path above. SVG chart labels use
+`tsvg()`, which emits two `<text>` nodes at one anchor.
+
 ## Where the numbers come from
 
 | quantity | source | last measured |

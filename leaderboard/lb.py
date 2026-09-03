@@ -217,8 +217,45 @@ def section_runs(Rn):
 
 
 # ---------------------------------------------------------------------------------------
+# Bilingual rendering.  Every AUTHORED string below is declared once, both languages side by
+# side, through `t(en, zh)`; every DATA string (the ledgers are written in English) goes
+# through `tdata`, which falls back to the English when the record carries no `_zh` field.
+# Both languages are emitted into the DOM and CSS hides one, so the page is complete at rest
+# with no JavaScript -- the toggle only flips `data-lang` on <html>.
+from html import escape as _esc
+
+
+def t(en, zh):
+    """An authored string, in both languages."""
+    return f'<span class="en">{en}</span><span class="zh">{zh}</span>'
+
+
+def tdata(en, zh=None):
+    """A ledger string. Escaped; falls back to English when the `_zh` field is missing."""
+    en = _esc(str(en if en is not None else ""))
+    if not zh:
+        return en
+    return f'<span class="en">{en}</span><span class="zh">{_esc(str(zh))}</span>'
+
+
+def tsvg(x, y, en, zh, attrs=""):
+    """Two SVG <text> nodes at one anchor; CSS shows exactly one."""
+    return (f'<text class="en" x="{x}" y="{y}" {attrs}>{en}</text>'
+            f'<text class="zh" x="{x}" y="{y}" {attrs}>{zh}</text>')
+
+
+NAV = [("top", "Read this first", "先读这里"),
+       ("submissions", "Submissions", "提交记录"),
+       ("progress", "Progress at constant latency", "恒定延迟下的进展"),
+       ("calibration", "Local &rarr; board correction", "本地 &rarr; board 校正"),
+       ("ledger", "Experiment ledger", "实验台账")]
+
+VERDICT_ZH = {"SHIPPED": "已上线", "OPEN": "未决",
+              "MARGINAL": "边缘", "CLOSED": "已封闭",
+              "REJECTED": "已否决"}
+
 HTML_HEAD = """<title>RealPDE Calibration Log</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;600&display=swap">
 <style>
 /* Palette from the subject: PIV velocity fields are rendered on a blue-white-red diverging
    map, so cool/warm here are the domain's own colours, not decoration. Neutrals carry a blue
@@ -242,21 +279,57 @@ HTML_HEAD = """<title>RealPDE Calibration Log</title>
   --coolw:#5fb6c92e; --warmw:#ef8a722e;
 }
 *{box-sizing:border-box}
-body{background:var(--ground);color:var(--ink);margin:0;padding:34px 20px 80px;
-  font:400 14px/1.6 "IBM Plex Sans","Helvetica Neue",Arial,sans-serif;
+body{background:var(--ground);color:var(--ink);margin:0;padding:0;
+  font:400 14px/1.6 "IBM Plex Sans","Noto Sans SC","PingFang SC","Microsoft YaHei",
+       "Helvetica Neue",Arial,sans-serif;
   -webkit-font-smoothing:antialiased}
+/* the language switch: both languages are in the DOM, CSS hides one. No JS -> English. */
+html[data-lang="zh"] .en,html:not([data-lang="zh"]) .zh{display:none}
+/* layout: fixed left rail, one content column */
+.app{display:grid;grid-template-columns:220px 1fr;align-items:start}
+.side{position:sticky;top:0;height:100vh;overflow-y:auto;z-index:5;
+  background:var(--panel);border-right:1px solid var(--line);
+  padding:26px 14px 18px;display:flex;flex-direction:column;gap:16px}
+.brand{display:block}
+.brand .nm{display:block;font-family:"IBM Plex Sans Condensed","IBM Plex Sans",Arial,sans-serif;
+  font-weight:700;font-size:16px;line-height:1.2;letter-spacing:-.005em}
+.brand .zhnm{display:block;color:var(--dim);font-size:12.5px;margin-top:2px}
+.langsw{display:flex;border:1px solid var(--line);width:max-content}
+.langsw button{appearance:none;background:var(--panel);color:var(--dim);border:0;cursor:pointer;
+  font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:11px;letter-spacing:.06em;
+  padding:4px 11px;line-height:1.5}
+.langsw button+button{border-left:1px solid var(--line)}
+.langsw button[aria-pressed="true"]{background:var(--sunk);color:var(--ink);font-weight:600}
+.langsw button:hover{color:var(--ink)}
+.langsw button:focus-visible,.side nav a:focus-visible,a:focus-visible{
+  outline:2px solid var(--probe);outline-offset:2px}
+.side nav{flex:1 1 auto}
+.side nav ul{list-style:none;margin:0;padding:0}
+.side nav a{display:block;padding:6px 9px;font-size:12.5px;line-height:1.35;
+  color:var(--dim);text-decoration:none;border-left:2px solid transparent}
+.side nav a:hover{color:var(--ink);background:var(--sunk)}
+.side nav a.on{color:var(--ink);background:var(--sunk);border-left-color:var(--probe);
+  font-weight:600}
+.side .stamp{margin:0}
+main{padding:34px 20px 80px;min-width:0}
 .wrap{max-width:1200px;margin:0 auto}
-h1{font-family:"IBM Plex Sans Condensed","IBM Plex Sans",Arial,sans-serif;font-weight:700;
-  font-size:30px;line-height:1.1;margin:0 0 6px;letter-spacing:-.005em;text-wrap:balance}
-.lede{color:var(--dim);margin:0 0 6px;max-width:66ch;font-size:14.5px}
+h1{font-family:"IBM Plex Sans Condensed","IBM Plex Sans","Noto Sans SC",Arial,sans-serif;
+  font-weight:700;font-size:30px;line-height:1.1;margin:0 0 6px;letter-spacing:-.005em;
+  text-wrap:balance}
+.lede{color:var(--dim);margin:0 0 22px;max-width:66ch;font-size:14.5px}
 .stamp{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:11px;color:var(--faint);
   letter-spacing:.06em;text-transform:uppercase;margin:0 0 26px}
-h2{font-family:"IBM Plex Sans Condensed","IBM Plex Sans",Arial,sans-serif;font-weight:600;
-  font-size:19px;margin:0;letter-spacing:.005em}
+.stamp .zh{font-family:"IBM Plex Mono","Noto Sans SC",ui-monospace,monospace;
+  letter-spacing:.02em;text-transform:none}
+h2{font-family:"IBM Plex Sans Condensed","IBM Plex Sans","Noto Sans SC",Arial,sans-serif;
+  font-weight:600;font-size:19px;margin:0;letter-spacing:.005em}
 .eyebrow{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:10.5px;font-weight:500;
   color:var(--faint);letter-spacing:.11em;text-transform:uppercase}
+.eyebrow .zh{font-family:"IBM Plex Mono","Noto Sans SC",ui-monospace,monospace;
+  letter-spacing:.04em;text-transform:none}
 section{background:var(--panel);border:1px solid var(--line);border-top:2px solid var(--rule);
-  padding:20px 22px 22px;margin:20px 0 0}
+  padding:20px 22px 22px;margin:20px 0 0;scroll-margin-top:14px}
+#top{scroll-margin-top:14px}
 .head{display:flex;justify-content:space-between;align-items:baseline;gap:16px;
   margin:0 0 14px;flex-wrap:wrap}
 .head p{color:var(--dim);margin:6px 0 0;font-size:13px;max-width:70ch;flex-basis:100%}
@@ -266,6 +339,8 @@ section{background:var(--panel);border:1px solid var(--line);border-top:2px soli
 .cell{background:var(--panel);padding:13px 15px}
 .cell .k{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:10px;color:var(--faint);
   letter-spacing:.1em;text-transform:uppercase}
+.cell .k .zh{font-family:"IBM Plex Mono","Noto Sans SC",ui-monospace,monospace;
+  letter-spacing:.03em;text-transform:none}
 .cell .v{font-family:"IBM Plex Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums;
   font-size:25px;font-weight:500;line-height:1.15;margin-top:5px;letter-spacing:-.02em}
 .cell .n{color:var(--dim);font-size:11.5px;margin-top:3px}
@@ -278,31 +353,127 @@ section{background:var(--panel);border:1px solid var(--line);border-top:2px soli
 table{border-collapse:collapse;width:100%;font-size:12.5px}
 th,td{text-align:right;padding:6px 10px;border-bottom:1px solid var(--line);white-space:nowrap;
   font-family:"IBM Plex Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums}
-th{font-family:"IBM Plex Sans","Helvetica Neue",Arial,sans-serif;color:var(--faint);
-  font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;
-  border-bottom:1px solid var(--rule)}
+th{font-family:"IBM Plex Sans","Noto Sans SC","Helvetica Neue",Arial,sans-serif;
+  color:var(--faint);font-weight:600;font-size:10.5px;text-transform:uppercase;
+  letter-spacing:.07em;border-bottom:1px solid var(--rule)}
+th .zh{letter-spacing:.02em;text-transform:none}
 td.l,th.l{text-align:left}
-td.t{font-family:"IBM Plex Sans","Helvetica Neue",Arial,sans-serif;white-space:normal;
-  min-width:16ch}
+td.t{font-family:"IBM Plex Sans","Noto Sans SC","Helvetica Neue",Arial,sans-serif;
+  white-space:normal;min-width:16ch}
 tbody tr:hover td{background:var(--sunk)}
 .g{color:var(--cool)}.b{color:var(--warm)}.w{color:var(--hold)}.d{color:var(--faint)}
 .chip{display:inline-block;padding:1px 8px;border:1px solid currentColor;border-radius:2px;
   font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:10px;font-weight:500;
   letter-spacing:.05em}
+.chip .zh{font-family:"IBM Plex Mono","Noto Sans SC",ui-monospace,monospace;letter-spacing:0}
 .SHIPPED{color:var(--cool)}.OPEN{color:var(--probe)}
 .MARGINAL,.CLOSED{color:var(--hold)}.REJECTED{color:var(--warm)}
 code{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:.92em;
   background:var(--sunk);padding:1px 5px;border:1px solid var(--line)}
 svg{display:block;max-width:100%}
 svg text{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:10px;fill:var(--dim)}
+svg text.zh{font-family:"IBM Plex Mono","Noto Sans SC",ui-monospace,monospace}
 svg text.lab{font-size:10.5px;fill:var(--faint);letter-spacing:.06em}
 footer{color:var(--faint);font-size:11.5px;margin-top:34px;padding-top:14px;
   border-top:1px solid var(--line);font-family:"IBM Plex Mono",ui-monospace,monospace;
   line-height:1.8}
+footer .zh{font-family:"IBM Plex Mono","Noto Sans SC",ui-monospace,monospace}
 @media (prefers-reduced-motion:no-preference){
   tbody tr td{transition:background .12s ease}}
+/* narrow: the rail becomes a top bar with a horizontally scrollable nav */
+@media (max-width:880px){
+  .app{grid-template-columns:1fr}
+  .side{position:static;height:auto;overflow:visible;flex-direction:row;align-items:center;
+    gap:12px;padding:10px 14px;border-right:0;border-bottom:1px solid var(--line)}
+  .brand .zhnm{display:none}
+  .side .stamp{display:none}
+  .side nav{overflow-x:auto;min-width:0}
+  .side nav ul{display:flex;gap:2px}
+  .side nav a{white-space:nowrap;border-left:0;border-bottom:2px solid transparent;
+    padding:5px 8px}
+  .side nav a.on{border-left:0;border-bottom-color:var(--probe)}
+}
 </style>
+<script>
+/* Sets the language before the page paints: stored choice, else the browser's, else English.
+   Both languages are always present in the DOM; this only flips an attribute. */
+(function(){
+  var d=document.documentElement,v=null;
+  try{v=window.localStorage.getItem("rpde-lang")}catch(e){}
+  if(v!=="zh"&&v!=="en"){
+    v=((navigator.language||navigator.userLanguage||"").toLowerCase().indexOf("zh")===0)?"zh":"en";
+  }
+  d.setAttribute("data-lang",v);
+  function mark(){
+    var bs=document.querySelectorAll("[data-setlang]"),i;
+    for(i=0;i<bs.length;i++){
+      bs[i].setAttribute("aria-pressed",bs[i].getAttribute("data-setlang")===
+        d.getAttribute("data-lang")?"true":"false");
+    }
+  }
+  document.addEventListener("click",function(e){
+    var n=e.target;
+    while(n&&n!==document&&!(n.getAttribute&&n.getAttribute("data-setlang")))n=n.parentNode;
+    if(!n||n===document)return;
+    var s=n.getAttribute("data-setlang");
+    d.setAttribute("data-lang",s);
+    try{window.localStorage.setItem("rpde-lang",s)}catch(err){}
+    mark();
+  });
+  if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",mark);
+  else mark();
+})();
+</script>
 """
+
+NAV_SCRIPT = """<script>
+/* Active-section highlight. No smooth scrolling, no animation -- the anchors just jump. */
+(function(){
+  if(!("IntersectionObserver" in window))return;
+  var ids=%s,links={},vis={},i;
+  for(i=0;i<ids.length;i++){
+    var a=document.querySelector('.side nav a[href="#'+ids[i]+'"]');
+    if(a)links[ids[i]]=a;
+  }
+  var io=new IntersectionObserver(function(es){
+    for(var k=0;k<es.length;k++)vis[es[k].target.id]=es[k].isIntersecting?es[k].intersectionRatio:0;
+    var best=null,bv=0,j;
+    for(j=0;j<ids.length;j++){if((vis[ids[j]]||0)>bv){bv=vis[ids[j]];best=ids[j];}}
+    for(j=0;j<ids.length;j++){
+      if(links[ids[j]])links[ids[j]].className=(ids[j]===best)?"on":"";
+    }
+  },{rootMargin:"-8%% 0px -55%% 0px",threshold:[0,0.05,0.2,0.5,1]});
+  for(i=0;i<ids.length;i++){
+    var el=document.getElementById(ids[i]);
+    if(el)io.observe(el);
+  }
+})();
+</script>"""
+
+
+def _sidebar(B, Rn):
+    n_scored = len([r for r in B if r.get("actual")])
+    o = ['<aside class="side">',
+         '<div class="brand"><span class="nm">RealPDE Calibration Log</span>'
+         '<span class="zhnm">RealPDE 校准日志</span></div>',
+         '<div class="langsw" role="group" aria-label="Language / 语言">'
+         '<button type="button" data-setlang="en" aria-pressed="true">EN</button>'
+         '<button type="button" data-setlang="zh" aria-pressed="false">中文</button>'
+         '</div>',
+         '<nav aria-label="Sections"><ul>']
+    for i, (sid, en, zh) in enumerate(NAV):
+        cls = ' class="on"' if i == 0 else ""
+        o.append(f'<li><a href="#{sid}"{cls}>{t(en, zh)}</a></li>')
+    o.append("</ul></nav>")
+    o.append('<p class="stamp">'
+             + t(f"generated by leaderboard/lb.py<br>{len(B)} submissions &middot; {len(Rn)} "
+                 f"local arms<br>weights refit on {n_scored} scored rounds",
+                 f"由 leaderboard/lb.py 生成<br>{len(B)} 次提交 "
+                 f"&middot; {len(Rn)} 条本地实验<br>"
+                 f"权重基于 {n_scored} 个已评分轮"
+                 f"次拟合")
+             + "</p></aside>")
+    return "".join(o)
 
 
 def _progress_svg(T, norm, ref):
@@ -317,14 +488,16 @@ def _progress_svg(T, norm, ref):
                  f'stroke="var(--line)" stroke-width="1"/>'
                  f'<text x="{L-8}" y="{y(gv)+3.5:.1f}" text-anchor="end">{gv:.1f}</text>')
     o.append(f'<line x1="{L}" y1="{y(81.76136):.1f}" x2="{W-Rp}" y2="{y(81.76136):.1f}" '
-             f'stroke="var(--warm)" stroke-width="1.2" stroke-dasharray="5 4"/>'
-             f'<text x="{W-Rp+8}" y="{y(81.76136)+3.5:.1f}" fill="var(--warm)">leader 81.761</text>')
+             f'stroke="var(--warm)" stroke-width="1.2" stroke-dasharray="5 4"/>')
+    o.append(tsvg(f"{W-Rp+8}", f"{y(81.76136)+3.5:.1f}", "leader 81.761",
+                  "领先者 81.761", 'fill="var(--warm)"'))
     # the flat span
     i0 = len(T) - 4
     o.append(f'<rect x="{x(i0)-11:.1f}" y="{Tp}" width="{x(len(T)-1)-x(i0)+22:.1f}" '
              f'height="{H-Tp-Bp}" fill="var(--warmw)"/>')
-    o.append(f'<text x="{(x(i0)+x(len(T)-1))/2:.1f}" y="{Tp+13}" text-anchor="middle" '
-             f'class="lab">span {max(norm[i0:])-min(norm[i0:]):.3f}</text>')
+    sp = max(norm[i0:]) - min(norm[i0:])
+    o.append(tsvg(f"{(x(i0)+x(len(T)-1))/2:.1f}", f"{Tp+13}", f"span {sp:.3f}",
+                  f"跨度 {sp:.3f}", 'text-anchor="middle" class="lab"'))
     pts = " ".join(f"{x(i):.1f},{y(v):.1f}" for i, v in enumerate(norm))
     o.append(f'<polyline points="{pts}" fill="none" stroke="var(--probe)" stroke-width="2" '
              f'stroke-linejoin="round"/>')
@@ -351,26 +524,31 @@ def _residual_svg(rows, rms):
     o = [f'<svg viewBox="0 0 {W} {H}" role="img" aria-label="proxy residual per transition">']
     o.append(f'<rect x="{C-rms*sc:.1f}" y="24" width="{2*rms*sc:.1f}" height="{n*rowh}" '
              f'fill="var(--coolw)"/>')
-    o.append(f'<text x="{C:.0f}" y="16" text-anchor="middle" class="lab">'
-             f'&#177;{rms:.1f}% rms &mdash; the resolution limit</text>')
+    o.append(tsvg(f"{C:.0f}", "16",
+                  f"&#177;{rms:.1f}% rms &mdash; the resolution limit",
+                  f"&#177;{rms:.1f}% rms &mdash; 分辨率极限",
+                  'text-anchor="middle" class="lab"'))
     o.append(f'<line x1="{C}" y1="24" x2="{C}" y2="{24+n*rowh}" stroke="var(--rule)" '
              f'stroke-width="1"/>')
-    for k, (t, m, pd, bd, rr) in enumerate(rows):
+    for k, (tr, m, pd, bd, rr) in enumerate(rows):
         yy = 24 + k * rowh
         col = "var(--warm)" if rr > 0 else "var(--cool)"
         w = abs(rr) * sc
         o.append(f'<rect x="{C if rr>0 else C-w:.1f}" y="{yy+4.5:.1f}" width="{w:.1f}" '
                  f'height="{rowh-9}" fill="{col}" opacity=".85"/>')
-        o.append(f'<text x="{L-10}" y="{yy+rowh/2+3.5:.1f}" text-anchor="end">{t}</text>')
+        o.append(f'<text x="{L-10}" y="{yy+rowh/2+3.5:.1f}" text-anchor="end">{tr}</text>')
         o.append(f'<text x="{L}" y="{yy+rowh/2+3.5:.1f}" fill="var(--ink)">{m}</text>')
         o.append(f'<text x="{L+52}" y="{yy+rowh/2+3.5:.1f}">proxy {pd:+.2f}</text>')
         o.append(f'<text x="{L+150}" y="{yy+rowh/2+3.5:.1f}">board {bd:+.2f}</text>')
         tx = C + (w + 7) * (1 if rr > 0 else -1)
         o.append(f'<text x="{tx:.1f}" y="{yy+rowh/2+3.5:.1f}" fill="{col}" '
                  f'text-anchor="{"start" if rr>0 else "end"}" font-weight="600">{rr:+.2f}</text>')
-    o.append(f'<text x="{C-6}" y="{H-6}" text-anchor="end" class="lab">'
-             f'board moved LESS than the proxy said</text>')
-    o.append(f'<text x="{C+6}" y="{H-6}" class="lab">board moved MORE</text>')
+    o.append(tsvg(f"{C-6}", f"{H-6}",
+                  "board moved LESS than the proxy said",
+                  "board 的变化小于 proxy 的预测",
+                  'text-anchor="end" class="lab"'))
+    o.append(tsvg(f"{C+6}", f"{H-6}", "board moved MORE",
+                  "board 的变化更大", 'class="lab"'))
     o.append("</svg>")
     return "".join(o)
 
@@ -394,57 +572,110 @@ def html(B, Rn, w, path):
     # Exchange rate, re-priced with the twelve-round weights: 10 % of error removed is worth
     # ~0.948 `final` (Track_1/exchange_v9.py, round 9's instrument, round 13's weights).
     gap_pct = gap / 0.0948
+    best2 = max(T2, key=lambda r: r["actual"]["final"])
 
-    o = [HTML_HEAD, '<div class="wrap">',
-         "<h1>RealPDE calibration log</h1>",
-         '<p class="lede">Every submission, the prediction recorded before it was uploaded, '
-         'and what the board returned &mdash; then the local experiments behind them and the '
-         'measured correction from our validation set to the hidden one.</p>',
-         f'<p class="stamp">generated by leaderboard/lb.py &middot; {len(B)} submissions '
-         f'&middot; {len(Rn)} local arms &middot; subscore weights refit on '
-         f'{len([r for r in B if r.get("actual")])} scored rounds</p>']
+    o = [HTML_HEAD, '<div class="app">', _sidebar(B, Rn), '<main><div class="wrap">',
+         "<h1>" + t("RealPDE calibration log", "RealPDE 校准日志") + "</h1>",
+         '<p class="lede">'
+         + t("Every submission, the prediction recorded before it was uploaded, and what the "
+             "board returned &mdash; then the local experiments behind them and the measured "
+             "correction from our validation set to the hidden one.",
+             "每一次提交、上传前记录的"
+             "预测，以及 board 实际返回的结果"
+             "——随后是它们背后的本地"
+             "实验，和从我们的验证集到"
+             "隐藏集的实测校正。")
+         + "</p>", '<div id="top">']
 
     o.append('<div class="strip">')
-    for k, v, n in [
-            ("best, track 1", f"{best['actual']['final']:.3f}", f"round {best['round']}"),
-            ("best, track 2", f"{max(r['actual']['final'] for r in T2):.3f}",
-             f"round {max(T2, key=lambda r: r['actual']['final'])['round']}"),
-            ("leader", "81.761", "np-user &middot; 08-25"),
-            ("gap", f"{gap:.3f}", f"&asymp;&thinsp;{gap_pct:.1f}% of error"),
-            ("track 1, last 4 @ const t", f"{span:.3f}", "span, four rounds"),
-            ("prediction rms", f"{np.sqrt(np.mean(np.square(resid))):.3f}",
-             f"{len(resid)} predicted rounds"),
-            ("resolution limit", f"{rms:.1f}%", "of error, to transfer")]:
-        o.append(f'<div class="cell"><div class="k">{k}</div><div class="v">{v}</div>'
-                 f'<div class="n">{n}</div></div>')
+    for k_en, k_zh, v, n_en, n_zh in [
+            ("best, track 1", "最佳，track 1", f"{best['actual']['final']:.3f}",
+             f"round {best['round']}", f"轮次 {best['round']}"),
+            ("best, track 2", "最佳，track 2", f"{best2['actual']['final']:.3f}",
+             f"round {best2['round']}", f"轮次 {best2['round']}"),
+            ("leader", "领先者", "81.761",
+             "np-user &middot; 08-25", "np-user &middot; 08-25"),
+            ("gap", "差距", f"{gap:.3f}",
+             f"&asymp;&thinsp;{gap_pct:.1f}% of error",
+             f"约为误差的 {gap_pct:.1f}%"),
+            ("track 1, last 4 @ const t",
+             "track 1，恒定延迟下最近四轮",
+             f"{span:.3f}", "span, four rounds", "四轮跨度"),
+            ("prediction rms", "预测残差 rms",
+             f"{np.sqrt(np.mean(np.square(resid))):.3f}",
+             f"{len(resid)} predicted rounds",
+             f"{len(resid)} 个有预测的轮次"),
+            ("resolution limit", "分辨率极限", f"{rms:.1f}%",
+             "of error, to transfer",
+             "占误差比，可迁移下限")]:
+        o.append(f'<div class="cell"><div class="k">{t(k_en, k_zh)}</div>'
+                 f'<div class="v">{v}</div><div class="n">{t(n_en, n_zh)}</div></div>')
     o.append("</div>")
 
-    o.append(f'<div class="thesis"><span class="eyebrow">read this first</span>'
-             f'At constant board latency Track&nbsp;1&rsquo;s last four rounds span '
-             f'<b>{span:.3f}</b> points &mdash; the plateau since 2026-08-08 is unbroken there, '
-             f'and what improved was latency, one composition constant, and our knowledge of '
-             f'the scoring rule. <b>The first thing to break it is Track&nbsp;2&rsquo;s dropout '
-             f'package</b>: T2R2 normalises to <b>{max(norm2):.3f}</b>, +{max(norm2) - max(norm):.3f} '
-             f'over the best Track-1 round at the same latency, for +0.200 raw. Its stablemate '
-             f'R14 is the other half of the pair &mdash; a gated mean-blend that returned all '
-             f'four error subscores <i>bit-identical</i> to R13, proving the hidden set lies '
-             f'inside the training speed range. Section&nbsp;3 is why both readings are hedged: '
-             f'the proxy predicts the board&rsquo;s <i>level</i> to &plusmn;1&ndash;3%, but '
-             f'explains almost none of its <i>movement</i> ({rms:.1f}% residual rms), and '
-             f'dropout&rsquo;s local signal was smaller than that on every instrument.</div>')
+    o.append('<div class="thesis"><span class="eyebrow">'
+             + t("read this first", "先读这里") + "</span>"
+             + t(f"At constant board latency Track&nbsp;1&rsquo;s last four rounds span "
+                 f"<b>{span:.3f}</b> points &mdash; the plateau since 2026-08-08 is unbroken "
+                 f"there, and what improved was latency, one composition constant, and our "
+                 f"knowledge of the scoring rule. <b>The first thing to break it is "
+                 f"Track&nbsp;2&rsquo;s dropout package</b>: T2R2 normalises to "
+                 f"<b>{max(norm2):.3f}</b>, +{max(norm2) - max(norm):.3f} over the best "
+                 f"Track-1 round at the same latency, for +0.200 raw. Its stablemate R14 is "
+                 f"the other half of the pair &mdash; a gated mean-blend that returned all "
+                 f"four error subscores <i>bit-identical</i> to R13, proving the hidden set "
+                 f"lies inside the training speed range. Section&nbsp;3 is why both readings "
+                 f"are hedged: the proxy predicts the board&rsquo;s <i>level</i> to "
+                 f"&plusmn;1&ndash;3%, but explains almost none of its <i>movement</i> "
+                 f"({rms:.1f}% residual rms), and dropout&rsquo;s local signal was smaller "
+                 f"than that on every instrument.",
+                 f"在恒定的 board 延迟下，Track&nbsp;1 "
+                 f"最近四轮的跨度只有 <b>{span:.3f}</b> "
+                 f"分——自 2026-08-08 起的平台期在"
+                 f"那里从未被打破，真正改善"
+                 f"的是延迟、一个合成常数 ALPHA"
+                 f"，以及我们对评分规则的"
+                 f"认识。<b>第一个打破它的是 "
+                 f"Track&nbsp;2 的 dropout 包</b>：T2R2 归一化后"
+                 f"为 <b>{max(norm2):.3f}</b>，在同一延迟下"
+                 f"比最好的 Track-1 轮次高 "
+                 f"+{max(norm2) - max(norm):.3f}，原始分高 +0.200。"
+                 f"与它成对的 R14 是这次探针的"
+                 f"另一半——一个带门控的"
+                 f"时均混合，board 返回的四个"
+                 f"误差子分数与 R13 <i>逐位相同</i>"
+                 f"，证明隐藏集落在训练速度"
+                 f"范围之内。第 3 节说明为什"
+                 f"么两个读数都要打折：proxy 能"
+                 f"把 board 的<i>水平</i>预测到 "
+                 f"&plusmn;1&ndash;3%，却几乎解释不了它"
+                 f"的<i>变化</i>（残差 rms {rms:.1f}%），"
+                 f"而 dropout 的本地信号在每一台"
+                 f"仪器上都小于这个值。")
+             + "</div></div>")
 
     # 1 -----------------------------------------------------------------------------------
-    o.append('<section><div class="head"><h2>Submissions</h2>'
-             '<span class="eyebrow">board final</span>'
-             '<p>The prediction is recorded before upload; a prediction written afterwards is '
-             'worth nothing. Colour is the size of the miss.</p></div>'
+    o.append('<section id="submissions"><div class="head"><h2>'
+             + t("Submissions", "提交记录") + '</h2>'
+             '<span class="eyebrow">'
+             + t("board final", "board final 分数") + "</span><p>"
+             + t("The prediction is recorded before upload; a prediction written afterwards is "
+                 "worth nothing. Colour is the size of the miss.",
+                 "预测必须在上传前记录；"
+                 "事后补写的预测毫无价值。"
+                 "颜色表示偏差的大小。")
+             + "</p></div>"
              '<div class="scroll"><table><thead><tr>'
-             "<th class='l'>Round</th><th>Tr</th><th class='l'>Date</th><th class='l t'>Thesis"
-             "</th><th>Pred</th><th>Actual</th><th>Miss</th></tr></thead><tbody>")
+             '<th class="l">' + t("Round", "轮次") + "</th>"
+             "<th>" + t("Tr", "赛道") + "</th>"
+             '<th class="l">' + t("Date", "日期") + "</th>"
+             '<th class="l t">' + t("Thesis", "论点") + "</th>"
+             "<th>" + t("Pred", "预测") + "</th>"
+             "<th>" + t("Actual", "实际") + "</th>"
+             "<th>" + t("Miss", "偏差") + "</th></tr></thead><tbody>")
     for r in B:
         a, p = r.get("actual"), (r.get("pred") or {}).get("final")
         miss, cls = "", ""
-        act = "<span class='d'>pending</span>"
+        act = '<span class="d">' + t("pending", "待定") + "</span>"
         pv = "&mdash;"
         if p is not None:
             pv = f"{p:.3f}"
@@ -453,14 +684,16 @@ def html(B, Rn, w, path):
         if a and p:
             miss = f"{a['final'] - p:+.3f}"
             d = abs(a["final"] - p)
-            cls = " class='g'" if d < 0.05 else (" class='b'" if d > 0.12 else " class='w'")
-        o.append(f"<tr><td class='l'><b>{r['round']}</b></td><td>{r['track']}</td>"
-                 f"<td class='l d'>{r['date']}</td><td class='l t'>{r.get('thesis') or ''}</td>"
-                 f"<td class='d'>{pv}</td><td><b>{act}</b></td>"
+            cls = ' class="g"' if d < 0.05 else (' class="b"' if d > 0.12 else ' class="w"')
+        o.append(f'<tr><td class="l"><b>{r["round"]}</b></td><td>{r["track"]}</td>'
+                 f'<td class="l d">{r["date"]}</td>'
+                 f'<td class="l t">{tdata(r.get("thesis"), r.get("thesis_zh"))}</td>'
+                 f'<td class="d">{pv}</td><td><b>{act}</b></td>'
                  f"<td{cls}>{miss}</td></tr>")
     o.append("</tbody></table></div>")
-    o.append("<div class='scroll' style='margin-top:14px'><table><thead><tr><th class='l'>Round"
-             "</th>" + "".join(f"<th>{n}</th>" for n in SUB) + "</tr></thead><tbody>")
+    o.append('<div class="scroll" style="margin-top:14px"><table><thead><tr>'
+             '<th class="l">' + t("Round", "轮次") + "</th>"
+             + "".join(f"<th>{n}</th>" for n in SUB) + "</tr></thead><tbody>")
     for r in B:
         a, p = r.get("actual"), r.get("pred") or {}
         if not a:
@@ -470,32 +703,60 @@ def html(B, Rn, w, path):
             if n in p and n in a:
                 dd = a[n] - p[n]
                 c = "g" if abs(dd) < 0.15 else ("b" if abs(dd) > 0.4 else "w")
-                cells.append(f"<td><span class='d'>{p[n]:.2f}</span> "
-                             f"<span class='{c}'>{a[n]:.3f}</span></td>")
+                cells.append(f'<td><span class="d">{p[n]:.2f}</span> '
+                             f'<span class="{c}">{a[n]:.3f}</span></td>')
             else:
                 cells.append(f"<td>{a[n]:.3f}</td>")
-        o.append(f"<tr><td class='l'><b>{r['round']}</b></td>" + "".join(cells) + "</tr>")
-    o.append("</tbody></table></div>"
-             "<p class='stamp' style='margin:10px 0 0'>predicted &middot; actual</p></section>")
+        o.append(f'<tr><td class="l"><b>{r["round"]}</b></td>' + "".join(cells) + "</tr>")
+    o.append('</tbody></table></div><p class="stamp" style="margin:10px 0 0">'
+             + t("predicted &middot; actual",
+                 "预测值 &middot; 实际值")
+             + "</p></section>")
 
     # 2 -----------------------------------------------------------------------------------
-    o.append('<section><div class="head"><h2>Progress at constant latency</h2>'
-             '<span class="eyebrow">time_score held at the median</span>'
-             '<p>Board <code>time_score</code> swings 2.8 points across the rounds and is only '
-             'partly ours to control, so the raw ranking conflates model quality with '
-             'eval-machine luck. Holding it fixed is the honest curve.</p></div>')
+    o.append('<section id="progress"><div class="head"><h2>'
+             + t("Progress at constant latency",
+                 "恒定延迟下的进展") + "</h2>"
+             '<span class="eyebrow">'
+             + t("time_score held at the median",
+                 "time_score 固定在中位数") + "</span><p>"
+             + t("Board <code>time_score</code> swings 2.8 points across the rounds and is "
+                 "only partly ours to control, so the raw ranking conflates model quality "
+                 "with eval-machine luck. Holding it fixed is the honest curve.",
+                 "board 的 <code>time_score</code> 在各轮之间"
+                 "摆动 2.8 分，且只有一部分由"
+                 "我们控制，所以原始排名把"
+                 "模型质量和评测机的运气"
+                 "混在一起。把它固定住，"
+                 "才是诚实的曲线。")
+             + "</p></div>")
     o.append(_progress_svg(T, norm, ref) + "</section>")
 
     # 3 -----------------------------------------------------------------------------------
-    o.append('<section><div class="head"><h2>Local &rarr; board correction</h2>'
-             '<span class="eyebrow">% of error</span>'
-             '<p>Proxy = the held-out <i>twin</i> members on the AoA&nbsp;15&ndash;20 slice of '
-             '<code>val_unseen</code>, scored at the ALPHA that package ships. '
-             '<code>r</code> is board error divided by proxy error. Both tracks are listed &mdash; '
-             'they share one test set and one scoring rule &mdash; but the delta chain below is '
-             'computed <i>within</i> a track, and a transition whose proxy did not move '
-             '(R13&#8594;R14) is skipped.</p></div>'
-             "<div class='scroll'><table><thead><tr><th class='l'>Round</th><th>Tr</th>"
+    o.append('<section id="calibration"><div class="head"><h2>'
+             + t("Local &rarr; board correction", "本地 &rarr; board 校正")
+             + "</h2><span class=\"eyebrow\">"
+             + t("% of error", "误差百分比") + "</span><p>"
+             + t("Proxy = the held-out <i>twin</i> members on the AoA&nbsp;15&ndash;20 slice "
+                 "of <code>val_unseen</code>, scored at the ALPHA that package ships. "
+                 "<code>r</code> is board error divided by proxy error. Both tracks are listed "
+                 "&mdash; they share one test set and one scoring rule &mdash; but the delta "
+                 "chain below is computed <i>within</i> a track, and a transition whose proxy "
+                 "did not move (R13&#8594;R14) is skipped.",
+                 "proxy = <code>val_unseen</code> 的 AoA&nbsp;15&ndash;20 切片"
+                 "上的留出<i>孪生</i>成员，按"
+                 "该包实际部署的 ALPHA 评分。"
+                 "<code>r</code> 为 board 误差除以 proxy 误差"
+                 "。两个赛道一并列出——"
+                 "它们共用一份测试集和一套"
+                 "评分规则——但下方的增量"
+                 "链在<i>赛道内部</i>计算，proxy "
+                 "未变的过渡（R13&#8594;R14）被跳"
+                 "过。")
+             + "</p></div>"
+             '<div class="scroll"><table><thead><tr>'
+             '<th class="l">' + t("Round", "轮次") + "</th>"
+             "<th>" + t("Tr", "赛道") + "</th>"
              + "".join(f"<th>proxy {m}</th>" for m in M)
              + "".join(f"<th>board {m}</th>" for m in M)
              + "".join(f"<th>r_{m}</th>" for m in M) + "</tr></thead><tbody>")
@@ -504,69 +765,136 @@ def html(B, Rn, w, path):
         pp, aa = r["proxy"], {m: err(r["actual"][m]) for m in M}
         for m in M:
             rat[m].append(aa[m] / pp[m])
-        o.append(f"<tr><td class='l'><b>{r['round']}</b></td><td class='d'>{r['track']}</td>"
-                 + "".join(f"<td class='d'>{pp[m]:.5f}</td>" for m in M)
-                 + "".join(f"<td class='d'>{aa[m]:.5f}</td>" for m in M)
+        o.append(f'<tr><td class="l"><b>{r["round"]}</b></td><td class="d">{r["track"]}</td>'
+                 + "".join(f'<td class="d">{pp[m]:.5f}</td>' for m in M)
+                 + "".join(f'<td class="d">{aa[m]:.5f}</td>' for m in M)
                  + "".join(f"<td><b>{aa[m]/pp[m]:.3f}</b></td>" for m in M) + "</tr>")
-    o.append("<tr><td class='l d'>mean &plusmn;&frac12;range</td>"
-             + "<td></td>" * 7
-             + "".join(f"<td class='d'>{np.mean(rat[m]):.3f}&#177;"
+    o.append('<tr><td class="l d">'
+             + t("mean &plusmn;&frac12;range", "均值 &plusmn;&frac12;极差")
+             + "</td>" + "<td></td>" * 7
+             + "".join(f'<td class="d">{np.mean(rat[m]):.3f}&#177;'
                        f"{(max(rat[m])-min(rat[m]))/2:.3f}</td>" for m in M)
              + "</tr></tbody></table></div>")
-    o.append(f'<div class="thesis"><span class="eyebrow">the finding</span>'
-             f'<b>The levels calibrate; the deltas do not.</b> Those ratios are stable to '
-             f'&plusmn;1&ndash;3%, so the proxy predicts the board&rsquo;s level well. Round to '
-             f'round it explains almost none of the board&rsquo;s movement &mdash; residual rms '
-             f'<b>{rms:.1f}%</b> of the error, range {min(res):+.1f} to {max(res):+.1f}%, and '
-             f'<code>mvpe</code> inverts sign in both tracks (R12&#8594;R13 proxy +2.34%, board '
-             f'&minus;3.17%; T2R1&#8594;T2R2 proxy +1.25%, board &minus;7.79%). <b>A local delta '
-             f'below ~{rms:.0f}% of the error does not survive the trip and must not be used to '
-             f'choose a package</b> &mdash; every improvement measured since 2026-08-08 has been '
-             f'smaller than it, dropout&rsquo;s included. That is why T2R2&rsquo;s +0.200 reads '
-             f'as <i>the closest instrument had the sign right</i> (interior Re-band k-fold, rel '
-             f'&minus;2.6%; the AoA&nbsp;15&ndash;20 proxy said +0.66%, the wrong way) rather '
-             f'than as a confirmed local&rarr;board law.</div>')
+    o.append('<div class="thesis"><span class="eyebrow">'
+             + t("the finding", "结论") + "</span>"
+             + t(f"<b>The levels calibrate; the deltas do not.</b> Those ratios are stable to "
+                 f"&plusmn;1&ndash;3%, so the proxy predicts the board&rsquo;s level well. "
+                 f"Round to round it explains almost none of the board&rsquo;s movement "
+                 f"&mdash; residual rms <b>{rms:.1f}%</b> of the error, range {min(res):+.1f} "
+                 f"to {max(res):+.1f}%, and <code>mvpe</code> inverts sign in both tracks "
+                 f"(R12&#8594;R13 proxy +2.34%, board &minus;3.17%; T2R1&#8594;T2R2 proxy "
+                 f"+1.25%, board &minus;7.79%). <b>A local delta below ~{rms:.0f}% of the "
+                 f"error does not survive the trip and must not be used to choose a "
+                 f"package</b> &mdash; every improvement measured since 2026-08-08 has been "
+                 f"smaller than it, dropout&rsquo;s included. That is why T2R2&rsquo;s +0.200 "
+                 f"reads as <i>the closest instrument had the sign right</i> (interior Re-band "
+                 f"k-fold, rel &minus;2.6%; the AoA&nbsp;15&ndash;20 proxy said +0.66%, the "
+                 f"wrong way) rather than as a confirmed local&rarr;board law.",
+                 f"<b>水平可校准，增量不可。</b>"
+                 f"这些比值稳定在 &plusmn;1&ndash;3%，"
+                 f"所以 proxy 能很好地预测 board 的"
+                 f"水平。但逐轮看，它几乎"
+                 f"解释不了 board 的变化——残"
+                 f"差 rms 为误差的 <b>{rms:.1f}%</b>，范围 "
+                 f"{min(res):+.1f} 到 {max(res):+.1f}%，且 <code>mvpe</code> "
+                 f"在两个赛道都反号（R12&#8594;R13 "
+                 f"proxy +2.34%，board &minus;3.17%；T2R1&#8594;T2R2 proxy "
+                 f"+1.25%，board &minus;7.79%）。<b>低于误差 "
+                 f"~{rms:.0f}% 的本地增量无法完成到 "
+                 f"board 的迁移，不得用于选包</b>"
+                 f"——2026-08-08 以来测到的每一项"
+                 f"改进都小于它，dropout 也不例"
+                 f"外。因此 T2R2 的 +0.200 只能读作"
+                 f"<i>最接近的仪器把符号判对"
+                 f"了</i>（内部 Re 段 k-fold，rel &minus;2.6%；"
+                 f"AoA&nbsp;15&ndash;20 proxy 给的是 +0.66%，方向"
+                 f"相反），而不是一条已确"
+                 f"证的 local&rarr;board 定律。")
+             + "</div>")
     o.append(_residual_svg(rows, rms))
-    o.append("<p class='stamp' style='margin:14px 0 0'>also calibrated &mdash; sps element-tail "
-             "f 1.360 (T1) / 1.350 (T2), calib_band13.py &middot; board ms = 2.616 + "
-             "0.435&times;inv + 0.803&times;local, rms 0.690 over 7 rounds, residuals ordered "
-             "by date &middot; one invocation = 0.52&ndash;0.56 board ms = 0.036 final "
-             "&middot; w_time = 0.0956, measured directly from R13 vs R14 (identical error "
-             "subscores, <code>time</code> alone moved)</p>"
-             "</section>")
+    o.append('<p class="stamp" style="margin:14px 0 0">'
+             + t("also calibrated &mdash; sps element-tail f 1.360 (T1) / 1.350 (T2), "
+                 "calib_band13.py &middot; board ms = 2.616 + 0.435&times;inv + "
+                 "0.803&times;local, rms 0.690 over 7 rounds, residuals ordered by date "
+                 "&middot; one invocation = 0.52&ndash;0.56 board ms = 0.036 final "
+                 "&middot; w_time = 0.0956, measured directly from R13 vs R14 (identical "
+                 "error subscores, <code>time</code> alone moved)",
+                 "其他已校准常数 &mdash; sps 元素"
+                 "尾部 f 1.360（T1）/ 1.350（T2），"
+                 "calib_band13.py &middot; board ms = 2.616 + 0.435&times;inv + "
+                 "0.803&times;local，7 轮 rms 0.690，残差按"
+                 "日期排序 &middot; 一次调用 = "
+                 "0.52&ndash;0.56 board ms = 0.036 final &middot; w_time = 0.0956，"
+                 "由 R13 与 R14 直接测得（误差"
+                 "子分数完全相同，只有 "
+                 "<code>time</code> 变了）")
+             + "</p></section>")
 
     # 4 -----------------------------------------------------------------------------------
     n_ens = sum(1 for r in Rn if r.get("ensemble_tested"))
-    o.append(f'<section><div class="head"><h2>Experiment ledger</h2>'
-             f'<span class="eyebrow">{len(Rn)} arms &middot; {n_ens} ensembled</span>'
-             f'<p><b>ens</b> marks an arm measured at the ensemble size that actually ships. It '
-             f'is the most predictive column here: <code>ozdo</code> was +3.84&sigma; per model '
-             f'and &minus;0.012 at four members, and <code>--var-mlp</code>&rsquo;s 3.9% '
-             f'fixed-field TKE cut became +0.08. An arm that has not been ensembled has not been '
-             f'measured.</p></div>'
-             "<div class='scroll'><table><thead><tr><th class='l'>Verdict</th>"
-             "<th class='l'>Date</th><th class='l'>Arm</th><th class='l'>Direction</th>"
-             "<th>ens</th><th class='l t'>Effect</th><th class='l'>Board</th>"
+    o.append('<section id="ledger"><div class="head"><h2>'
+             + t("Experiment ledger", "实验台账") + "</h2>"
+             '<span class="eyebrow">'
+             + t(f"{len(Rn)} arms &middot; {n_ens} ensembled",
+                 f"{len(Rn)} 条实验 &middot; {n_ens} 条做过"
+                 f"集成验证") + "</span><p>"
+             + t("<b>ens</b> marks an arm measured at the ensemble size that actually ships. "
+                 "It is the most predictive column here: <code>ozdo</code> was +3.84&sigma; "
+                 "per model and &minus;0.012 at four members, and <code>--var-mlp</code>&rsquo;s "
+                 "3.9% fixed-field TKE cut became +0.08. An arm that has not been ensembled "
+                 "has not been measured.",
+                 "<b>ens</b> 标记那些在真正上线的"
+                 "集成规模下测过的实验。"
+                 "它是这里最有预测力的一"
+                 "列：<code>ozdo</code> 单模型 +3.84&sigma;，"
+                 "四成员时 &minus;0.012；<code>--var-mlp</code> "
+                 "固定场 TKE 降 3.9%，最终只值 "
+                 "+0.08。没有在集成规模下测"
+                 "过的实验，等于没有测过。")
+             + "</p></div>"
+             '<div class="scroll"><table><thead><tr>'
+             '<th class="l">' + t("Verdict", "结论") + "</th>"
+             '<th class="l">' + t("Date", "日期") + "</th>"
+             '<th class="l">' + t("Arm", "实验") + "</th>"
+             '<th class="l">' + t("Direction", "方向") + "</th>"
+             "<th>ens</th>"
+             '<th class="l t">' + t("Effect", "效果") + "</th>"
+             '<th class="l">' + t("Board", "上板") + "</th>"
              "</tr></thead><tbody>")
     order = {"SHIPPED": 0, "OPEN": 1, "MARGINAL": 2, "CLOSED": 3, "REJECTED": 4}
     for r in sorted(Rn, key=lambda x: (order.get(x["verdict"], 9), x["date"])):
-        e = ("<span class='g'>&#10003;</span>" if r.get("ensemble_tested")
-             else "<span class='d'>&mdash;</span>")
-        o.append(f"<tr><td class='l'><span class='chip {r['verdict']}'>{r['verdict']}</span>"
-                 f"</td><td class='l d'>{r['date']}</td>"
-                 f"<td class='l'><code>{r['arm']}</code></td>"
-                 f"<td class='l d'>{r['direction']}</td><td>{e}</td>"
-                 f"<td class='l t'>{r['effect']}</td>"
-                 f"<td class='l'>{r.get('shipped') or '<span class=d>&mdash;</span>'}</td></tr>")
+        e = ('<span class="g">&#10003;</span>' if r.get("ensemble_tested")
+             else '<span class="d">&mdash;</span>')
+        v = r["verdict"]
+        chip = t(v, VERDICT_ZH.get(v, v))
+        sh = _esc(r.get("shipped") or "") or '<span class="d">&mdash;</span>'
+        o.append(f'<tr><td class="l"><span class="chip {v}">{chip}</span>'
+                 f'</td><td class="l d">{r["date"]}</td>'
+                 f'<td class="l"><code>{_esc(r["arm"])}</code></td>'
+                 f'<td class="l d">{tdata(r.get("direction"), r.get("direction_zh"))}</td>'
+                 f'<td>{e}</td>'
+                 f'<td class="l t">{tdata(r.get("effect"), r.get("effect_zh"))}</td>'
+                 f'<td class="l">{sh}</td></tr>')
     o.append("</tbody></table></div></section>")
 
     import final_v9                       # the fit also carries two collaborator rounds that
     n_fit = len(final_v9.BOARD)           # were never staged here, so it is wider than board.jsonl
-    o.append(f"<footer>subscore weights, {n_fit} rounds pooled across both tracks, "
-             f"max residual {abs(final_v9.RESID).max():.3f} &nbsp;&mdash;&nbsp; "
+    o.append("<footer>"
+             + t(f"subscore weights, {n_fit} rounds pooled across both tracks, max residual "
+                 f"{abs(final_v9.RESID).max():.3f}",
+                 f"子分数权重，两个赛道合并 "
+                 f"{n_fit} 轮拟合，最大残差 "
+                 f"{abs(final_v9.RESID).max():.3f}")
+             + " &nbsp;&mdash;&nbsp; "
              + " &nbsp; ".join(f"{n} {v:.3f}" for n, v in zip(SUB, w))
-             + "<br>sources: leaderboard/board.jsonl &middot; leaderboard/runs.jsonl "
-               "&middot; Track_1/final_v9.py &middot; Track_1/proxy_calib.py</footer></div>")
+             + "<br>"
+             + t("sources: leaderboard/board.jsonl &middot; leaderboard/runs.jsonl "
+                 "&middot; Track_1/final_v9.py &middot; Track_1/proxy_calib.py",
+                 "数据来源：leaderboard/board.jsonl &middot; "
+                 "leaderboard/runs.jsonl &middot; Track_1/final_v9.py &middot; "
+                 "Track_1/proxy_calib.py")
+             + "</footer></div></main></div>")
+    o.append(NAV_SCRIPT % json.dumps([n[0] for n in NAV]))
     with open(path, "w") as fh:
         fh.write("\n".join(o))
     print(f"\nwrote {path}")
