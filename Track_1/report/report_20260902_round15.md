@@ -275,7 +275,90 @@ within the mvpe difference and the timing draw.
 
 ---
 
-## 7. Standing method rules this round earned or re-earned
+## 6b. The interior Re-band k-fold is the decision instrument, in fact
+
+`kfold.py --split re --bands 1 2 3` (new `--bands`), w96 do30 against the round-13 w24 do15
+folds, paired over **2152 windows / 52 trajectories** — 6× the AoA proxy's sample:
+
+| | AoA 15-20 proxy | **interior Re k-fold** | **BOARD** |
+|---|---|---|---|
+| rel-L2 | −1.14 % | **−0.50 %** (z −2.59) | **+0.65 %** |
+| TKE | −2.11 % | **−3.24 %** (z −7.82) | **−2.9 %** |
+| MVPE | −0.63 % | +0.99 % | +2.5 % |
+| sps | +0.51 | **+1.19** | **+1.013** |
+
+**The k-fold called it and the proxy did not** — within 0.3 points on TKE, 0.18 on `sps`, right
+sign on MVPE, and correctly non-committal on rel-L2 where the proxy was confidently wrong.
+
+Its extrapolation bands, reported and never decided on, are a standing warning: at band 0 the
+bigger model is **rel +4.75 %, TKE +16 %**. **Capacity is clearly harmful under Reynolds
+extrapolation.** Round 14's φ = 0 — the hidden set is interior — had to come first; had it gone
+the other way, this round's bet would have lost.
+
+---
+
+## 6c. The U-FNO package, and a correctness fix it forced
+
+Three all-data U-FNO members staged for both tracks (`track{1,2}_r15_ufno3_a060.zip`, 94.1 MB,
+3 invocations, −0.026 `final` of latency against the package already on the board). Three, not
+four: three is what the 3-vs-3 measured, a fourth same-recipe member is worth <+0.1 `sps` and
+here costs a whole invocation.
+
+**Predicted, anchored on the 81.019 round** (identity control: all five deltas 0.000):
+rel_l2 94.862 / tke 78.782 / mvpe 93.985 / time 92.31 / **sps 42.110** → **81.33** (81.35 on
+the full-split proxy). `sps` +0.95 and `tke` +0.61 carry it.
+
+**`cpu_smoke_submission.py` failed the first build** on permutation invariance (1.91e-04
+against 1e-4) where `validate_strict.py` passed it. Isolated:
+
+| | repeat | permute, TF32 on | permute, TF32 off |
+|---|---|---|---|
+| w96 FNO ×3 (fused) | 0.00e+00 | 9.10e-06 | 5.07e-07 |
+| U-FNO ×3 | 0.00e+00 | **1.80e-04** | **8.64e-07** |
+
+Repeats are bit-exact, so this is **not** nondeterminism: **TF32 tiles a GEMM/convolution across
+the BATCH axis**, so a window's position in the batch decides its accumulation order and a
+10-bit mantissa makes that visible. The U-FNO's 3×3 convolutions carry ~20× more of it than the
+FNO's 1×1 + FFT path, which is why every previous package passed.
+`torch.backends.{cuda.matmul,cudnn}.allow_tf32 = False` now ships in **both tracks**. Free
+(round 11: TF32 is +0.05 ms and no subscore change past 1e-5), and it removes a real dependence
+of our score on the evaluator's batching order.
+
+---
+
+## 7. Recommendation for the next two slots
+
+1. **Track 2 → `track2_r15_ufno3_a060.zip`.** Predicted **81.33** (+0.32 over the account's
+   best), it is a clean A/B against a package already on that board — the members differ in
+   architecture and nothing else — and it is the round's strongest evidence.
+2. **Track 1 → `track1_r15_w96x8_a060.zip`.** Already scored **81.019** on Track 2; Track 1 is
+   still standing at 80.835. This costs nothing to run and is the third cross-track identity
+   check. (If a bolder pair is wanted, send `ufno3` to both; the pair then measures the
+   track-to-track mvpe offset at the new operating point instead.)
+3. **Do not** submit anything to test a timing draw, and compare by subscore delta.
+
+**Then, in order of measured value:**
+* **Vendor `ViT2d` and `AFNO2d` and ship the cross-family trio.** U-FNO + ViT + AFNO at one
+  seed each matches U-FNO ×3 (`sps` 44.85 vs 44.82) and costs the same 3 invocations. It is
+  a *free* +0.03 today and, more importantly, the diversity axis is far from exhausted — the
+  three families fail differently by construction.
+* **int8 packaging.** Measured free (±0.05 % of error) and halves the archive. It is what makes
+  8 L8 members, or 8 U-FNO members, or a mixed package fit at all.
+* **A `StackedUFNO`.** Fusing 3–4 U-FNO members into one invocation is worth +0.09…0.13
+  `final` and is pure engineering.
+* **Run the interior Re-band k-fold on U-FNO.** It is now the only instrument that has
+  predicted a board move correctly.
+* **L8 all-data members** (training as this was written) as a fallback package: 4 in one
+  invocation is +0.009 `final` against what is on the board, and its `sps`/`tke` shape is the
+  one the board pays for.
+
+**Closed this round, do not revisit**: `--phases 4` (null at matched steps on a model that no
+longer underfits), more retained modes, mixing dropout levels, low-rank factorization of the
+spectral tensor, plain U-Net and dilated-ResNet trunks.
+
+---
+
+## 8. Standing method rules this round earned or re-earned
 
 * **A prediction instrument needs an identity control.** Predicting a package against its own
   board round must return zero on all five subscores. Two bugs, one of them a full −1.2 sps,
@@ -292,3 +375,7 @@ within the mvpe difference and the timing draw.
   rel-L2 by 1.14 %; the board made it 0.65 % *worse* and paid +1.013 `sps` anyway. Three of the
   last four board rounds have been decided by the error TAIL, and the AoA proxy has now got the
   sign of a rel-L2 move wrong three times.
+* **Run BOTH submission gates.** `validate_strict.py` measures order-dependence as a *relative*
+  drift of the mean field and passed the broken package at 1.1e-05;
+  `cpu_smoke_submission.py` measures max|diff| absolutely and failed it at 1.91e-04. They are
+  not redundant.
