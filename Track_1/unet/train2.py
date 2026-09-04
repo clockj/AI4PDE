@@ -29,6 +29,72 @@ PROBE_Y = [8, 10, 12, 14, 16, 18, 20, 22, 24]
 PROBE_X = [13, 21, 29, 37]
 
 
+def aug_mask(x: torch.Tensor, y: torch.Tensor, p: float,
+             zconst: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Blank a random region of BOTH the input window and the target, in PHYSICAL units.
+
+    x, y   : (B, T, H, W, C) NORMALIZED, i.e. already through self_norm / the GaussianNormalizer
+    p      : per-sample probability of being masked at all
+    zconst : the normalized value a PHYSICAL zero carries, (C,) -- `-mean/std`. The real data's
+             own zero set (PIV field of view, airfoil body) sits at exactly this value, so a
+             synthetic mask painted with it is indistinguishable, element for element, from a
+             piece of geometry the sensor did not see.
+
+    Why. Round 16's board result says U-FNO wins every local instrument and loses on the hidden
+    set, and the mechanism round 15 proposed for U-FNO's gain in the first place was the sharp
+    zero set: "mode truncation cannot represent the sharp zero set of the PIV field of view and
+    the airfoil body". Every local split shares train_real's ONE field-of-view geometry -- the
+    mask is essentially a constant of the dataset -- so nothing we own tests a model against a
+    different one. This makes the geometry a nuisance variable instead of a constant.
+
+    Two region families, drawn 50/50:
+      * a border band of width 1-6 on one of the four sides -- a field of view cropped or
+        extended relative to ours;
+      * a rectangle 4-12 high by 8-24 wide, anywhere -- a body, a shadow, a dropout patch.
+    One region per sample, held fixed across all T frames and both channels of both the input
+    and the target, because the thing being modelled is static geometry, not per-frame noise.
+    Masking the target as well as the input is the point: an unmasked target would ask the
+    model to HALLUCINATE the field behind an occlusion, which is not the task -- the scorer
+    drops zero-target elements from SPS and keeps them in rel_l2 at a prediction of ~0.
+
+    Adds no parameters and is training-only, so a checkpoint trained with it loads into the
+    submission's own FNO2d unchanged.
+    """
+    if p <= 0.0:
+        # Belt and braces: the call site is already guarded by `if args.aug_mask > 0.0`, but
+        # returning before the first draw makes the FUNCTION inert at 0 too, so the RNG stream
+        # -- and therefore every subsequent batch order and dropout mask -- is untouched
+        # whichever way it is reached. verify/aug_mask_check.py asserts exactly that.
+        return x, y
+    b, _, h, w, _ = x.shape
+    hit = torch.rand(b) < p
+    if not bool(hit.any()):
+        return x, y
+    # Drawn on the CPU generator and moved once: a per-sample torch.randint on the device would
+    # cost a synchronization per draw, and the mask is 64 KB per batch.
+    m = torch.zeros(b, h, w, dtype=torch.bool)
+    for i in torch.nonzero(hit).flatten().tolist():
+        if bool(torch.rand(()) < 0.5):
+            t = int(torch.randint(1, 7, ()))            # band width 1-6
+            side = int(torch.randint(0, 4, ()))
+            if side == 0:
+                m[i, :t, :] = True
+            elif side == 1:
+                m[i, h - t:, :] = True
+            elif side == 2:
+                m[i, :, :t] = True
+            else:
+                m[i, :, w - t:] = True
+        else:
+            rh = int(torch.randint(4, 13, ()))          # rectangle 4-12 x 8-24
+            rw = int(torch.randint(8, 25, ()))
+            y0 = int(torch.randint(0, h - rh + 1, ()))
+            x0 = int(torch.randint(0, w - rw + 1, ()))
+            m[i, y0:y0 + rh, x0:x0 + rw] = True
+    m = m.to(x.device).reshape(b, 1, h, w, 1)
+    return torch.where(m, zconst, x), torch.where(m, zconst, y)
+
+
 def _sam_ascent(model: torch.nn.Module, rho: float) -> list:
     """Move every parameter to `w + rho * g / ||g||` in place; return `(param, w)` pairs.
 
@@ -190,6 +256,21 @@ def main() -> None:
     ap.add_argument("--aug-noise", type=float, default=0.0,
                     help="Gaussian noise added to the INPUT window, in units of the target's "
                          "own per-window fluctuation std. 0 disables.")
+    ap.add_argument("--aug-mask", type=float, default=0.0,
+                    help="per-sample probability of blanking a random region of BOTH the input "
+                         "window and the target with the PHYSICAL zero the real field-of-view "
+                         "/ airfoil zero set already carries (a border band 1-6 px on a random "
+                         "side, or a 4-12 x 8-24 rectangle; one region per sample, the same "
+                         "region for all 20 frames and both channels). Every local split we "
+                         "own shares train_real's single field-of-view geometry, so the zero "
+                         "set is a CONSTANT of every instrument -- and round 15's argument for "
+                         "U-FNO was that a conv branch represents that sharp geometry where "
+                         "mode truncation cannot. If the hidden set's geometry differs, a "
+                         "model tuned to ours is tuned to a nuisance variable. This makes it "
+                         "a nuisance variable in training too. Applies to the REAL batch only "
+                         "(the --sim term keeps its own mapped mask), adds no parameters, and "
+                         "is inert at 0 -- no random number is drawn, so a p=0 run is "
+                         "byte-identical to one without the flag.")
     ap.add_argument("--norm", choices=["real", "sim", "self"], default="real",
                     help="'real'/'sim' = fixed global GaussianNormalizer statistics for that "
                          "dataset. 'self' = WP-C, divide each window by its own mean streamwise "
@@ -424,6 +505,11 @@ def main() -> None:
     # while its checkpoint claimed otherwise. That is the same failure `--fgn` guards against.
     if args.mode_drop > 0.0 and args.arch != "fno":
         raise SystemExit(f"--mode-drop is implemented for --arch fno only (got {args.arch})")
+    # --ctx > 20 and --hist feed the trunk tensors built OUTSIDE the 20-frame window; the mask
+    # would have to be painted on those too, and neither is deployable in predict() anyway
+    # (_fno.load_any refuses them). Refuse rather than mask an inconsistent input.
+    if args.aug_mask > 0.0 and (args.hist or args.ctx != T_IN):
+        raise SystemExit("--aug-mask is not implemented for --hist / --ctx != 20")
     if args.lam_tail > 0.0 and args.loss != "mse":
         raise NotImplementedError(
             "--lam-tail needs the per-element field error the --loss mse branch forms; "
@@ -490,6 +576,11 @@ def main() -> None:
     # Channel weights for the MSE field loss, normalized so the largest is 1 and chan_pow = 0
     # reproduces the previous loss exactly. Broadcasts over (B, T, H, W, C).
     cw = (std_v / std_v.max()) ** args.chan_pow
+    # The value a PHYSICAL zero takes after normalization, per channel. self_norm divides by the
+    # window scale BEFORE subtracting the mean, so 0 -> (0/s - mean)/std = -mean/std whatever s
+    # is, and --aug-scale maps 0 -> 0; this constant is therefore exact under every option.
+    # verify/aug_mask_check.py asserts it against the real zero set's own normalized value.
+    zconst = (-mean_v / std_v).to(dev)
 
     hist_t = None
     if args.hist:
@@ -599,6 +690,10 @@ def main() -> None:
             if args.aug_noise > 0.0:
                 scale = args.aug_noise * std_t(y).mean((2, 3), keepdim=True)
                 x = x + scale * torch.randn_like(x)
+            if args.aug_mask > 0.0:
+                # LAST, so the masked elements carry the physical zero exactly rather than the
+                # zero plus whatever --aug-scale / --aug-noise had just put there.
+                x, y = aug_mask(x, y, args.aug_mask, zconst)
 
             def compute_loss():
                 # Everything from the model input to the total loss, factored out so SAM
