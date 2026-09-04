@@ -1809,3 +1809,46 @@ Two submissions read 01:45. Plan for the round: `Track_1/plan/plan_20260904.md`.
   `board_rounds.py`, `final_v9.py`): rel_l2 **0.578** · tke 0.068 · mvpe 0.039 · time 0.083 ·
   sps **0.231**. Nothing moved beyond its own interval; `rel_l2 + sps` ≈ 0.81 for the fourth
   refit running.
+
+### Round 16 campaign (2026-09-04) — depth pays, nothing else in the FNO family does; the U-FNO miss is unexplained locally
+
+Ledger: `Track_1/plan/campaign_20260904.md`; plan §6 of `Track_1/plan/plan_20260904.md`.
+28 GPU-h. Two packages staged, predictions recorded: **T2 → `track2_r16_L8x4_a060.zip`**
+(4 all-data w96 **L8** do30, 1 inv, predicted 81.035 vs T2R3) and **T1 →
+`track1_r16_L8do45x4_a060.zip`** (4 all-data w96 L8 **do45**, predicted 81.188 vs R16); the
+pair is the first board reading of the dropout-at-depth axis.
+
+* **DEPTH is the effect; extra dropout at depth is not.** Five-set 3-vs-3, full split `sps`:
+  w24 do05 42.79 → w96 do30 43.72 → do45 L4 43.64 → **do30 L8 43.98 = do45 L8 43.98**. Depth
+  is +0.26…+0.34 sps at either dropout level and barely shrinks from the per-model +0.37;
+  dropout 0.30 → 0.45 at depth 8 is worth **0.00**. The three-seed floor at w96/do45 is
+  ~0 (sps range 0.00 proxy / 0.05 full), so one-seed arms are readable at this operating
+  point.
+* **Closed at w96 / do45, one seed each, bit-matched control (`--seed`)**: `--wd 0.05`
+  (fits better, generalizes worse), `--lam-tail 0.5` (CVaR-10 % of the per-element squared
+  error — the THIRD failure of "put the scorer's functional in the loss", after `--lam-p` and
+  `--lam-t`), 800 epochs (not under-trained), `--aug-noise 0.10` (round 6's null confirmed at
+  capacity), **`--sam-rho 0.05 / 0.10`** (Sharpness-Aware Minimization: monotone in ρ in the
+  WRONG direction on both splits while training loss rises — tail-through-optimization is
+  closed from both sides). **Marginal, not results**: `--mode-drop 0.2` (DropConnect over
+  retained Fourier modes: best rel-L2 on both splits, TKE +0.5–0.9 %, sps flat; the signature
+  replicates at p 0.1 on L8) and `--aug-mask 0.5` (random FOV-like zeroing of input AND
+  target: +0.04 sps = the seed floor). New flags `--mode-drop`, `--lam-tail`, `--sam-rho`,
+  `--aug-mask` all add no parameters, are inert at 0 (verified byte-identical), and are
+  recorded in the blob config.
+* **THE U-FNO MISS IS NOT EXPLAINED BY ANY LOCAL INSTRUMENT.** The interior Re-band k-fold
+  reproduces the proxy (bands 1–3: rel −2.14 % z −6.9, sps +0.92) where the board said
+  **+1.9 % / +0.44**. Ruled out: all-data members diverging (field 0.0337 vs the twin's
+  0.0336), fp16 packing (perturbs U-FNO and FNO alike, 2.07e-4 vs 2.06e-4), a Track-2-path
+  defect (T1 and T2 agree in-sample, 0.0498 both), and **the zero-set/FOV geometry**
+  (`Track_1/diag_boundary.py`: +102 % of U-FNO's error reduction sits in the aft half x ≥ 32,
+  which holds 0 % of the zero set; only 1.8 % within 3 px of it; U-FNO is *worse* at AoA 0,
+  the angle with the most zero set). What the k-fold does show: **U-FNO's advantage is
+  monotone in Re and REVERSES at the top band** (0: −18.2 %, 1: −3.8 %, 2: −2.2 %, 3: −0.4 %,
+  **4: +1.3 %**). Working hypothesis, unproven: the hidden set is weighted toward the top of
+  the in-range speed span, where the real grid is sparse. **Consequence: no non-FNO family
+  ships on local evidence** — within the FNO family the k-fold has been right every time;
+  across families no local instrument predicts the board.
+* `ufno3` on Track 2 measured **5.457 ms/step** locally (the README's 1.28 was wrong): a
+  conv-heavy model at batch 1 gains nothing from the CUDA graph and pays ~50 % for
+  `allow_tf32 = False`. Track-2 packages should stay FFT + 1×1.

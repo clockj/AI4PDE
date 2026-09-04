@@ -637,6 +637,20 @@ on Track 1 it costs 3 invocations ≈ −0.09 against +0.07 of accuracy.
 −0.007): rel_l2 **0.578** · tke 0.068 · mvpe 0.039 · time 0.083 · sps **0.231**. Nothing moved
 beyond its own interval; `rel_l2 + sps` ≈ 0.81 for the fourth refit running.
 
+### 1.21 Round 16 campaign: depth pays; the U-FNO miss is unexplained by every local instrument
+
+`Track_1/plan/plan_20260904.md` §6 and `campaign_20260904.md`. Five-set 3-vs-3 (full-split
+sps): w24 do05 42.79 → w96 do30 43.72 → **L8 43.98** at either dropout level — **depth is
+the one FNO-family axis left that pays (+0.3 sps)**, and dropout 0.30 → 0.45 at depth 8 is
+worth 0.00. Everything else tried at w96/do45 lost or tied: `--wd`, `--lam-tail` (CVaR),
+800 epochs, input noise, **SAM** (monotone wrong in ρ); `--mode-drop` and `--aug-mask` sit at
+the seed floor. **The U-FNO k-fold (interior bands) reproduced the proxy, not the board**, and
+the boundary diagnostic refuted the FOV/zero-set explanation: U-FNO's gain is far-field wake,
+monotone in Re, reversed at the top band (+1.3 %). Rule earned: **within the FNO family the
+interior Re-band k-fold has called every board move; across families NO local instrument
+predicts the board — a new family costs a slot, not a k-fold.** Next slot pair, staged with
+recorded predictions: T2 `L8x4` do30 (81.035) / T1 `L8x4` do45 (81.188).
+
 ## Part 2 — Closed. Do not re-propose without new evidence.
 
 Everything here was closed by measurement, with the file that measured it. The list exists so a
