@@ -46,6 +46,12 @@ ROUNDS = [
     # with mvpe the outlier again at -4.17 % (36 scored probe points per window, the smallest
     # effective sample of the five, so the first place a one-window pool difference shows).
     ("R15 dropout8/1inv a60", "2026-09-03", 913176, 94.780094, 77.747643, 94.122329, 93.180177, 40.140948, 80.835124),
+    # R16 is T2R3's EXACT member set on the Track-1 board -- the FOURTH cross-track identity
+    # check, and the account's best score on either board.  In error terms against 913187:
+    # rel -0.17 %, tke -1.52 %, mvpe -4.94 %, sps +0.098.  Same shape as the three earlier
+    # checks (mvpe the outlier); tke's 1.5 % is the largest tke offset of the four and is
+    # worth watching, not acting on.  Board latency 4.52 ms against T2R3's 4.78.
+    ("R16 w96x8/1inv a60 fp16", "2026-09-04", 914506, 94.764049, 78.433653, 94.030389, 92.699846, 41.259088, 81.119780),
 ]
 
 UNSCORED = []   # every round on both tracks now has full subscores
@@ -90,6 +96,17 @@ ROUNDS_T2 = [
     # `rel_l2` got fractionally WORSE (+0.64 %): capacity x dropout buys the per-element TAIL,
     # not the rms.  It paid 1.41 board ms for it (3.370 -> 4.780).
     ("T2R3 w96x8/1inv a60 fp16", "2026-09-03", 913187, 94.755824, 78.174302, 93.739707, 92.508902, 41.160630, 81.019213),
+    # 3 all-data U-FNO members (width 96, dropout 0.30, 400 ep), 3 invocations, ALPHA 0.60.
+    # MISSED its prediction by -0.45 (predicted 81.33), and most of the miss is ACCURACY, not
+    # latency: against the T2R3 anchor rel_l2 came back +1.90 % WORSE where the 3-vs-3 said
+    # -4.4 %, a 4.0-pp instrument residual and the largest on record.  Latency was the other
+    # half: 8.69 board ms against T2R3's 4.78 (the U-Net branch is conv-heavy at batch 1 and
+    # `allow_tf32 = False` makes 3x3 convs ~50 % slower -- 5.457 ms/step measured, not the
+    # 1.28 the staging README claimed).  At T2R3's latency it would have scored 81.086, +0.07.
+    # Working hypothesis: U-FNO's local advantage is in-distribution memorization; the
+    # interior Re-band k-fold, the one instrument that called T2R3's shape, was never run on
+    # it.  Do NOT submit the Track-1 twin of this package.
+    ("T2R4 ufno3/3inv a60 fp16", "2026-09-04", 914508, 94.661471, 78.413683, 93.727402, 90.154359, 41.600131, 80.879200),
 ]
 
 # The fit pools both tracks -- see the module docstring.  ROUNDS first, then ROUNDS_T2, so the
@@ -229,9 +246,15 @@ def main():
              "R14": (1, 1.911),
              # R15: T2R2's members on Track 1, 1.023 ms A100 x1.850 = 1.893.
              "R15": (1, 1.893),
+             # R16: T2R3's package on the Track-1 board, so the same 3.017.
+             "R16": (1, 3.017),
              "T2R1": (1, 1.900), "T2R2": (1, 2.546),
              # T2R3: 8 fused width-96 members, 1.631 ms A100 x1.850 = 3.017.
-             "T2R3": (1, 3.017)}
+             "T2R3": (1, 3.017),
+             # T2R4: 3 U-FNO members, 3 invocations. 5.457 ms/step measured in the build log
+             # (slurm-7144661) x1.850 = 10.10 4060-equivalent.  The README's "1.28 ms/step"
+             # was wrong and is withdrawn.
+             "T2R4": (3, 10.10)}
     for r in FIT_ROUNDS:
         key = r[0].split()[0]
         t = 0.72896 * (100.0 / r[6] - 1.0) ** 2 * 1000.0

@@ -4,13 +4,14 @@ Solution code for the **RealPDE** competition (real-world PDE / sim-to-real flui
 Site: https://realpdecompetition.github.io/ · Data: https://huggingface.co/datasets/AI4Science-WestlakeU/RealPDEBench
 Track 1 (Sim2Real): https://www.codabench.org/competitions/17363/ · Track 2 (LTTTA): https://www.codabench.org/competitions/17385/
 
-> **START HERE: [`ROADMAP.md`](ROADMAP.md).** It carries the full **fourteen-round** board
-> record across both tracks, the refitted subscore weights (fourteen rounds, pooled: rel_l2
-> **0.573** · tke **0.075** · mvpe **0.035** · time **0.088** · sps **0.229**, max residual
-> 0.044, which overturn several conclusions still written below), and the current
+> **START HERE: [`ROADMAP.md`](ROADMAP.md).** It carries the full **sixteen-round** board
+> record across both tracks, the refitted subscore weights (sixteen rounds, pooled: rel_l2
+> **0.578** · tke **0.068** · mvpe **0.039** · time **0.083** · sps **0.231**, max residual
+> 0.047, which overturn several conclusions still written below), and the current
 > recommendation. This file is the reference manual; the roadmap is the plan. Best score:
-> **81.019** (Track 2 round 3, 8 all-data width-96 dropout FNOs). Current plan:
-> [`Track_1/plan/plan_20260902.md`](Track_1/plan/plan_20260902.md).
+> **81.120** (Track 1 round 16 — the same 8 all-data width-96 dropout FNOs that score 81.019
+> as Track 2 round 3). Current plan:
+> [`Track_1/plan/plan_20260904.md`](Track_1/plan/plan_20260904.md).
 
 This repo (`~/RealPDE/AI4PDE`, remote `github.com/clockj/AI4PDE`) holds **our** code.
 Datasets, starting kits and official checkpoints live one level up in `~/RealPDE/` and are **not**
@@ -1761,3 +1762,50 @@ Two submissions. Full staging record and the pre-upload predictions:
   before the next capacity step.
 * **Next Track-1 slot is `track1_r15_w96x8_a060.zip`** — the same members as T2R3, staged and
   gated, predicted to reproduce T2R3's four error subscores to ≲0.5 % of the error.
+
+### Round 16 BOARD RESULT (2026-09-04) — Track 1 81.120; U-FNO ×3 missed by −0.45
+
+Two submissions read 01:45. Plan for the round: `Track_1/plan/plan_20260904.md`.
+
+| | id | rel_l2 | tke | mvpe | time | sps | **final** | predicted |
+|---|---|---|---|---|---|---|---|---|
+| **T1 R16** `track1_r15_w96x8_a060.zip` (T2R3's exact members) | 914506 | 94.764049 | 78.433653 | 94.030389 | 92.699846 | 41.259088 | **81.119780** | 81.02 |
+| **T2 R4** `track2_r15_ufno3_a060.zip` (3 U-FNO, 3 inv) | 914508 | 94.661471 | 78.413683 | 93.727402 | 90.154359 | 41.600131 | **80.879200** | 81.33 |
+
+* **Track 1 is at 81.120, the account's best on either board — the FOURTH cross-track identity
+  check.** R16 against T2R3 in error terms: rel **−0.17 %**, tke **−1.52 %**, mvpe **−4.94 %**,
+  sps +0.098. Same shape as the three earlier checks (`mvpe` the outlier); tke's 1.5 % is the
+  largest tke offset of the four and is worth watching, not acting on. Board latency 4.52 ms
+  against T2R3's 4.78. Standing **T1 81.120 / T2 81.019**; leader (read 08-25) 81.761 ⇒
+  **T1 gap 0.641 ≈ 6.7 % of error**.
+* **U-FNO ×3 MISSED BY −0.45, and most of it is ACCURACY.** Priced against the T2R3 anchor with
+  the fourteen-round weights: −0.143 predicted against −0.140 actual — **the weights held; the
+  proxy did not.**
+
+  | subscore | board Δ | error Δ | predicted error Δ | × w | = final |
+  |---|---|---|---|---|---|
+  | rel_l2 | −0.094 | **+1.90 % (WORSE)** | −2.13 % | 0.573 | −0.054 |
+  | tke | +0.239 | −1.40 % | −3.53 % | 0.075 | +0.018 |
+  | mvpe | −0.012 | +0.21 % | −4.17 % | 0.035 | −0.000 |
+  | time | −2.355 | 4.78 → **8.69 board ms** | 5.8 ms | 0.088 | **−0.207** |
+  | sps | +0.440 | | (+0.95) | 0.229 | +0.101 |
+
+  The 3-vs-3 said rel-L2 −4.4 % / sps +2.03 and the board returned **rel +1.9 % / sps +0.44**:
+  a **4.0-pp residual on rel_l2**, the largest instrument miss on record, on the first
+  candidate that "cleared the 4 % transfer resolution". Ensemble size (3 against 8) explains
+  at most ~1 pp. At T2R3's latency the package scores 81.086, **+0.07**.
+  → **Working hypothesis: U-FNO's local advantage is in-distribution memorization.** Its U-Net
+  branch is a local, translation-equivariant conv stack; held-out trajectories share Reynolds
+  numbers with training ones, the hidden set does not. The **interior Re-band k-fold** — the
+  one instrument that called T2R3's shape — was never run on it. **Every non-FNO family (ViT,
+  AFNO, the cross-family trio) is now gated on that k-fold**; they were ranked by the
+  instrument that overrated U-FNO.
+  → **Latency was the other half, and the staged README's "1.28 ms/step" was WRONG**: the build
+  log says **5.457 ms/step** (3.629 with TF32 on). U-FNO is conv-heavy at batch 1 — a CUDA
+  graph removes launches, not FLOPs, and `allow_tf32 = False` costs its 3×3 convs ~50 %. On
+  Track 1 it still costs 3 invocations ≈ −0.09 against +0.07 of accuracy: **U-FNO ×3 improves
+  neither board. `track1_r15_ufno3_a060.zip` is WITHDRAWN.**
+* **Weights, SIXTEEN pooled rounds** (max residual **0.047**; R16 residual −0.041, T2R4 −0.007;
+  `board_rounds.py`, `final_v9.py`): rel_l2 **0.578** · tke 0.068 · mvpe 0.039 · time 0.083 ·
+  sps **0.231**. Nothing moved beyond its own interval; `rel_l2 + sps` ≈ 0.81 for the fourth
+  refit running.

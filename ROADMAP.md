@@ -2,25 +2,30 @@
 
 Written 2026-08-31 after the round-12 board result; revised the same day after the Track-2
 build; revised again 2026-09-01 after the round-13 board result, which changed the subscore
-weights and turned the two boards into one instrument; **revised 2026-09-02 after the round-14
-PAIR, which answered where the hidden set lives and put dropout on the board.** This is the
+weights and turned the two boards into one instrument; revised 2026-09-02 after the round-14
+PAIR, which answered where the hidden set lives and put dropout on the board; **revised
+2026-09-04 after the round-16 pair, which took Track 1 to the account's best and closed the
+first non-FNO family behind a k-fold gate.** This is the
 handoff document: it records what the leaderboard actually says, what is closed, and what to do
 next. Read it with `CLAUDE.md` (contracts, measurements, per-round detail),
 `Track_1/board_rounds.py` (every number in Part 1 is reproducible from it) and
-**`Track_1/plan/plan_20260902.md` (the CURRENT round's plan and recorded predictions)**.
+**`Track_1/plan/plan_20260904.md` (the CURRENT round's plan and recorded predictions)**.
 
-**One-line state:** **Track 2 sits at 81.019213** (round 3, 8 all-data **width-96** dropout
-FNOs — the account's best on either board) and **Track 1 at 80.835124** (round 15, which is
-T2 R2's member set submitted on the other board). Leader 81.76136 ⇒ **gap 0.742 ≈ 7.8 % of
-error**, down from 0.909. **The plateau since 2026-08-08 is broken, and both breaks are
-regularization**: dropout (+0.200, T2 R2) and then capacity at width 96 regularized harder
-(+0.166, T2 R3). Round 14 settled where the hidden set lives — the gated mean-blend returned
-**all four error subscores bit-identical** to round 13's, so **it is INSIDE the training speed
-range** and every Re-*extrapolation* instrument (`relo`, `rehi`, band 0) is retired. Round 15
+**One-line state:** **Track 1 sits at 81.119780** (round 16 — the account's best on either
+board, and the same 8 all-data **width-96** dropout FNOs that score **81.019213** as Track 2
+round 3, the fourth cross-track identity check). Leader 81.76136 ⇒ **gap 0.641 ≈ 6.7 % of
+error**, down from 0.742. Round 16 also spent a slot on the first non-FNO family, **U-FNO ×3,
+and it MISSED by −0.45** (§1.20): the proxy that ranked it was wrong on `rel_l2` by 4.0 pp, so
+every non-FNO family is now gated on the interior Re-band k-fold. **The plateau since
+2026-08-08 is broken, and both breaks are regularization**: dropout (+0.200, T2 R2) and then
+capacity at width 96 regularized harder (+0.166, T2 R3). Round 14 settled where the hidden set
+lives — the gated mean-blend returned **all four error subscores bit-identical** to round
+13's, so **it is INSIDE the training speed range** and every Re-*extrapolation* instrument
+(`relo`, `rehi`, band 0) is retired. Round 15
 settled how to attack it: **T2 R3's whole gain arrived through `sps` (+1.01) and `tke` while
 `rel_l2` got WORSE** — capacity × dropout removes the per-element **tail**, not the rms, which
-is what SPS's containment scoring pays for. Weights refit on **fourteen pooled rounds**: rel_l2
-0.573 · tke 0.075 · mvpe 0.035 · time 0.088 · sps 0.229 (`w_time` *measured* at 0.0956 off the
+is what SPS's containment scoring pays for. Weights refit on **sixteen pooled rounds**: rel_l2
+0.578 · tke 0.068 · mvpe 0.039 · time 0.083 · sps 0.231 (`w_time` *measured* at 0.0956 off the
 R13/R14 pair).
 
 **Revision, 2026-08-31 evening.** Two things changed the plan:
@@ -594,6 +599,43 @@ ratios rel 1.068 / tke 1.136 / mvpe 1.454, delta residual rms **4.15 %**.
 bands 1–3) was not run for this package; it shipped on the 3-vs-3 alone. It worked. Run it
 before the next capacity step anyway — the instrument was installed precisely so a package is
 not chosen on the proxy's ±4 %.
+
+### 1.20 Round 16: Track 1 to 81.120, and U-FNO missed by −0.45
+
+Two submissions read 2026-09-04 01:45. Predictions recorded before upload in
+`../sub_candidates/README.md`; the round's plan is `Track_1/plan/plan_20260904.md`.
+
+| | id | rel_l2 | tke | mvpe | time | sps | **final** | predicted |
+|---|---|---|---|---|---|---|---|---|
+| **T1 R16** T2R3's exact members, other board | 914506 | 94.764049 | 78.433653 | 94.030389 | 92.699846 | 41.259088 | **81.119780** | 81.02 |
+| **T2 R4** 3 all-data U-FNO (w96, do 0.30, 400 ep), fp16, 3 inv | 914508 | 94.661471 | 78.413683 | 93.727402 | 90.154359 | 41.600131 | **80.879200** | 81.33 |
+
+**1. FOURTH cross-track identity check, and Track 1 is now the account's best.** R16 against
+T2R3 in error terms: rel **−0.17 %**, tke **−1.52 %**, mvpe **−4.94 %**, sps +0.098 — the same
+shape as the three earlier checks, `mvpe` the outlier. tke's 1.5 % is the largest tke offset of
+the four; watch it, do not act on it. **+0.285 for nothing new**, which is §1.19 item 4 for the
+second round running.
+
+**2. U-FNO ×3 missed by −0.45, and most of the miss is ACCURACY.** Priced against T2R3 with the
+fourteen-round weights: −0.143 predicted, −0.140 actual — **the weights held; the proxy did
+not.** The 3-vs-3 said rel-L2 −4.4 % / sps +2.03; the board returned **rel +1.90 % (worse) /
+sps +0.44**. That is a **4.0-pp residual on rel_l2**, the largest instrument miss on record,
+and it landed on the first candidate ever to clear the ~4 % transfer resolution (§1.19 item 2).
+Ensemble size (3 against 8) explains at most ~1 pp. Latency was the other half: **8.69 board
+ms against 4.78** (−0.207), because the real cost is 5.457 ms/step, not the 1.28 the staging
+README recorded — U-FNO is conv-heavy at batch 1, a CUDA graph removes launches and not FLOPs,
+and `allow_tf32 = False` costs its 3×3 convs ~50 %. At T2R3's latency the package is +0.07.
+→ **Working hypothesis: the local U-Net branch memorizes in distribution.** Held-out
+trajectories share Reynolds numbers with training ones; the hidden set does not (φ = 0, but
+*unseen interior* Re — §1.18). The **interior Re-band k-fold**, the only instrument that called
+T2R3's shape correctly, was never run on U-FNO. **It is now the gate on every non-FNO family:
+ViT, AFNO and the cross-family trio are all untrusted until they pass it**, since they were
+ranked by the instrument that overrated U-FNO. `track1_r15_ufno3_a060.zip` is **WITHDRAWN** —
+on Track 1 it costs 3 invocations ≈ −0.09 against +0.07 of accuracy.
+
+**3. Weights, sixteen pooled rounds** (max residual **0.047**; R16 residual −0.041, T2R4
+−0.007): rel_l2 **0.578** · tke 0.068 · mvpe 0.039 · time 0.083 · sps **0.231**. Nothing moved
+beyond its own interval; `rel_l2 + sps` ≈ 0.81 for the fourth refit running.
 
 ## Part 2 — Closed. Do not re-propose without new evidence.
 

@@ -92,6 +92,13 @@ ANCHORS = {
     # best on either board, and the right anchor for anything built on top of it.
     "t2r15w96": dict(rel_l2=94.755824, tke=78.174302, mvpe=93.739707, time=92.508902,
                      sps=41.160630, final=81.019213),
+    # 2026-09-04, the SAME eight width-96 members on the TRACK-1 board (id 914506) -- the
+    # fourth cross-track identity check, and the account's best score on either board. Use
+    # this one to anchor a Track-1 candidate and `t2r15w96` to anchor its Track-2 twin: the
+    # two differ only in which board's level the delta is added to (1 invocation, 3.017 ms
+    # 4060-equivalent in both cases, since it is the identical package).
+    "r16w96": dict(rel_l2=94.764049, tke=78.433653, mvpe=94.030389, time=92.699846,
+                   sps=41.259088, final=81.119780),
     "t1r15drop": dict(rel_l2=94.780094, tke=77.747643, mvpe=94.122329, time=93.180177,
                       sps=40.140948, final=80.835124),
     "t2r2": dict(rel_l2=94.787655, tke=77.667926, mvpe=93.882222, time=93.633350,
@@ -262,7 +269,8 @@ def main():
     print(f"\npredicted final = {base['final']:.3f} {mid:+.3f} = "
           f"**{base['final'] + mid:.3f}**   (admissible {base['final'] + lo:.3f}"
           f"-{base['final'] + hi:.3f})")
-    print("  delta-priced with final_v9's 12-round pooled weights; the intercept cancels.")
+    print(f"  delta-priced with final_v9's {len(final_v9.BOARD)}-round pooled weights; "
+          f"the intercept cancels.")
     print("  time_score is the soft number: the board-latency fit's residuals are ordered by "
           "date\n  (the eval machine drifts) and it does not predict better than ~+-1 point, "
           "i.e. +-0.07 final.")

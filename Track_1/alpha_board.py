@@ -121,7 +121,8 @@ def main() -> None:
     print(f"objective: AoA {args.aoa} proxy. per-metric inflation anchored at alpha="
           f"{args.anchor}: " + "  ".join(f"{k} {v:.3f}x" for k, v in fac.items())
           + f"   element tail {args.f:.2f}x")
-    print(f"`final` uses the NINE-round weights with time_score = {args.time_score:.3f}; "
+    print(f"`final` uses final_v9's {len(final_v9.BOARD)}-round pooled weights with "
+          f"time_score = {args.time_score:.3f}; "
           f"ALPHA does not change the invocation count, so time is constant DOWN this column.")
     print("`dmid/dlo/dhi` are final_v9.delta against the anchor row -- pick on dlo, the worst "
           "case over\nthe admissible weight family, because ALPHA moves along the axis that "
