@@ -31,9 +31,17 @@ class SpectralConv2d(nn.Module):
     through the pointwise branch only.
     """
 
-    def __init__(self, width: int, modes_y: int, modes_x: int):
+    def __init__(self, width: int, modes_y: int, modes_x: int, mode_drop: float = 0.0):
         super().__init__()
         self.my, self.mx = modes_y, modes_x
+        # DropConnect over the RETAINED Fourier modes: during training, zero a per-sample
+        # random subset of the (ky, kx) coefficients before the spectral matmul and rescale
+        # by 1/(1-p). The spectral weights are 99.4% of an FNO's parameters and round 15
+        # measured the operator to be mode-specific, so this is dropout applied to the object
+        # that IS the model -- the analogue of Dropout2d on the channel axis, on the axis the
+        # parameters actually live on. Adds NO parameters and is inert in eval(), so a
+        # checkpoint trained with it loads unchanged into `submit_fno/_fno.py`'s own FNO2d.
+        self.mode_drop = float(mode_drop)
         scale = 1.0 / (width * width)
         # Two blocks: positive and negative ky (rfft2 keeps all ky, half of kx).
         self.w1 = nn.Parameter(scale * torch.randn(width, width, modes_y, modes_x, 2))
@@ -49,8 +57,18 @@ class SpectralConv2d(nn.Module):
         out = torch.zeros(b, self.w1.shape[1], h, w // 2 + 1, dtype=torch.cfloat,
                           device=x.device)
         my, mx = min(self.my, h // 2), min(self.mx, w // 2 + 1)
-        out[:, :, :my, :mx] = self._mul(ft[:, :, :my, :mx], self.w1[:, :, :my, :mx])
-        out[:, :, -my:, :mx] = self._mul(ft[:, :, -my:, :mx], self.w2[:, :, :my, :mx])
+        a1, a2 = ft[:, :, :my, :mx], ft[:, :, -my:, :mx]
+        if self.training and self.mode_drop > 0.0:
+            # One (B, 1, ky, kx) mask, shared by the +ky and -ky blocks: those two halves are
+            # conjugate views of the SAME physical wavenumber, so dropping one and keeping
+            # the other would ask the operator to reconstruct a real field from half a
+            # Hermitian pair. Broadcast over the channel axis for the same reason Dropout2d
+            # drops whole maps: a mode is a spatial pattern, not a per-channel scalar.
+            keep = 1.0 - self.mode_drop
+            m = (torch.rand(len(x), 1, my, mx, device=x.device) < keep).to(x.dtype) / keep
+            a1, a2 = a1 * m, a2 * m
+        out[:, :, :my, :mx] = self._mul(a1, self.w1[:, :, :my, :mx])
+        out[:, :, -my:, :mx] = self._mul(a2, self.w2[:, :, :my, :mx])
         return torch.fft.irfft2(out, s=(h, w))
 
 
@@ -70,7 +88,7 @@ class FNO2d(nn.Module):
                  var_pred_std: bool = False, fgn_dim: int = 0, dropout: float = 0.0,
                  mean_head: bool = False, osc_modes: int = 0,
                  osc_global: bool = False, osc_zeromean: bool = False,
-                 tbasis: int = 0):
+                 tbasis: int = 0, mode_drop: float = 0.0):
         super().__init__()
         # Channel dropout between spectral blocks -- the one classical regularizer the project
         # never tried, against a diagnosis that is the project's own: with 74 trajectories the
@@ -91,7 +109,7 @@ class FNO2d(nn.Module):
         self.lift = (nn.Sequential(nn.Conv2d(cin, 128, 1), nn.GELU(), nn.Conv2d(128, width, 1))
                      if lift_mlp else nn.Conv2d(cin, width, 1))
         self.spec = nn.ModuleList(
-            [SpectralConv2d(width, modes_y, modes_x) for _ in range(n_layers)])
+            [SpectralConv2d(width, modes_y, modes_x, mode_drop) for _ in range(n_layers)])
         # The pointwise ("local") half of each FNO block, complementing the spectral half. It
         # is linear by default -- the third 1x1 bottleneck of the same shape as `lift` and
         # `head_logstd`, and the only one that repeats per layer.
@@ -462,7 +480,7 @@ def build(arch: str, width: int, var_head: bool, extra_ch: int, modes_y: int = 1
           var_pred_std: bool = False, fgn_dim: int = 0, dropout: float = 0.0,
           mean_head: bool = False, osc_modes: int = 0,
           osc_global: bool = False,
-          osc_zeromean: bool = False, tbasis: int = 0):
+          osc_zeromean: bool = False, tbasis: int = 0, mode_drop: float = 0.0):
     """Factory shared by train2.py and eval_wp.run so both build identical objects.
 
     `fgn_dim` defaults to 0, which builds no `film` module at all -- so a state_dict saved
@@ -487,10 +505,14 @@ def build(arch: str, width: int, var_head: bool, extra_ch: int, modes_y: int = 1
         return ViT2d(width, n_layers, var_head, extra_ch, heads=max(width // 64, 1),
                      dropout=dropout)
     if arch == "fno":
+        # --mode-drop is FNO-only on purpose: it is DropConnect over the retained spectral
+        # coefficients, and the families above either have no spectral block (unet, dilres,
+        # vit) or reach their modes through a different parameterization (afno's block MLP,
+        # ufno's parallel conv branch, which would keep an undropped path open anyway).
         return FNO2d(width, modes_y, modes_x, n_layers, var_head, extra_ch, var_mlp, lift_mlp,
                      point_mlp, var_hidden, var_deep, var_in_std,
                      var_pred_std, fgn_dim, dropout, mean_head, osc_modes, osc_global,
-                     osc_zeromean, tbasis)
+                     osc_zeromean, tbasis, mode_drop)
     if arch == "deeponet":
         return DeepONetCh(p, trunk_width=width * 2, branch_width=width,
                           var_head=var_head, extra_ch=extra_ch)
