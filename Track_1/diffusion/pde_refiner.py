@@ -65,7 +65,7 @@ def refiner_predict(model: UNet, prev: torch.Tensor) -> torch.Tensor:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", default="/home/clockj/RealPDE/train_real/train_real")
+    ap.add_argument("--data", default="/users/PAS1187/qwu/RealPDE/train_real/train_real")
     ap.add_argument("--epochs", type=int, default=40)
     ap.add_argument("--batch", type=int, default=32)
     ap.add_argument("--stride", type=int, default=5)

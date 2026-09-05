@@ -19,8 +19,8 @@ import os
 import h5py
 import numpy as np
 
-REAL = "/home/clockj/RealPDE/train_real/train_real"
-SIM = "/home/clockj/RealPDE/train_sim/train_sim"
+REAL = "/users/PAS1187/qwu/RealPDE/train_real/train_real"
+SIM = "/users/PAS1187/qwu/RealPDE/train_sim/train_sim"
 SUB = 2
 
 

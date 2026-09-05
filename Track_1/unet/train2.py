@@ -29,10 +29,115 @@ PROBE_Y = [8, 10, 12, 14, 16, 18, 20, 22, 24]
 PROBE_X = [13, 21, 29, 37]
 
 
+def aug_mask(x: torch.Tensor, y: torch.Tensor, p: float,
+             zconst: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Blank a random region of BOTH the input window and the target, in PHYSICAL units.
+
+    x, y   : (B, T, H, W, C) NORMALIZED, i.e. already through self_norm / the GaussianNormalizer
+    p      : per-sample probability of being masked at all
+    zconst : the normalized value a PHYSICAL zero carries, (C,) -- `-mean/std`. The real data's
+             own zero set (PIV field of view, airfoil body) sits at exactly this value, so a
+             synthetic mask painted with it is indistinguishable, element for element, from a
+             piece of geometry the sensor did not see.
+
+    Why. Round 16's board result says U-FNO wins every local instrument and loses on the hidden
+    set, and the mechanism round 15 proposed for U-FNO's gain in the first place was the sharp
+    zero set: "mode truncation cannot represent the sharp zero set of the PIV field of view and
+    the airfoil body". Every local split shares train_real's ONE field-of-view geometry -- the
+    mask is essentially a constant of the dataset -- so nothing we own tests a model against a
+    different one. This makes the geometry a nuisance variable instead of a constant.
+
+    Two region families, drawn 50/50:
+      * a border band of width 1-6 on one of the four sides -- a field of view cropped or
+        extended relative to ours;
+      * a rectangle 4-12 high by 8-24 wide, anywhere -- a body, a shadow, a dropout patch.
+    One region per sample, held fixed across all T frames and both channels of both the input
+    and the target, because the thing being modelled is static geometry, not per-frame noise.
+    Masking the target as well as the input is the point: an unmasked target would ask the
+    model to HALLUCINATE the field behind an occlusion, which is not the task -- the scorer
+    drops zero-target elements from SPS and keeps them in rel_l2 at a prediction of ~0.
+
+    Adds no parameters and is training-only, so a checkpoint trained with it loads into the
+    submission's own FNO2d unchanged.
+    """
+    if p <= 0.0:
+        # Belt and braces: the call site is already guarded by `if args.aug_mask > 0.0`, but
+        # returning before the first draw makes the FUNCTION inert at 0 too, so the RNG stream
+        # -- and therefore every subsequent batch order and dropout mask -- is untouched
+        # whichever way it is reached. verify/aug_mask_check.py asserts exactly that.
+        return x, y
+    b, _, h, w, _ = x.shape
+    hit = torch.rand(b) < p
+    if not bool(hit.any()):
+        return x, y
+    # Drawn on the CPU generator and moved once: a per-sample torch.randint on the device would
+    # cost a synchronization per draw, and the mask is 64 KB per batch.
+    m = torch.zeros(b, h, w, dtype=torch.bool)
+    for i in torch.nonzero(hit).flatten().tolist():
+        if bool(torch.rand(()) < 0.5):
+            t = int(torch.randint(1, 7, ()))            # band width 1-6
+            side = int(torch.randint(0, 4, ()))
+            if side == 0:
+                m[i, :t, :] = True
+            elif side == 1:
+                m[i, h - t:, :] = True
+            elif side == 2:
+                m[i, :, :t] = True
+            else:
+                m[i, :, w - t:] = True
+        else:
+            rh = int(torch.randint(4, 13, ()))          # rectangle 4-12 x 8-24
+            rw = int(torch.randint(8, 25, ()))
+            y0 = int(torch.randint(0, h - rh + 1, ()))
+            x0 = int(torch.randint(0, w - rw + 1, ()))
+            m[i, y0:y0 + rh, x0:x0 + rw] = True
+    m = m.to(x.device).reshape(b, 1, h, w, 1)
+    return torch.where(m, zconst, x), torch.where(m, zconst, y)
+
+
+def _sam_ascent(model: torch.nn.Module, rho: float) -> list:
+    """Move every parameter to `w + rho * g / ||g||` in place; return `(param, w)` pairs.
+
+    The norm is GLOBAL over all parameters that carry a gradient, which is what makes the
+    perturbation an ascent step of length exactly `rho` in the full parameter space -- a
+    per-tensor normalization would be a different, and much larger, neighbourhood.
+
+    The saved `w` is a CLONE of the weights before the step, not the offset that was added.
+    Restoring by subtracting the offset would be exact only up to the rounding of the add
+    (`(w + e) - e != w` in fp32 whenever |e| << |w|, which is the whole regime here), and a
+    weight that does not return exactly to where it started makes the SAM path silently
+    non-reproducible. One clone of the parameters per step is ~114 MB at width 96 depth 8
+    and is freed as soon as `_sam_restore` returns.
+    """
+    with torch.no_grad():
+        gs = [p for p in model.parameters() if p.grad is not None]
+        if not gs:
+            return []
+        gn = torch.norm(torch.stack([q.grad.detach().norm(2) for q in gs]), 2)
+        scale = rho / (gn + 1e-12)
+        saved = []
+        for p in gs:
+            saved.append((p, p.detach().clone()))
+            p.add_(p.grad.detach() * scale)
+    return saved
+
+
+def _sam_restore(saved: list) -> None:
+    """Undo `_sam_ascent` exactly: copy the saved weights back."""
+    with torch.no_grad():
+        for p, w in saved:
+            p.copy_(w)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", default="/home/clockj/RealPDE/train_real/train_real")
+    ap.add_argument("--data", default="/users/PAS1187/qwu/RealPDE/train_real/train_real")
     ap.add_argument("--epochs", type=int, default=150)
+    ap.add_argument("--seed", type=int, default=-1,
+                    help="seed torch/numpy so a control and its arm share initialization and "
+                         "batch order. Seed sigma on the AoA 15-20 proxy is 0.017 wfinal "
+                         "(round 11), which is the size of several shipped effects -- pairing "
+                         "removes it from the comparison instead of averaging it down.")
     ap.add_argument("--batch", type=int, default=32)
     ap.add_argument("--stride", type=int, default=5)
     ap.add_argument("--width", type=int, default=64)
@@ -82,6 +187,32 @@ def main() -> None:
                          "by a quantity it never saw. --var-hidden 256 showed the head is not "
                          "capacity-limited (training `var` identical to baseline), so the "
                          "remaining lever is information, not width.")
+    ap.add_argument("--fgn", type=int, default=0,
+                    help="WP-1 (FGN, arXiv 2506.10772): number of NOISE SAMPLES drawn per step. "
+                         "0 is off and leaves training byte-for-byte as it was. Each sample is "
+                         "one extra forward pass through the SAME weights with a different z "
+                         "driving the per-block FiLM, i.e. one draw of a perturbed network -- "
+                         "noise in PARAMETER space, not output space, which is what makes the "
+                         "samples spatially coherent when the loss only sees marginals. The "
+                         "z = 0 pass is bit-identical to the plain FNO (film is zero-init and "
+                         "bias-free), so every existing loss is computed on it unchanged and "
+                         "this only ADDS the CRPS term. 4 is the screen value: the fair CRPS "
+                         "estimator needs K >= 2 and its variance falls slowly past 4.")
+    ap.add_argument("--fgn-dim", type=int, default=32,
+                    help="width of the FGN noise vector. 32 is the paper's. The FiLM maps are "
+                         "Linear(fgn_dim, 2*width, bias=False) -- 1 536 parameters per block at "
+                         "width 24 -- which is BOUNDARY capacity, the side of the "
+                         "boundary/trunk rule that has paid every time (lift +0.076, "
+                         "head_logstd +0.086, against --point-mlp -0.379).")
+    ap.add_argument("--lam-crps", type=float, default=0.3,
+                    help="weight on the fair (unbiased) CRPS of the K sample fields against the "
+                         "target, per element, in NORMALIZED units. CRPS is a proper scoring "
+                         "rule for exactly what sps measures -- whether an interval contains "
+                         "the truth -- and for the spread tke needs; log-MSE sigma is not. "
+                         "Round 11 showed lam_v REGULARIZES the TKE objective rather than "
+                         "competing with it (lam_v 0.05 / 0.3 / 0.6 -> held-out TKE 0.506 / "
+                         "0.482 / 0.487, a U-shape with the shipped value at the bottom), so "
+                         "the remaining lever is the objective's SHAPE, not its weight.")
     ap.add_argument("--loss", choices=["rel", "mse"], default="rel",
                     help="field loss. 'rel' = per-sample relative L2 in physical units (WP1.1); "
                          "'mse' = plain MSE in normalized units, as the original train.py. The "
@@ -103,9 +234,14 @@ def main() -> None:
                          "fluctuation are orthogonal under the time inner product, so the field "
                          "loss splits exactly into the two and 1.0 reproduces it unchanged. "
                          "diag_spectral.py measures 68%% of the squared error sitting in the "
-                         "fluctuation while only ~31%% of the fluctuation energy is coherently "
-                         "predictable, so most of that budget buys nothing; the time-mean drives "
-                         "MVPE outright. >1 reallocates gradient to the learnable half.")
+                         "fluctuation. The 'only ~31%% of it is coherently predictable' that "
+                         "used to be quoted here is a CATEGORY ERROR (round 13): that Gamma^2 "
+                         "is the coherence of OUR prediction with the target, i.e. what a "
+                         "round-3 model achieved, not what is achievable. >1 reallocates "
+                         "gradient to the time-mean (tested: 3 and 8, both null); <1 "
+                         "reallocates it to the fluctuation, which the eight-round re-pricing "
+                         "of oracle_split_v9 says is the SECOND largest lever (+2.96 against "
+                         "the time-mean's +1.61) and which has never been tried.")
     ap.add_argument("--lam-p", type=float, default=0.0,
                     help="weight on an explicit MVPE term: the scorer's own wake-probe "
                          "quantity (4 columns x 9 rows, time-averaged u,v, per-column relative "
@@ -120,6 +256,21 @@ def main() -> None:
     ap.add_argument("--aug-noise", type=float, default=0.0,
                     help="Gaussian noise added to the INPUT window, in units of the target's "
                          "own per-window fluctuation std. 0 disables.")
+    ap.add_argument("--aug-mask", type=float, default=0.0,
+                    help="per-sample probability of blanking a random region of BOTH the input "
+                         "window and the target with the PHYSICAL zero the real field-of-view "
+                         "/ airfoil zero set already carries (a border band 1-6 px on a random "
+                         "side, or a 4-12 x 8-24 rectangle; one region per sample, the same "
+                         "region for all 20 frames and both channels). Every local split we "
+                         "own shares train_real's single field-of-view geometry, so the zero "
+                         "set is a CONSTANT of every instrument -- and round 15's argument for "
+                         "U-FNO was that a conv branch represents that sharp geometry where "
+                         "mode truncation cannot. If the hidden set's geometry differs, a "
+                         "model tuned to ours is tuned to a nuisance variable. This makes it "
+                         "a nuisance variable in training too. Applies to the REAL batch only "
+                         "(the --sim term keeps its own mapped mask), adds no parameters, and "
+                         "is inert at 0 -- no random number is drawn, so a p=0 run is "
+                         "byte-identical to one without the flag.")
     ap.add_argument("--norm", choices=["real", "sim", "self"], default="real",
                     help="'real'/'sim' = fixed global GaussianNormalizer statistics for that "
                          "dataset. 'self' = WP-C, divide each window by its own mean streamwise "
@@ -145,7 +296,12 @@ def main() -> None:
                          "+2.0 subscore on real but costs 3x latency; weight averaging chases "
                          "the same variance reduction at 1x. Safe here because the network uses "
                          "GroupNorm, which carries no running statistics to recompute.")
-    ap.add_argument("--arch", choices=["unet", "fno", "deeponet"], default="unet")
+    ap.add_argument("--arch",
+                    choices=["unet", "fno", "deeponet", "afno", "dilres", "ufno", "vit"],
+                    default="unet",
+                    help="round 15 adds afno / dilres / ufno / vit, all with FNO2d's "
+                         "interface. --width is the trunk width (the token dim for "
+                         "vit) and --n-layers the depth for all of them.")
     ap.add_argument("--modes-y", type=int, default=12, help="FNO: retained ky modes")
     ap.add_argument("--modes-x", type=int, default=16, help="FNO: retained kx modes")
     ap.add_argument("--n-layers", type=int, default=4, help="FNO: spectral blocks")
@@ -165,6 +321,11 @@ def main() -> None:
                     help="physics: match all four components of grad(u). Divergence and "
                          "vorticity are two invariant combinations of that tensor, so this "
                          "subsumes both --lam-div and --lam-vort and adds the strain rates.")
+    ap.add_argument("--lam-tgrad", type=float, default=0.0,
+                    help="match the TARGET's frame-to-frame time derivative, in physical "
+                         "units -- the temporal analogue of --lam-grad, which is the only "
+                         "loss term ever to clear the proxy's ~2%% resolution. Nothing else "
+                         "in the objective couples adjacent output frames.")
     ap.add_argument("--lam-spec", type=float, default=0.0,
                     help="physics: match the radially-averaged energy spectrum of the "
                          "fluctuation. Targets the measured amplitude deficit at high k "
@@ -184,7 +345,7 @@ def main() -> None:
                     help="re-weight the MSE field loss by (std_c/max std)^chan_pow. 0 is the "
                          "old behaviour, equal weight per channel in NORMALIZED units, which "
                          "weights v ~37x more than u per unit of physical error. 1 puts the "
-                         "loss in physical units, where u carries 86% of the scored error "
+                         "loss in physical units, where u carries 86%% of the scored error "
                          "energy. No effect on --loss rel, which is already physical.")
     ap.add_argument("--phases", type=int, default=1, choices=[1, 4],
                     help="number of ::2 decimation phases to train on. 1 is the scored grid "
@@ -207,26 +368,173 @@ def main() -> None:
                     help="WP3(c): drop every window outside --aoa-hi, i.e. train a high-AoA "
                          "specialist to be blended with the generalist rather than reweighting "
                          "one model. Held-out trajectories are excluded first, as always.")
+    ap.add_argument("--mean-head", action="store_true",
+                    help="a decoupled time-mean readout: head_field emits the (zero-mean) "
+                         "fluctuation and a separate 128-wide MLP emits mean_t(y). The "
+                         "time-mean carries 29%% of rel-L2's error energy and the bound that "
+                         "closed it in round 10 does not bound it -- see floor_aoa.py.")
+    ap.add_argument("--osc-modes", type=int, default=0,
+                    help="J oscillatory output modes, added to head_field. The shedding "
+                         "period is 60-75 frames against T_IN = T_OUT = 20, so the model sees "
+                         "a THIRD of a cycle and must extrapolate the next third -- and the "
+                         "measured error is exactly that: amplitude is right (gain 0.95-1.0) "
+                         "while coherence at k = 2-6, 57%% of the fluctuation energy, is only "
+                         "0.55-0.79. This head emits (p, q, omega) per pixel per channel per "
+                         "mode and synthesizes sum p cos(wt) - q sin(wt), building in the "
+                         "phase advance that is awkward for a conv net. Zero-initialized, so "
+                         "training starts at the plain FNO; 4.7k parameters at J = 2.")
+    ap.add_argument("--osc-global", action="store_true",
+                    help="one omega for the whole field per mode (pooled from the trunk) "
+                         "instead of one per pixel. A vortex street has ONE shedding "
+                         "frequency per trajectory, so this is the constraint that carries "
+                         "the physics; a per-pixel omega lets the head fit each pixel's "
+                         "20-frame trace independently, which is the memorization failure "
+                         "mode the arm exists to avoid. (p, q) stay per pixel either way.")
+    ap.add_argument("--osc-zeromean", action="store_true",
+                    help="subtract the oscillatory term's own time-mean before adding it. "
+                         "The learned period is 64.5 frames against a 20-frame window, so the "
+                         "term spans 0.31 of a cycle and carries a large non-zero time-mean by "
+                         "construction -- and the measured gain was ENTIRELY in the time-mean, "
+                         "with coherence unmoved. This isolates the oscillatory content: if "
+                         "the gain survives the phase claim is real, if it vanishes the head "
+                         "was a mean-head in disguise. Note --mean-head already zero-means "
+                         "everything head_field emits, so it implies this.")
+    ap.add_argument("--tbasis", type=int, default=0,
+                    help="J free zero-mean temporal profiles, SHARED across windows, with "
+                         "per-pixel coefficients. The discriminating control for --osc-modes: "
+                         "same rank and same zero-mean constraint, but the basis does not "
+                         "adapt to the window. report_20260831_round13.md §23 measured that "
+                         "the osc head's omega is an affine function of the window's own mean "
+                         "speed at R^2 0.99, and §25 that the branch is load-bearing -- this "
+                         "asks whether that adaptivity is the mechanism or decoration.")
+    ap.add_argument("--dropout", type=float, default=0.0,
+                    help="Dropout2d probability between spectral blocks. Adds no parameters, "
+                         "so a checkpoint trained with it still loads into the submission's "
+                         "own FNO2d, which has none and runs in eval() regardless.")
+    ap.add_argument("--mode-drop", type=float, default=0.0,
+                    help="DropConnect over the RETAINED Fourier modes (--arch fno only). In "
+                         "training, SpectralConv2d zeros a per-sample Bernoulli(p) subset of "
+                         "the (ky, kx) coefficients before the spectral matmul and rescales "
+                         "the survivors by 1/(1-p); the same mask is used for the +ky and "
+                         "-ky blocks, which are conjugate views of one physical wavenumber. "
+                         "--dropout regularizes the CHANNEL axis between blocks; the spectral "
+                         "weights are 99.4%% of the parameters and live on the MODE axis, "
+                         "which nothing has ever regularized. Adds no parameters and is "
+                         "inert in eval(), so the checkpoint loads into _fno.py unchanged.")
+    ap.add_argument("--lam-tail", type=float, default=0.0,
+                    help="weight on the CVaR of the field error: per sample, the mean of the "
+                         "largest 10%% of per-element squared errors, in the same cw-weighted "
+                         "normalized units as the --loss mse field term. The board pays for "
+                         "per-element CONTAINMENT -- round 15's w96 x dropout package made "
+                         "rel_l2 slightly WORSE and sps +1.013, and sps carries 0.229 of the "
+                         "weight against rel_l2's 0.573 while being far steeper -- so the "
+                         "quantity to minimize is the error TAIL, not its rms. This is that "
+                         "tail, written directly into the objective. --loss rel only averages "
+                         "a per-sample norm and has no per-element term to take a tail of.")
+    ap.add_argument("--sam-rho", type=float, default=0.0,
+                    help="Sharpness-Aware Minimization (Foret et al., ICLR 2021). 0 disables "
+                         "it and the training loop is byte-identical to before. Above 0 each "
+                         "step takes the gradient at w + rho*g/||g|| -- the worst point of a "
+                         "rho-ball around the current weights -- and applies it at w, so the "
+                         "objective becomes max_{||e||<=rho} L(w+e) and the optimizer prefers "
+                         "FLAT minima. The reason to want that here is round 15's board "
+                         "result: capacity x dropout made rel_l2 slightly WORSE and sps "
+                         "+1.013, i.e. the board pays for the per-element error TAIL, and "
+                         "flatness is a tail property of the loss surface rather than a "
+                         "reweighting of the training error (which --lam-tail tried, and "
+                         "which memorized). Costs ~2x wall clock: two forwards, two "
+                         "backwards, one optimizer step.")
+    ap.add_argument("--wd", type=float, default=1e-5,
+                    help="AdamW weight decay. 1e-5 -- effectively none -- was hardcoded for "
+                         "twelve rounds and never swept, while every capacity experiment in "
+                         "the project said the model MEMORIZES 74 trajectories. Explicit "
+                         "regularization is the textbook response to that regime and is the "
+                         "one family it was never tried on.")
+    ap.add_argument("--exclude", nargs="+", default=None,
+                    help="held-out trajectory stems, overriding model.VAL_TRAJ. The default "
+                         "split holds out 8 trajectories drawn from the INTERIOR of the Re "
+                         "range, so it cannot see Re-extrapolation behaviour -- and the hidden "
+                         "test set is at unseen Re. Pass a Re-extreme split to measure that.")
+    ap.add_argument("--sim", default="",
+                    help="train_sim directory. Adds a SECOND loss term on sim windows mapped "
+                         "into real's measurement space (simreal.load_sim_mapped). Sim is a "
+                         "strict superset of real's condition grid, so it covers Re 15225 and "
+                         "27975 and the holes real leaves -- the Reynolds extrapolation the "
+                         "hidden test set is suspected to need.")
+    ap.add_argument("--lam-sim", type=float, default=0.3,
+                    help="weight on the sim term. Real still defines the epoch: one sim batch "
+                         "is drawn per real step, so this is a per-step gradient ratio.")
+    ap.add_argument("--sim-loss", choices=["shape", "full"], default="shape",
+                    help="'full' is the naive arm (the same field loss as real). 'shape' is "
+                         "the bet: normalize BOTH prediction and target by their own time-mean "
+                         "and per-pixel temporal std before comparing, which makes the term "
+                         "blind to exactly the two quantities sim_map.py measures sim to be "
+                         "wrong about -- the time-mean field (rel-L2 0.400 against real, where "
+                         "this model is at 0.11) and the fluctuation amplitude (2.9-5.6x too "
+                         "energetic). What survives is WHERE the structure goes, which no "
+                         "statistic in sim_map.py rules out and which the round-10 oracle "
+                         "prices as the largest reachable component under the nine-round "
+                         "weights.")
+    ap.add_argument("--sim-stride", type=int, default=5)
+    ap.add_argument("--sim-batch", type=int, default=0, help="0 = same as --batch")
+    ap.add_argument("--sim-frames", type=int, default=0, help="0 = all 1000")
+    ap.add_argument("--sim-exclude-held", action="store_true",
+                    help="also drop the held-out conditions from the SIM pool. Without it the "
+                         "model sees CFD at exactly the Reynolds numbers the real data is "
+                         "missing, which is the upper bound on sim's value rather than the "
+                         "deployment situation -- the Track-2 example trajectory is Re 2968, "
+                         "below sim's own range. Separates 'sim teaches this condition' from "
+                         "'sim teaches the regime'.")
     ap.add_argument("--all-data", action="store_true",
                     help="train on ALL trajectories including the held-out ones. Submission "
                          "checkpoints only -- it makes local evaluation meaningless.")
     args = ap.parse_args()
 
+    # Store the AS-TRAINED noise width: 0 when no samples are drawn, so a checkpoint's own blob
+    # says whether it carries `film` weights and eval never has to infer it from --fgn.
+    if args.fgn <= 0:
+        args.fgn_dim = 0
+    elif args.fgn_dim <= 0:
+        raise SystemExit("--fgn > 0 needs --fgn-dim > 0; z would otherwise have no width")
+    elif args.arch != "fno":
+        # Only FNO2d takes a `z`; UNetTwoHead and DeepONetCh would raise deep inside the loop.
+        raise SystemExit(f"--fgn is implemented for --arch fno only (got {args.arch})")
+
+    # Refuse rather than silently record an inert flag in the blob's config: build() only
+    # threads mode_drop into FNO2d, so any other --arch would train the unregularized model
+    # while its checkpoint claimed otherwise. That is the same failure `--fgn` guards against.
+    if args.mode_drop > 0.0 and args.arch != "fno":
+        raise SystemExit(f"--mode-drop is implemented for --arch fno only (got {args.arch})")
+    # --ctx > 20 and --hist feed the trunk tensors built OUTSIDE the 20-frame window; the mask
+    # would have to be painted on those too, and neither is deployable in predict() anyway
+    # (_fno.load_any refuses them). Refuse rather than mask an inconsistent input.
+    if args.aug_mask > 0.0 and (args.hist or args.ctx != T_IN):
+        raise SystemExit("--aug-mask is not implemented for --hist / --ctx != 20")
+    if args.lam_tail > 0.0 and args.loss != "mse":
+        raise NotImplementedError(
+            "--lam-tail needs the per-element field error the --loss mse branch forms; "
+            "--loss rel only produces a per-sample norm")
+
+    if args.seed >= 0:
+        torch.manual_seed(args.seed)
+        torch.cuda.manual_seed_all(args.seed)
+        np.random.seed(args.seed)
+
     dev = "cuda"
     # Self-normalization needs raw physical trajectories: the per-window scale is only
     # recoverable before the global normalizer folds every condition onto one distribution.
     self_norm_mode = args.norm == "self"
-    trajs = load_trajectories(args.data, exclude=[] if args.all_data else VAL_TRAJ,
+    excl = [] if args.all_data else (args.exclude if args.exclude is not None else VAL_TRAJ)
+    trajs = load_trajectories(args.data, exclude=excl,
                               normalize=False, phases=PHASES_ALL[:args.phases])
     idx = window_index(trajs, args.stride)
-    held = "NONE (all-data)" if args.all_data else f"{len(VAL_TRAJ)} held out"
+    held = "NONE (all-data)" if args.all_data else f"{len(excl)} held out"
     print(f"train: {len(trajs)} trajectory-phases ({args.phases} phase(s)) -> "
           f"{len(idx)} windows, {held}", flush=True)
 
     # WP3: which windows sit at a high angle of attack. `<Re>_<AoA>` filenames, aligned with
     # `trajs` by construction.
-    names = trajectory_names(args.data, exclude=[] if args.all_data else VAL_TRAJ,
-                             phases=PHASES_ALL[:args.phases])
+    names = trajectory_names(args.data, exclude=excl, phases=PHASES_ALL[:args.phases])
     is_hi = np.isin([int(n.split("_")[1]) for n in names], args.aoa_hi)[idx[:, 0]]
     if args.aoa_only:
         idx = idx[is_hi]
@@ -245,6 +553,22 @@ def main() -> None:
     trajs_t = [torch.from_numpy(d) for d in trajs]
     idx_t = torch.from_numpy(idx)
 
+    sim_trajs_t = sim_idx_t = None
+    if args.sim:
+        if self_norm_mode:
+            raise SystemExit("--sim assumes the global real normalizer; --norm self would "
+                             "rescale every window and undo the speed match")
+        from simreal import load_sim_mapped
+        sim_trajs = load_sim_mapped(args.sim, args.data, phases=PHASES_ALL[:args.phases],
+                                    frames=args.sim_frames,
+                                    exclude=excl if args.sim_exclude_held else None,
+                                    real_exclude=excl)
+        sim_idx = window_index(sim_trajs, args.sim_stride)
+        sim_trajs_t = [torch.from_numpy(d) for d in sim_trajs]
+        sim_idx_t = torch.from_numpy(sim_idx)
+        print(f"sim: {len(sim_idx)} windows at stride {args.sim_stride}, "
+              f"lam_sim {args.lam_sim} loss '{args.sim_loss}'", flush=True)
+
     stats = NORM_STATS[args.norm]
     mean_v = torch.from_numpy(stats[0]).to(dev)
     std_v = torch.from_numpy(stats[1]).to(dev)
@@ -252,6 +576,11 @@ def main() -> None:
     # Channel weights for the MSE field loss, normalized so the largest is 1 and chan_pow = 0
     # reproduces the previous loss exactly. Broadcasts over (B, T, H, W, C).
     cw = (std_v / std_v.max()) ** args.chan_pow
+    # The value a PHYSICAL zero takes after normalization, per channel. self_norm divides by the
+    # window scale BEFORE subtracting the mean, so 0 -> (0/s - mean)/std = -mean/std whatever s
+    # is, and --aug-scale maps 0 -> 0; this constant is therefore exact under every option.
+    # verify/aug_mask_check.py asserts it against the real zero set's own normalized value.
+    zconst = (-mean_v / std_v).to(dev)
 
     hist_t = None
     if args.hist:
@@ -261,7 +590,7 @@ def main() -> None:
 
     n_ctx = max(args.ctx - T_IN, 0)  # extra frames prepended before the protocol window
     from models_alt import (build, divergence, radial_index, radial_spectrum,
-                            velocity_gradient, vorticity)
+                            time_derivative, velocity_gradient, vorticity)
     rad_idx, rad_nb = radial_index(H, W, dev)
     model = build(args.arch, args.width, args.var_head,
                   (HIST_CH if args.hist else 0) + n_ctx * C,
@@ -270,7 +599,11 @@ def main() -> None:
                   point_mlp=args.point_mlp, var_hidden=args.var_hidden,
                   var_deep=args.var_deep,
                   var_in_std=args.var_in_std,
-                  var_pred_std=args.var_pred_std).to(dev)
+                  var_pred_std=args.var_pred_std, dropout=args.dropout,
+                  mean_head=args.mean_head, osc_modes=args.osc_modes,
+                  osc_global=args.osc_global, osc_zeromean=args.osc_zeromean,
+                  tbasis=args.tbasis, mode_drop=args.mode_drop,
+                  fgn_dim=args.fgn_dim).to(dev)
     print(f"params: {sum(p.numel() for p in model.parameters())/1e6:.2f}M", flush=True)
 
     if args.init:
@@ -284,7 +617,7 @@ def main() -> None:
         print(f"init: {args.init} -> {len(ok)}/{len(dst)} tensors copied "
               f"({len(dst) - len(ok)} left at their random init)", flush=True)
 
-    opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-5)
+    opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.wd)
     steps = args.epochs * ((len(idx) + args.batch - 1) // args.batch)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=args.lr, total_steps=steps)
 
@@ -316,7 +649,7 @@ def main() -> None:
         # steps over a differently-weighted pool rather than one pass over every window.
         perm = (torch.randperm(len(idx_t)) if w_samp is None else
                 torch.multinomial(w_samp, len(idx_t), replacement=True))
-        acc = np.zeros(7)
+        acc = np.zeros(11)
         n = 0
         for i in range(0, len(idx_t), args.batch):
             pos = perm[i:i + args.batch]
@@ -357,115 +690,225 @@ def main() -> None:
             if args.aug_noise > 0.0:
                 scale = args.aug_noise * std_t(y).mean((2, 3), keepdim=True)
                 x = x + scale * torch.randn_like(x)
+            if args.aug_mask > 0.0:
+                # LAST, so the masked elements carry the physical zero exactly rather than the
+                # zero plus whatever --aug-scale / --aug-noise had just put there.
+                x, y = aug_mask(x, y, args.aug_mask, zconst)
 
-            parts = [to_ch(x)]
-            if ctx is not None:
-                parts.append(ctx.permute(0, 1, 4, 2, 3).reshape(b, n_ctx * C, H, W))
-            if hist is not None:
-                parts.append(hist)
-            raw, logstd = model(torch.cat(parts, 1) if len(parts) > 1 else parts[0],
-                                detach_var=args.detach_var)
-            raw = from_ch(raw)
+            def compute_loss():
+                # Everything from the model input to the total loss, factored out so SAM
+                # can evaluate the SAME expression twice: once at the weights, once at the
+                # perturbed weights. The augmentations above stay OUTSIDE, so both passes
+                # see the identical batch; what is redrawn inside is what the model itself
+                # samples (dropout / --mode-drop masks, the FGN z, the sim minibatch),
+                # which is standard for SAM and is why the RNG stream is untouched when
+                # --sam-rho is 0: the closure is then called exactly once per step, in the
+                # same order as the inline block it replaces.
+                parts = [to_ch(x)]
+                if ctx is not None:
+                    parts.append(ctx.permute(0, 1, 4, 2, 3).reshape(b, n_ctx * C, H, W))
+                if hist is not None:
+                    parts.append(hist)
+                # Hoisted out of the model call so the FGN sample passes below feed the network the
+                # identical tensor rather than rebuilding it K times.
+                inp = torch.cat(parts, 1) if len(parts) > 1 else parts[0]
+                raw, logstd = model(inp, detach_var=args.detach_var)
+                raw = from_ch(raw)
 
-            if args.var_head:
-                # (B, C, H, W) -> (B, 1, H, W, C); clamp keeps exp() finite early in training.
-                sigma = logstd.clamp(-8.0, 2.0).exp().permute(0, 2, 3, 1).unsqueeze(1)
-                pred = compose(raw, sigma.detach(), args.alpha_train)
-            else:
-                sigma, pred = None, raw
+                if args.var_head:
+                    # (B, C, H, W) -> (B, 1, H, W, C); clamp keeps exp() finite early in training.
+                    sigma = logstd.clamp(-8.0, 2.0).exp().permute(0, 2, 3, 1).unsqueeze(1)
+                    pred = compose(raw, sigma.detach(), args.alpha_train)
+                else:
+                    sigma, pred = None, raw
 
-            # Split the residual into its orthogonal time-mean and fluctuation parts so the
-            # two can be weighted separately. d = dm + df with dm constant in time, hence
-            # sum_t d^2 = T*dm^2 + sum_t df^2 exactly, and w_mean = 1 is the original loss.
-            d = pred - y
-            dm = d.mean(1, keepdim=True)
-            df = d - dm
+                # Split the residual into its orthogonal time-mean and fluctuation parts so the
+                # two can be weighted separately. d = dm + df with dm constant in time, hence
+                # sum_t d^2 = T*dm^2 + sum_t df^2 exactly, and w_mean = 1 is the original loss.
+                d = pred - y
+                dm = d.mean(1, keepdim=True)
+                df = d - dm
 
-            if args.loss == "rel":
-                # Per-sample relative L2 in PHYSICAL units -- exactly the scored quantity.
-                # Doing this in normalized units would be a different objective: the normalized
-                # denominator is dominated by the constant MEAN/STD offset, which erases the
-                # low-Re up-weighting that is the whole point of WP1.1.
-                sq_m = ((dm * mul) ** 2).reshape(b, -1).sum(1) * T_OUT
-                sq_f = ((df * mul) ** 2).reshape(b, -1).sum(1)
-                num = (args.w_mean * sq_m + sq_f).clamp(min=0).sqrt()
-                den = (y * mul + off).reshape(b, -1).norm(dim=1).clamp(min=1e-8)
-                l_field = (num / den).mean()
-            else:
-                # `cw` re-weights the channels. The MSE branch lives in NORMALIZED units, so
-                # by default a 1-sigma error in v counts the same as a 1-sigma error in u --
-                # which, since sigma_u/sigma_v = 6.1, weights v about 37x more per unit of
-                # PHYSICAL error. Every scored metric disagrees: rel-L2 and MVPE are physical
-                # norms in which u carries 86% of the error energy, and SPS measures every
-                # interval against one global sigma in physical units. chan_pow = 1 puts the
-                # loss in physical units (the `rel` branch already is); 0 leaves it as it was.
-                l_field = args.w_mean * torch.mean((dm * cw) ** 2) + torch.mean((df * cw) ** 2)
+                if args.loss == "rel":
+                    # Per-sample relative L2 in PHYSICAL units -- exactly the scored quantity.
+                    # Doing this in normalized units would be a different objective: the normalized
+                    # denominator is dominated by the constant MEAN/STD offset, which erases the
+                    # low-Re up-weighting that is the whole point of WP1.1.
+                    sq_m = ((dm * mul) ** 2).reshape(b, -1).sum(1) * T_OUT
+                    sq_f = ((df * mul) ** 2).reshape(b, -1).sum(1)
+                    num = (args.w_mean * sq_m + sq_f).clamp(min=0).sqrt()
+                    den = (y * mul + off).reshape(b, -1).norm(dim=1).clamp(min=1e-8)
+                    l_field = (num / den).mean()
+                else:
+                    # `cw` re-weights the channels. The MSE branch lives in NORMALIZED units, so
+                    # by default a 1-sigma error in v counts the same as a 1-sigma error in u --
+                    # which, since sigma_u/sigma_v = 6.1, weights v about 37x more per unit of
+                    # PHYSICAL error. Every scored metric disagrees: rel-L2 and MVPE are physical
+                    # norms in which u carries 86% of the error energy, and SPS measures every
+                    # interval against one global sigma in physical units. chan_pow = 1 puts the
+                    # loss in physical units (the `rel` branch already is); 0 leaves it as it was.
+                    l_field = args.w_mean * torch.mean((dm * cw) ** 2) + torch.mean((df * cw) ** 2)
 
-            loss = args.lam_f * l_field
-            l_probe = torch.zeros((), device=dev)
-            if args.lam_p > 0.0:
-                # scoring.mvpe_rel_l2_per_sample, verbatim: probe_y = 8..24 step 2,
-                # probe_x = 13/21/29/37, time-averaged u,v, relative L2 per COLUMN (each
-                # column carries its own denominator, which up-weights the far wake where
-                # velocities are small), then averaged over the four columns.
-                mp = (pred.mean(1) * mul.squeeze(1) + off.squeeze(1)) if self_norm_mode else \
-                     (pred.mean(1) * mul + off)
-                mt = (y.mean(1) * mul.squeeze(1) + off.squeeze(1)) if self_norm_mode else \
-                     (y.mean(1) * mul + off)
-                cols = []
-                for px in PROBE_X:
-                    pp = mp[:, PROBE_Y, px, :2].reshape(b, -1)
-                    tt = mt[:, PROBE_Y, px, :2].reshape(b, -1)
-                    cols.append((pp - tt).norm(dim=1) / tt.norm(dim=1).clamp(min=1e-8))
-                l_probe = torch.stack(cols).mean()
-                loss = loss + args.lam_p * l_probe
+                loss = args.lam_f * l_field
+                l_tail = torch.zeros((), device=dev)
+                if args.lam_tail > 0.0:
+                    # CVaR at 10%: the mean of the largest tenth of the per-element squared
+                    # errors, per sample, in the SAME cw-weighted normalized units l_field
+                    # averages. `l_field` splits d into its time-mean and fluctuation parts so
+                    # they can be weighted separately; the tail deliberately does not -- an
+                    # element that lands outside its SPS interval costs the same whichever part
+                    # of the residual put it there, so the quantity to bound is the plain
+                    # per-element error over the whole field.
+                    e2 = ((d * cw) ** 2).reshape(b, -1)
+                    kk = max(1, int(0.10 * e2.shape[1]))
+                    l_tail = e2.topk(kk, dim=1).values.mean()
+                    loss = loss + args.lam_tail * l_tail
+                l_probe = torch.zeros((), device=dev)
+                if args.lam_p > 0.0:
+                    # scoring.mvpe_rel_l2_per_sample, verbatim: probe_y = 8..24 step 2,
+                    # probe_x = 13/21/29/37, time-averaged u,v, relative L2 per COLUMN (each
+                    # column carries its own denominator, which up-weights the far wake where
+                    # velocities are small), then averaged over the four columns.
+                    mp = (pred.mean(1) * mul.squeeze(1) + off.squeeze(1)) if self_norm_mode else \
+                         (pred.mean(1) * mul + off)
+                    mt = (y.mean(1) * mul.squeeze(1) + off.squeeze(1)) if self_norm_mode else \
+                         (y.mean(1) * mul + off)
+                    cols = []
+                    for px in PROBE_X:
+                        pp = mp[:, PROBE_Y, px, :2].reshape(b, -1)
+                        tt = mt[:, PROBE_Y, px, :2].reshape(b, -1)
+                        cols.append((pp - tt).norm(dim=1) / tt.norm(dim=1).clamp(min=1e-8))
+                    l_probe = torch.stack(cols).mean()
+                    loss = loss + args.lam_p * l_probe
 
-            l_div = l_spec = torch.zeros((), device=dev)
-            if args.lam_div > 0.0:
-                # Match the target's OWN divergence. Driving div -> 0 would fight the data:
-                # divergence.py measures rms(div u)/rms(|grad u|) at 0.42-0.49 on real PIV,
-                # dominated by unobservable out-of-plane dw/dz.
-                l_div = rel_l2(divergence(pred * mul), divergence(y * mul)).mean()
-                loss = loss + args.lam_div * l_div
-            if args.lam_vort > 0.0:
-                # The rotational half of the velocity gradient. For a shedding wake this is
-                # the coherent structure; --lam-div constrains only the dilatational half.
-                l_vort = rel_l2(vorticity(pred * mul), vorticity(y * mul)).mean()
-                l_div = l_div + l_vort          # reported together in the `div` column
-                loss = loss + args.lam_vort * l_vort
-            if args.lam_grad > 0.0:
-                # All four components. Divergence and vorticity are two invariants of this
-                # tensor, so this subsumes both and adds the strain rates.
-                l_grad = rel_l2(velocity_gradient(pred * mul),
-                                velocity_gradient(y * mul)).mean()
-                l_div = l_div + l_grad
-                loss = loss + args.lam_grad * l_grad
-            if args.lam_spec > 0.0:
-                sp_p = radial_spectrum(pred * mul, rad_idx, rad_nb)
-                sp_y = radial_spectrum(y * mul, rad_idx, rad_nb)
-                # log-space: the spectrum spans orders of magnitude and the deficit to be
-                # fixed is at high k, where the linear-scale energy is negligible.
-                l_spec = torch.mean((torch.log(sp_p + 1e-12) - torch.log(sp_y + 1e-12)) ** 2)
-                loss = loss + args.lam_spec * l_spec
-            l_var = l_tke = torch.zeros((), device=dev)
-            if args.var_head:
-                s_true = std_t(y)
-                l_var = torch.mean((sigma.log() - (s_true + 1e-4).log()) ** 2)
-                # With alpha = 1 the composed field has std exactly `sigma`, so its TKE is
-                # 0.5*sum_c (sigma_c * STD_c)^2 identically. Writing it that way instead of
-                # calling tke(compose(...)) keeps the gradient on the variance head alone --
-                # routing it through the field head would only push the raw fluctuation's
-                # scale, which the rescaling then discards.
-                ke_pred = 0.5 * ((sigma * mul) ** 2).squeeze(1).sum(-1)
-                l_tke = rel_l2(ke_pred, tke(y, mul)).mean()
-                loss = loss + args.lam_v * l_var + args.lam_t * l_tke
+                l_div = l_spec = torch.zeros((), device=dev)
+                if args.lam_div > 0.0:
+                    # Match the target's OWN divergence. Driving div -> 0 would fight the data:
+                    # divergence.py measures rms(div u)/rms(|grad u|) at 0.42-0.49 on real PIV,
+                    # dominated by unobservable out-of-plane dw/dz.
+                    l_div = rel_l2(divergence(pred * mul), divergence(y * mul)).mean()
+                    loss = loss + args.lam_div * l_div
+                if args.lam_vort > 0.0:
+                    # The rotational half of the velocity gradient. For a shedding wake this is
+                    # the coherent structure; --lam-div constrains only the dilatational half.
+                    l_vort = rel_l2(vorticity(pred * mul), vorticity(y * mul)).mean()
+                    l_div = l_div + l_vort          # reported together in the `div` column
+                    loss = loss + args.lam_vort * l_vort
+                if args.lam_grad > 0.0:
+                    # All four components. Divergence and vorticity are two invariants of this
+                    # tensor, so this subsumes both and adds the strain rates.
+                    l_grad = rel_l2(velocity_gradient(pred * mul),
+                                    velocity_gradient(y * mul)).mean()
+                    l_div = l_div + l_grad
+                    loss = loss + args.lam_grad * l_grad
+                if args.lam_tgrad > 0.0:
+                    # The one derivative direction velocity_gradient does not constrain. A
+                    # per-element field loss is indifferent to how the predicted sequence evolves
+                    # from frame to frame, which is a strange silence in a forecaster's objective.
+                    l_tg = rel_l2(time_derivative(pred * mul), time_derivative(y * mul)).mean()
+                    l_div = l_div + l_tg            # reported in the `div` column with its siblings
+                    loss = loss + args.lam_tgrad * l_tg
+                if args.lam_spec > 0.0:
+                    sp_p = radial_spectrum(pred * mul, rad_idx, rad_nb)
+                    sp_y = radial_spectrum(y * mul, rad_idx, rad_nb)
+                    # log-space: the spectrum spans orders of magnitude and the deficit to be
+                    # fixed is at high k, where the linear-scale energy is negligible.
+                    l_spec = torch.mean((torch.log(sp_p + 1e-12) - torch.log(sp_y + 1e-12)) ** 2)
+                    loss = loss + args.lam_spec * l_spec
+                l_var = l_tke = torch.zeros((), device=dev)
+                if args.var_head:
+                    s_true = std_t(y)
+                    l_var = torch.mean((sigma.log() - (s_true + 1e-4).log()) ** 2)
+                    # With alpha = 1 the composed field has std exactly `sigma`, so its TKE is
+                    # 0.5*sum_c (sigma_c * STD_c)^2 identically. Writing it that way instead of
+                    # calling tke(compose(...)) keeps the gradient on the variance head alone --
+                    # routing it through the field head would only push the raw fluctuation's
+                    # scale, which the rescaling then discards.
+                    ke_pred = 0.5 * ((sigma * mul) ** 2).squeeze(1).sum(-1)
+                    l_tke = rel_l2(ke_pred, tke(y, mul)).mean()
+                    loss = loss + args.lam_v * l_var + args.lam_t * l_tke
 
+                l_crps = l_svar = torch.zeros((), device=dev)
+                if args.fgn > 0:
+                    # K extra forwards, weights shared, z ~ N(0, I). Everything above used the
+                    # z = 0 pass, which IS the plain FNO, so nothing here changes what the
+                    # deterministic model optimizes -- CRPS is strictly added on top.
+                    k_s = args.fgn
+                    zs = torch.randn(k_s, b, args.fgn_dim, device=dev)
+                    xs = torch.stack([from_ch(model(inp, detach_var=args.detach_var, z=zs[j])[0])
+                                      for j in range(k_s)])
+                    # Fair (unbiased) CRPS per element:
+                    #   mean_k |x_k - y| - 1/(2*K*(K-1)) * sum_{k != l} |x_k - x_l|
+                    # The second sum runs over ORDERED pairs, so summing UNORDERED ones and
+                    # dividing by K*(K-1) is the same number from half the tensors. Accumulating
+                    # pair by pair also avoids the (K,K,B,T,H,W,C) broadcast, which is 4x the
+                    # memory at K = 4 for identical arithmetic. Unbiased matters: the biased
+                    # estimator rewards under-dispersion at small K, which is the exact failure
+                    # mode this whole work package exists to fix.
+                    spread = sum((xs[j] - xs[l]).abs().mean()
+                                 for j in range(k_s) for l in range(j + 1, k_s))
+                    l_crps = (xs - y).abs().mean() - spread / (k_s * (k_s - 1))
+                    loss = loss + args.lam_crps * l_crps
+                    with torch.no_grad():
+                        # The screen from plan_20260810: does the SAMPLE SPREAD track std_t(y)
+                        # better than the log-MSE head's sigma (rel-L2 0.358 on val_unseen)? This
+                        # is its training-curve form, so a failing arm is visible by epoch 50
+                        # instead of after a full eval -- the same cheap screen `var` provides for
+                        # the sigma head.
+                        sk = std_t(xs.detach().reshape(k_s * b, T_OUT, H, W, C))
+                        l_svar = rel_l2(sk.reshape(k_s, b, 1, H, W, C).mean(0), std_t(y)).mean()
+
+                l_sim = torch.zeros((), device=dev)
+                if sim_idx_t is not None and args.lam_sim > 0.0:
+                    # One sim batch per real step. Real defines the epoch: sim is a regularizer
+                    # on a wrong-but-related distribution, not a second dataset to fit.
+                    nb = args.sim_batch or args.batch
+                    ss = sim_idx_t[torch.randint(len(sim_idx_t), (nb,))]
+                    xs_ = torch.stack([sim_trajs_t[i][t:t + T_IN] for i, t in ss.tolist()])
+                    ys_ = torch.stack([sim_trajs_t[i][t + T_IN:t + T_IN + T_OUT]
+                                       for i, t in ss.tolist()])
+                    xs_ = ((xs_.to(dev, non_blocking=True) - mean_v) / std_v)
+                    ys_ = ((ys_.to(dev, non_blocking=True) - mean_v) / std_v)
+                    ps_ = from_ch(model(to_ch(xs_), detach_var=args.detach_var)[0])
+                    if args.sim_loss == "full":
+                        dd = ps_ - ys_
+                        ddm = dd.mean(1, keepdim=True)
+                        l_sim = (args.w_mean * torch.mean((ddm * cw) ** 2)
+                                 + torch.mean(((dd - ddm) * cw) ** 2))
+                    else:
+                        # Blind to the time-mean AND to the amplitude: divide each field by its
+                        # own per-pixel temporal std. The gradient w.r.t. a global rescaling of
+                        # the prediction is then exactly zero, so sim cannot teach its 2.9x
+                        # fluctuation energy or its 0.40 rel-L2 mean field -- only structure.
+                        def _shape(z):
+                            f = z - z.mean(1, keepdim=True)
+                            return f / f.pow(2).mean(1, keepdim=True).sqrt().clamp(min=1e-3)
+                        l_sim = torch.mean((_shape(ps_) - _shape(ys_)) ** 2)
+                    loss = loss + args.lam_sim * l_sim
+                # TENSORS, not floats: `.item()` is a device sync, and the inline block it
+                # replaces did all eleven of them AFTER opt.step(), where the CPU is already
+                # waiting. Calling them here instead would stall the pipeline before the
+                # backward is even launched.
+                return loss, [loss, l_field, l_var, l_tke, l_probe, l_div,
+                              l_spec, l_crps, l_svar, l_sim, l_tail]
+
+            loss, terms = compute_loss()
             opt.zero_grad(set_to_none=True)
             loss.backward()
+            if args.sam_rho > 0.0:
+                # Sharpness-Aware Minimization (Foret et al., ICLR 2021): step to the
+                # weights that MAXIMIZE the loss inside a rho-ball, take the gradient
+                # there, and apply it at the original weights. The result is a descent
+                # direction for max_{||e||<=rho} L(w + e) rather than for L(w), i.e. it
+                # prefers flat minima. Two forwards and two backwards, so ~2x per step.
+                saved = _sam_ascent(model, args.sam_rho)
+                loss2, _ = compute_loss()
+                opt.zero_grad(set_to_none=True)
+                loss2.backward()
+                _sam_restore(saved)
             opt.step()
             sched.step()
-            acc += np.array([loss.item(), l_field.item(), l_var.item(), l_tke.item(),
-                             l_probe.item(), l_div.item(), l_spec.item()]) * b
+            acc += np.array([t.item() for t in terms]) * b
             n += b
 
         if args.swa and ep >= args.epochs - args.swa:
@@ -483,9 +926,15 @@ def main() -> None:
 
         if ep % 5 == 0 or ep == args.epochs - 1:
             a = acc / n
+            # Existing field names and order are unchanged -- log scrapers depend on them; the
+            # two FGN columns are appended and stay 0.00000 when --fgn is off. `tail` is
+            # appended for the same reason and stays 0.00000 when --lam-tail is off, so the
+            # existing columns keep both their names and their positions.
             print(f"  epoch {ep:3d}  loss {a[0]:.5f}  field {a[1]:.5f}  "
                   f"var {a[2]:.5f}  tke {a[3]:.5f}  probe {a[4]:.5f}  "
-                  f"div {a[5]:.5f}  spec {a[6]:.5f}  ({time.time()-t0:.0f}s)", flush=True)
+                  f"div {a[5]:.5f}  spec {a[6]:.5f}  crps {a[7]:.5f}  "
+                  f"svar {a[8]:.5f}  sim {a[9]:.5f}  tail {a[10]:.5f}  "
+                  f"({time.time()-t0:.0f}s)", flush=True)
 
     if swa_state is not None:
         print(f"SWA: averaged the last {swa_n} epochs", flush=True)
@@ -495,7 +944,14 @@ def main() -> None:
                 "width": args.width, "var_head": args.var_head, "var_mlp": args.var_mlp, "lift_mlp": args.lift_mlp, "point_mlp": args.point_mlp,
                 "var_hidden": args.var_hidden, "var_deep": args.var_deep,
                 "var_in_std": args.var_in_std, "var_pred_std": args.var_pred_std,
-                "hist": args.hist,
+                "fgn_dim": args.fgn_dim, "hist": args.hist,
+                # Both of these are read from the TOP level by _fno._fno_from_blob. mean_head
+                # was missing here from the day it was added, so every --mean-head checkpoint
+                # would have failed to load at deployment (loudly, on unexpected state_dict
+                # keys -- but only at scoring time, after the training had been paid for).
+                "mean_head": args.mean_head, "osc_modes": args.osc_modes,
+                "osc_global": args.osc_global, "osc_zeromean": args.osc_zeromean,
+                "tbasis": args.tbasis,
                 "ctx": args.ctx, "arch": args.arch, "modes_y": args.modes_y,
                 "modes_x": args.modes_x, "n_layers": args.n_layers, "p": args.p,
                 "self_norm": self_norm_mode, "norm": args.norm,

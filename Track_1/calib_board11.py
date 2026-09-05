@@ -51,8 +51,8 @@ def main():
     import torch
     import _fno
     dev = "cuda" if torch.cuda.is_available() else "cpu"
-    m = [_fno.load(c, dev) for c in args.ckpt]
-    m_err = [_fno.load(c, dev) for c in args.err_ckpt]
+    m = [_fno.load_any(c, dev) for c in args.ckpt]
+    m_err = [_fno.load_any(c, dev) for c in args.err_ckpt]
 
     du = np.load(os.path.join(HERE, "val_unseen.npz"))
     ds = np.load(os.path.join(HERE, "val_seen.npz"))

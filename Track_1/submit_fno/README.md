@@ -1,139 +1,152 @@
-# Track 1 submission — 7-member FNO ensemble, 3 fused invocations (kit v9, round 10)
+# Track 1 submission — 11-member mixed-family ensemble, 4 fused invocations (kit v9, round 12)
 
-An honest forecaster. Reads only its own input window; would score identically if the evaluator
-called it one window at a time. `validate_strict.py` asserts that as a test.
+An honest forecaster. Reads only its own input window; it would score identically if the
+evaluator called it one window at a time, and `validate_strict.py` asserts that as a test.
 
-Round 10 changed three things: `--var-mlp --lift-mlp` in the recipe (+0.112), `_fno.fuse()`
-collapsing same-architecture members into one invocation each (+0.067), and a sigma-adaptive
-smoothed SPS band (+0.132). See `../report/report_20260808_round10.md`.
+Round 12 changed two things against the round-11 build: a **U-Net member joins the FNO
+ensemble** (+0.091 proxy / +0.123 full wfinal — 4.5× the value of another FNO seed), and two
+more width-24 seeds were added because fusion makes same-architecture members free in
+invocation count. See `../report/report_20260829_round12.md`.
 
 ## Build
 
 Two configurations. Pick by whether you want a number you can defend locally or the best
 expected board score.
 
-**Held-out (reportable).** Every local number in this file comes from here.
+**Held-out (reportable).** Every honest local number in this file comes from here.
 
 ```bash
-M="unet/fno_vmlp_lift.pth unet/fno_vmlp_lift_s2.pth unet/fno_vl_s3.pth unet/fno_vl_s4.pth \
-   unet/fno_vl_m1220.pth unet/fno_vl_w64.pth"
-python submit_fno/fit_band.py        --ckpt $M     # writes band.npz
-python submit_fno/validate_strict.py --ckpt $M     # builds the zip, must print SUBMITTABLE
+M="unet/fno_vl_s1.pth unet/fno_vl_s2.pth unet/fno_vl_s3.pth unet/fno_vl_s4.pth \
+   unet/fno_vl_m1220.pth unet/fno_vl_w48.pth unet/fno_vl_w64.pth unet/unet_g1.pth"
+python submit_fno/fit_band.py        --ckpt $M --alpha 0.90 --band-p 0.45
+python submit_fno/validate_strict.py --ckpt $M
 ```
 
-**All-data, 7 members (what to submit).** Same recipe, trained on all 82 real trajectories
+**All-data, 11 members (what ships).** Same recipes, trained on all 82 real trajectories
 instead of 74. `val_seen` and `val_unseen` are both training data for these, so they have **no
 honest local score** — and, critically, no honest local *error field* either. `--err-ckpt`
-therefore points the band at the held-out models, whose errors on the same data are real
-predictions rather than memorization:
+therefore points the band at the held-out twins, whose errors on the same data are real
+predictions rather than memorization. One command does the whole build:
 
 ```bash
-A="unet/fno_all_vl_s1.pth unet/fno_all_vl_s2.pth unet/fno_all_vl_s3.pth \
-   unet/fno_all_vl_s4.pth unet/fno_all_vl_s5.pth \
-   unet/fno_all_vl_m1220.pth unet/fno_all_vl_w64.pth"
-M="unet/fno_vmlp_lift.pth unet/fno_vmlp_lift_s2.pth unet/fno_vl_s3.pth unet/fno_vl_s4.pth \
-   unet/fno_vl_m1220.pth unet/fno_vl_w64.pth"
-python submit_fno/fit_band.py        --ckpt $A --err-ckpt $M
-python submit_fno/validate_strict.py --ckpt $A
+bash submit_fno/build_round12.sh      # refuses while train2.py runs or a member is missing
 ```
-
-**`w48` is no longer a member.** Under fusion it earns back exactly its own invocation group
-and nothing more (78.667 with it against 78.668 without), and on the round-10 recipe it is 0.6
-behind w24 individually (81.451 against 82.059) where in round 8 it was only 0.3 behind.
-
-`--ckpt` and `--err-ckpt` both matter to `fit_band.py` now, and for different reasons: the
-error field comes from `--err-ckpt`, but `sigma_ref` — the normalizer for the per-window band —
-comes from `--ckpt`, because it has to be the scale of the models that will emit sigma at test
-time. Measured, the two agree to 0.1% (all-data mean sigma 0.00891 against held-out 0.00890 on
-val_seen), so all-data training does not deflate the variance head; the check is cheap and
-worth repeating if the recipe changes.
 
 Skipping `--err-ckpt` is the single most expensive mistake available here. The July 30 U-Net
 package did exactly that: its contaminated local rel-L2 of 0.0721 produced a band with median
 half-width 0.0046, the board met it with errors of 0.1179, and it returned `sps 36.94`.
 
-Run from `Track_1/`. `fit_band.py` must be re-run whenever the member set changes — the band is
-fitted to that specific model's error field.
+`fit_band.py` must be re-run whenever the member set **or `ALPHA`** changes — the band is
+fitted to that specific ensemble's error field, at the alpha it will actually deploy.
+`--ckpt` and `--err-ckpt` both matter, for different reasons: the error field comes from
+`--err-ckpt`, but `sigma_ref` comes from `--ckpt`, because it has to be the scale of the models
+that emit sigma at test time. Measured, the two agree to 0.1%.
 
 ## What is in the zip
 
 | file | what |
 |---|---|
-| `submission.py` | `predict()`; normalize → FNO → rescale fluctuation to the predicted std → denormalize |
-| `_fno.py` | self-contained `FNO2d`, mirrors `unet/models_alt.py` so checkpoints load unchanged |
-| `fno.pth` … `fno_8.pth` | eight members of three architectures, averaged on the GPU |
-| `band.npy` | `(1,20,32,64,3)` SPS half-widths from `fit_band.py` |
+| `submission.py` | `predict()`; normalize → ensemble → rescale fluctuation to the predicted std → denormalize → band |
+| `_fno.py` | self-contained `FNO2d`, `UNetTwoHead`, `StackedFNO`, `fuse()`, `load_any` |
+| `fno.pth` … `fno_11.pth` | 11 members of four architectures, averaged on the GPU |
+| `band.npz` | `base` / `sigma_ref` / `p` — the sigma-adaptive SPS half-widths from `fit_band.py` |
 
-Only `torch` and `numpy` are imported. The Track 1 eval image has no `scipy`, `h5py`, `einops`,
-`matplotlib` or `pandas`; `validate_strict.py` blocks all five and reproduces the load path where
-the extract directory is *not* on `sys.path`.
+82.56 MB extracted, 76.36 MB zipped, against a 256 MB cap. Only `torch` and `numpy` are
+imported — despite the filenames, `load_any` dispatches on each blob's own `arch` field, so the
+U-Net member loads through the same path.
+
+## Verification
+
+* **`validate_strict.py` is the authority.** It builds the zip, blocks `scipy`/`h5py`/`einops`/
+  `matplotlib`/`pandas`, reproduces the load path where the extract directory is *not* on
+  `sys.path`, asserts permutation invariance, and times `predict()` end to end. Needs a GPU.
+* **`../verify/cpu_smoke_submission.py` is the login-node stand-in.** Same package blocking
+  (matched to the official kit's `smoke_test_kit.py`, which confirms
+  `MISSING_IN_EVAL_IMAGE = {scipy, h5py, matplotlib, pandas}`), same import path, real
+  `val_unseen` windows, output-contract checks. No GPU, no timing.
+* **`../verify/diff_scoring_{official,real}.py`** pin the local `scoring.py` against the
+  official kit v9: worst disagreement 2.4e-6 on real data.
 
 ## The model
 
-Eight members, averaged in raw field space on the GPU before the fluctuation rescaling, so
-`compose()` runs once on a coherent field and eight members cost eight forward passes but only
-one host transfer.
+Eleven members, averaged in raw field space on the GPU before the fluctuation rescaling, so
+`compose()` runs once on a coherent field and eleven members cost one host transfer.
 
-**Member count is no longer a trade.** Two board rounds returned `time_score` 91.697 and 91.726
-for packages 2.07× apart in local latency, so board time is harness overhead and does not
-respond to the model. The measured slope is 0.033 ms of board time per ms of local time: this
-package runs 2.211 ms/window locally and is predicted at `time_score` 91.707, nineteen
-thousandths below the 1.282 ms three-member build.
+**`fuse()` collapses same-architecture members into one invocation.** The seven width-24 seeds
+and the modes-(12,20) member share one `StackedFNO` group (spectral weights zero-padded to the
+group max — note `w2` pads at the **front**, since it multiplies `ft[-my:]`), leaving w48, w64
+and the U-Net as their own. 11 members → **4 invocations**, exact to 1.5e-8 with TF32 off.
 
-**The members are deliberately not all the same architecture.** Five are width-24 seeds; one is
-width 48, one modes (12, 20), one width 64. Individually the bigger ones are *worse* — on the
-AoA 15–20 proxy, width 24 scores 81.67 against 81.54 / 81.33 / 81.17 — because with 74
-trajectories and a gradient loss, capacity buys memorization. But they fail differently, and in
-an ensemble that is what counts. Held-out member curve: 3×w24 74.418 → +m1220 74.490 → +w48
-74.563 → +w64 74.614 → 7 members 74.645 → 9 members 74.657. Each new *architecture* is worth
-+0.05…0.07; each extra *same-width seed* only +0.01…0.03.
+**Member count is a real trade, just a cheap one.** Board time is *not* the constant an earlier
+version of this file claimed — four rounds fit
+`board ms = 4.447 + 0.324·invocations + 0.431·local ms` to ±0.064 ms, and 1 board ms ≈ 0.05
+`final`. An extra fused member costs ~0.27 local ms ≈ 0.006 `final`; a new invocation costs
+0.324 board ms ≈ 0.016. Both are cheap against a +0.05…0.12 accuracy gain, which is why the
+package grew rather than shrank.
 
-Each width-24 member: 4-layer FNO, modes (8, 12) — 0.90M parameters, 3.6 MB. A per-pixel
+**The members are deliberately not all the same architecture, and not all the same family.**
+Individually the bigger FNOs are *worse* — on the AoA 15–20 proxy, width 24 scores 81.67
+against 81.54 / 81.33 / 81.17 — because with 74 trajectories and a gradient loss, capacity buys
+memorization. But they fail differently, and in an ensemble that is what counts. Each new
+*architecture* is worth +0.05…0.07 where an extra same-width seed is worth +0.01…0.03, and
+round 12 showed the effect is stronger still across model *families*: the U-Net member is worth
++0.091 where an extra w24 seed is worth +0.019. Mode-diversity variants beyond m1220 are null.
+
+Each width-24 member: 4-layer FNO, modes (8, 12) — 0.90M parameters, 3.6 MB, with `--var-mlp`
+and `--lift-mlp` (capacity at the boundaries helps; capacity in the trunk hurts). A per-pixel
 log-std head runs alongside the field head; at inference the predicted fluctuation is rescaled
-toward that std at `ALPHA = 0.75`. That value was re-swept under v9 with the band refitted at
-every point and did not move.
+toward that std at **`ALPHA = 0.90`** (raised from 0.75 in round 11 after three independent
+readings agreed, and re-confirmed on the round-12 member set).
 
-Trained with an extra term matching the **target's velocity-gradient tensor** (`--lam-grad 1.0`).
-Ablation on 8 held-out trajectories: no term 85.95, divergence only 86.53, vorticity only 86.53,
-**both invariants or the full tensor 86.68** (v7 `final` scale). Constraining one invariant of ∇u
-is not enough, constraining both is sufficient, and the strain rates add nothing.
+Trained with an extra term matching the **target's velocity-gradient tensor** (`--lam-grad 1.0`)
+and `--lam-v 0.3 --lam-t 0.15 --alpha-train 0.0`. **`train2.py`'s argparse defaults are not the
+shipped recipe** — read it off a checkpoint's stored `config`.
 
 ## The band
 
 v9 replaced `score_sps`'s logistic with an identity, which made SPS a full 0–100 subscore and
-4.4× more responsive. Two things follow, both implemented in `../sps9.py`:
+4.4× more responsive. Three things follow:
 
 * The aggregate **factorizes** into a per-sample accuracy factor times a per-element interval
   term, so the band problem separates over elements and each element's optimum sits exactly at
-  one of its observed `|error|` values. `sps9.optimal_band` solves it by sorting — no Gaussian
-  assumption, no grid — and that solution is also the ceiling on band fitting.
-* The band is fitted on the **AoA 15–20° subset** (`--fit-aoa`, default). Error is governed by
-  angle of attack and by almost nothing else: AoA 15–20 carries 2.4× the rel-L2 of AoA 5, and
-  that subset reads 0.1082 against the board's 0.1179 where the full split reads 0.0807. Fitting
-  there scores 43.78 on the subset against 43.24 for a whole-split fit inflated 1.5×.
+  one of its observed `|error|` values. `../sps9.py:optimal_band` solves it by sorting.
+* The half-width is **sigma-adaptive**: `half = base·(σ/σ_ref)**p` with p = 0.45, and `base` is
+  box-smoothed over (T,H,W) at k = 3. Both were selected by leave-one-**trajectory**-out CV, not
+  in-sample — the unsmoothed band at p = 0 *is* the in-sample optimum, which is how round 6
+  wrongly declared the band closed.
+* The band is fitted on the **AoA 15–20° subset** (`--fit-aoa`, default) at a 1.39× tail
+  inflation. Error is governed by angle of attack and by almost nothing else, and that subset is
+  the only local proxy in the board's neighbourhood.
+
+Round 11 closed this for real: pooling the fitting split buys 0.000 sps across 84 CV configs.
 
 ## Expected score
 
-Local on `val_unseen` (336 windows, 8 trajectories the model never saw), measured **end to end
-through `predict()`** by `validate_strict.py` — the way the evaluator measures it:
+The shipped package is all-data, so it has **no honest local score**. What it has is a board
+*prediction*, from `../predict_board.py` — which predicted round 11 at **80.603** against an
+actual **80.60907**, its first genuine out-of-sample test.
 
-| | |
-|---|---|
-| rel_l2 0.0807 / TKE 0.4906 / MVPE 0.0698 | 96.12 / 80.30 / 96.63 |
-| 2.211 ms/window | time 94.8 here, **91.71 on the v9 board** (constant) |
-| fitted band | sps 47.9 here, **~46 at board error scale** |
-| **mean5** | **83.5 here, ~80.3 projected** |
+| subscore | round 10 (actual) | round 12 (predicted) |
+|---|---|---|
+| rel_l2 | 94.576 | 94.521 |
+| tke | 79.153 | **79.869** |
+| mvpe | 93.681 | 93.782 |
+| time | 91.121 | 91.248 |
+| sps | 39.626 | 39.628 |
+| **final** | **80.512** | **80.707** |
 
-Two warnings about that table:
+Three warnings:
 
-* **`mean5` is not `final_score`.** v9 stopped publishing the combination rule and it is no
-  longer the plain mean. Across two board rounds `final − mean5` was +0.727 and +0.743, so the
-  working rule is `final ≈ mean5 + 0.73`. Projected `final_score` ~80.3.
-* **The projection has been wrong before.** The same proxy predicted 81 last round and the
-  board returned 79.985. Direction, not number.
+* **`mean5` is not `final_score`, and `final ≈ mean5 + 0.73` is FALSIFIED** (round 10's offset
+  was +0.903, and mean5 moved down while `final` moved up). Use `../final_v9.py` and work in
+  **deltas between rounds**, where the intercept cancels.
 * **Local accuracy deltas have stopped transferring.** Two architectures differing by 0.008 in
   local rel-L2 landed within 0.0004 of each other on the board. Treat anything under ~0.4 in
-  mean5 as unproven.
+  mean5 as unproven, and never decide a member set on a proxy margin of 0.001 — round 10 dropped
+  w48 that way and the board charged −0.06 for it.
+* **Timings must be converted.** The board-time model was fitted with RTX 4060 numbers; the A100
+  runs this shape 1.850× faster. 1.208 ms/window measured → 2.235 ms 4060-equivalent → 6.706
+  board ms.
 
 ## What this is not
 

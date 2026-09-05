@@ -1,22 +1,127 @@
-"""Self-contained FNO for the fallback path. No dependency on the training tree.
+"""Self-contained models for the submission path. No dependency on the training tree.
 
-Mirrors `Track_1/unet/models_alt.py:FNO2d` exactly -- same layer order, same parameter names --
-so `fno_div_hi.pth` loads into it unchanged. Copied rather than imported so the submission zip
-carries no path assumptions and no accidental h5py/scipy imports (neither is present in the
-Track 1 evaluation container).
+`FNO2d` mirrors `Track_1/unet/models_alt.py:FNO2d` and `UNetTwoHead` mirrors
+`Track_1/unet/model.py:UNetTwoHead` -- same layer order, same parameter names -- so a training
+checkpoint of either loads here with `strict=True`. Copied rather than imported so the
+submission zip carries no path assumptions and no accidental h5py/scipy imports (neither is
+present in the Track 1 evaluation container; `unet/model.py` imports h5py, lazily, and is
+therefore not importable material for a zip).
+
+Round 12 ships a MIXED ensemble: 8 FNO members plus one U-Net. Both classes expose the same
+`forward(prev, detach_var=False) -> (field, logstd)` contract, so `predict_fno` averages them
+without a special case and `fuse` gives the U-Net its own group (its state_dict keys differ
+from every FNO's, so it can never be folded into a StackedFNO). Use `load_any`, not `load`,
+anywhere a member list may contain one.
 """
 from __future__ import annotations
+
+import math
+import os
 
 import numpy as np
 import torch
 import torch.nn as nn
 
+# --- OPT-IN FAST PATHS (round 17 Q1) ------------------------------------------------------
+# Both default to OFF and both are read ONCE, here, so a package that does not set the
+# environment variable runs exactly the code it ran before these existed.  They are also
+# exposed as keyword arguments on `predict_fno`, which is what the measurement drivers use so
+# that one process can time several variants.
+#
+#   RPDE_PAD_BATCH=1     pad the final, partial batch up to `batch` rows with copies of its
+#                        last window and throw the padding away.  Round 15b measured TF32
+#                        making a window's output depend on its POSITION in the batch; the
+#                        hypothesis this tests is that the dependence is really a dependence on
+#                        the batch SHAPE -- only the last, smaller batch picks a different
+#                        kernel -- in which case a fixed shape removes it.
+#   RPDE_AMP=fp16|bf16   run the network under autocast.  The 1x1 convolutions are ~70 % of the
+#                        FLOPs at w96 L8 and are exactly what tensor cores accelerate; the FFT
+#                        and the complex einsum stay fp32 (see `_fft_in`).
+_PAD_BATCH = os.environ.get("RPDE_PAD_BATCH", "") not in ("", "0")
+_AMP = {"fp16": torch.float16, "half": torch.float16,
+        "bf16": torch.bfloat16}.get(os.environ.get("RPDE_AMP", "").lower())
+
+# RPDE_SPEC=bmm    run the spectral product as ONE batched REAL matmul per layer instead of
+#                  two complex einsums over strided slices (see StackedFNO._spec_bmm).
+# RPDE_TAIL=jit    fuse the residual add and the GELU into one scripted kernel.
+# Both are OFF by default and both are checked against the shipped path by
+# `Track_1/prof_q1g.py --verify`.
+_SPEC = os.environ.get("RPDE_SPEC", "").lower()
+_TAIL = os.environ.get("RPDE_TAIL", "").lower()
+# RPDE_HOSTW=torch  do the strided output write with torch's `copy_` instead of numpy's
+#                   assignment. Same bytes to the same place, but numpy's strided assignment is
+#                   SINGLE-THREADED and this is bandwidth-bound -- exactly the finding round 11
+#                   made about the band stage, applied to the write it did not touch.
+_HOSTW = os.environ.get("RPDE_HOSTW", "").lower()
+
+
+def _res_gelu_eager(h, z):
+    """h + gelu(z), as one fused kernel. Two full passes over a (B, K*width, H, W) tensor
+    become one; at width 96 x 4 members x batch 112 that tensor is 352 MB, so the pass that
+    disappears is ~350 MB of traffic per layer.
+
+    Scripted at import, inside a try: this file has to import in the evaluation container
+    under any circumstances, and an opt-in that is OFF by default must never be the reason a
+    submission fails to load. `torch.compile` is not an option there at all -- the runtime
+    image carries no compiler -- but `torch.jit.script` needs none.
+    """
+    return h + torch.nn.functional.gelu(z)
+
+
+try:
+    _res_gelu = torch.jit.script(_res_gelu_eager)
+except Exception:                                    # pragma: no cover
+    _res_gelu = _res_gelu_eager
+
+
+def _fft_in(x):
+    """The spectral path always runs in fp32.
+
+    `w1`/`w2` are real fp32 parameters viewed as complex64, and there is no complex-half
+    einsum to match them with, so a half-precision `h` arriving from an autocast 1x1 conv has
+    to be promoted before the FFT.  `Tensor.float()` RETURNS SELF when the tensor is already
+    float32, so with autocast off this call is the identity and the shipped path is unchanged
+    -- `verify/fast_paths.py` checks that bit-exactly rather than trusting the docstring.
+    """
+    return x.float()
+
+
 T_IN = T_OUT = 20
+# Oscillatory-head frequency band, mirrored from unet/models_alt.py: periods of
+# 200 down to 10 frames, bracketing the 60-75 frame shedding period.
+OSC_W_LO, OSC_W_HI = 2.0 * math.pi / 200.0, 2.0 * math.pi / 10.0
 H, W, C = 32, 64, 2
 CH = T_IN * C
 
 MEAN = np.array([0.154960856, -0.000513992854], dtype=np.float32)
 STD = np.array([0.0968056545, 0.015960684], dtype=np.float32)
+
+# The same two statistics after each window is divided by its own mean streamwise speed
+# (`unet/model.py:MEAN_SN/STD_SN`). A `--norm self` checkpoint was trained against THESE, and
+# feeding it MEAN/STD instead is not a small error: see `_self_norm_of` below.
+MEAN_SN = np.array([1.0, 0.0], dtype=np.float32)
+STD_SN = np.array([0.526024, 0.102182], dtype=np.float32)
+
+
+def _self_norm_of(blob: dict) -> bool:
+    """Did this checkpoint train under `--norm self`?
+
+    Until 2026-08-31 nothing downstream of training asked. `predict_fno` hard-coded MEAN/STD,
+    so a self-normalized checkpoint was fed an input it had never seen and its output was
+    denormalized with the wrong affine -- and the only arm ever trained that way was scored
+    through exactly that path. The damage is proportional to how far the window's own mean
+    speed sits from the global mean, which is why it read as a Reynolds-extrapolation failure:
+    a model whose self-normalized output is EXACTLY RIGHT scores rel-L2 0.198 / 2.224 / 0.349
+    on val_rein / val_relo / val_rehi through the old path, against the arm's measured
+    0.147 / 1.144 / 0.299. The arm beat a perfect model on all three sets, which is only
+    possible if the instrument, not the model, was broken.
+
+    `train2.py` writes `self_norm` at the top level and `norm` under `config`; older blobs have
+    neither and are `--norm real` by construction.
+    """
+    if "self_norm" in blob:
+        return bool(blob["self_norm"])
+    return blob.get("norm", blob.get("config", {}).get("norm", "real")) == "self"
 
 
 class SpectralConv2d(nn.Module):
@@ -33,7 +138,7 @@ class SpectralConv2d(nn.Module):
 
     def forward(self, x):
         b, _, h, w = x.shape
-        ft = torch.fft.rfft2(x)
+        ft = torch.fft.rfft2(_fft_in(x))
         out = torch.zeros(b, self.w1.shape[1], h, w // 2 + 1, dtype=torch.cfloat,
                           device=x.device)
         my, mx = min(self.my, h // 2), min(self.mx, w // 2 + 1)
@@ -46,7 +151,8 @@ class FNO2d(nn.Module):
     def __init__(self, width=24, modes_y=8, modes_x=12, n_layers=4, var_head=True,
                  extra_ch=0, var_mlp=False, lift_mlp=False, point_mlp=False,
                  var_hidden=128, var_deep=False, var_in_std=False,
-                 var_pred_std=False):
+                 var_pred_std=False, fgn_dim=0, mean_head=False, osc_modes=0,
+                 osc_global=False, osc_zeromean=False, tbasis=0):
         super().__init__()
         cin = CH + extra_ch + 2
         self.lift = (nn.Sequential(nn.Conv2d(cin, 128, 1), nn.GELU(), nn.Conv2d(128, width, 1))
@@ -59,6 +165,40 @@ class FNO2d(nn.Module):
         self.norm = nn.ModuleList([nn.GroupNorm(8, width) for _ in range(n_layers)])
         self.head_field = nn.Sequential(nn.Conv2d(width, 128, 1), nn.GELU(),
                                         nn.Conv2d(128, CH, 1))
+        # Decoupled time-mean readout (--mean-head): head_field emits only the zero-mean
+        # fluctuation and this emits mean_t(y). Mirrors unet/models_alt.py exactly.
+        self.head_mean = (nn.Sequential(nn.Conv2d(width, 128, 1), nn.GELU(),
+                                        nn.Conv2d(128, C, 1)) if mean_head else None)
+        # Oscillatory output head, mirrored from unet/models_alt.py. See the long comment
+        # there; the band brackets the 60-75 frame shedding period.
+        self.osc_modes = osc_modes
+        self.osc_global = osc_global
+        self.osc_zeromean = osc_zeromean
+        self.head_osc = None
+        if osc_modes:
+            # Mirrored from unet/models_alt.py.
+            # With a per-pixel omega the head can fit each pixel's 20-frame trace on its own,
+            # which is the memorization failure mode this whole line of work is aimed at. A
+            # vortex street has ONE shedding frequency per trajectory (plus harmonics), so
+            # `osc_global` pools the trunk spatially and emits J frequencies for the whole
+            # field -- the constraint that actually carries the physics. (p, q) stay per pixel
+            # either way: amplitude and phase DO vary across the wake.
+            nout = (2 if osc_global else 3) * osc_modes * C
+            self.head_osc = nn.Sequential(nn.Conv2d(width, 128, 1), nn.GELU(),
+                                          nn.Conv2d(128, nout, 1))
+            nn.init.zeros_(self.head_osc[2].weight); nn.init.zeros_(self.head_osc[2].bias)
+            self.osc_w = (nn.Sequential(nn.Linear(width, 64), nn.GELU(),
+                                        nn.Linear(64, osc_modes)) if osc_global else None)
+            self.register_buffer("osc_t", torch.arange(T_OUT, dtype=torch.float32))
+        # J free zero-mean temporal profiles SHARED across windows, with per-pixel
+        # coefficients -- the discriminating control for the osc head. See
+        # unet/models_alt.py for the argument; here it only has to load and run.
+        self.tbasis = tbasis
+        self.head_tb = None
+        if tbasis:
+            self.head_tb = nn.Sequential(nn.Conv2d(width, 128, 1), nn.GELU(),
+                                         nn.Conv2d(128, tbasis * C, 1))
+            self.tb = nn.Parameter(torch.zeros(tbasis, T_OUT))
         self.var_deep, self.var_in_std, self.var_pred_std = var_deep, var_in_std, var_pred_std
         var_cin = ((width * n_layers if var_deep else width)
                    + (C if var_in_std else 0) + (C if var_pred_std else 0))
@@ -69,6 +209,15 @@ class FNO2d(nn.Module):
                                              nn.Conv2d(var_hidden, C, 1))
         else:
             self.head_logstd = nn.Conv2d(var_cin, C, 1)
+        # FGN (round 12): checkpoints trained with --fgn carry per-block FiLM weights
+        # (film.i.weight, Linear(fgn_dim, 2*width, bias=False)). The deterministic predict
+        # path below never applies them -- it IS the z = 0 model, and film is zero-init and
+        # bias-free in training, so z = 0 and "film unused" are the same forward bit for bit.
+        # They are constructed here only so load_state_dict accepts the checkpoint; a sampling
+        # deployment (K draws per window) is a separate, verdict-gated change.
+        self.fgn_dim = fgn_dim
+        self.film = (nn.ModuleList([nn.Linear(fgn_dim, 2 * width, bias=False)
+                                    for _ in range(n_layers)]) if fgn_dim > 0 else None)
         yy, xx = torch.meshgrid(torch.linspace(-1, 1, H), torch.linspace(-1, 1, W),
                                 indexing="ij")
         self.register_buffer("grid", torch.stack([xx, yy])[None])
@@ -80,6 +229,44 @@ class FNO2d(nn.Module):
             h = h + torch.nn.functional.gelu(n(s(h) + p(h)))
             hs.append(h)
         field = self.head_field(h)
+        if self.head_osc is not None:
+            # omega is squashed into [2pi/200, 2pi/10] rad/frame, a band that brackets the
+            # 60-75 frame shedding period with room on both sides. Added BEFORE the mean head
+            # so head_mean still owns the time-mean and only the oscillation's fluctuating
+            # part survives the zero-meaning below.
+            b, Hh, Ww = len(prev), field.shape[-2], field.shape[-1]
+            k = 2 if self.osc_global else 3
+            o = self.head_osc(h).reshape(b, self.osc_modes, k, C, Hh, Ww)
+            if self.osc_global:
+                w = self.osc_w(h.mean((-2, -1)))                       # (B, J)
+                om = (OSC_W_LO + (OSC_W_HI - OSC_W_LO)
+                      * torch.sigmoid(w))[:, :, None, None, None]      # broadcast over C,H,W
+            else:
+                om = OSC_W_LO + (OSC_W_HI - OSC_W_LO) * torch.sigmoid(o[:, :, 2])
+            ph = om.unsqueeze(2) * self.osc_t.view(1, 1, T_OUT, 1, 1, 1)
+            osc = (o[:, :, 0].unsqueeze(2) * torch.cos(ph)
+                   - o[:, :, 1].unsqueeze(2) * torch.sin(ph)).sum(1)
+            if self.osc_zeromean:
+                # The decisive test of what this head is actually doing. The learned period is
+                # 64.5 frames against a 20-frame output window, so the oscillator spans 0.31 of
+                # a cycle and mean_t cos(omega t) = +0.511 -- it carries a large non-zero
+                # time-mean BY CONSTRUCTION, and the measured gain turned out to be entirely
+                # in the time-mean (-2.6%) with coherence and the fluctuation error unmoved.
+                # Subtracting the term's own time-mean leaves only its oscillatory content.
+                # If the gain survives, the phase claim is real; if it vanishes, this head was
+                # a mean-head in disguise and the phase idea is UNTESTED.
+                osc = osc - osc.mean(1, keepdim=True)
+            field = field + osc.reshape(b, CH, Hh, Ww)
+        if self.head_tb is not None:
+            b, Hh, Ww = len(prev), field.shape[-2], field.shape[-1]
+            a = self.head_tb(h).reshape(b, self.tbasis, C, Hh, Ww)
+            prof = self.tb - self.tb.mean(1, keepdim=True)
+            field = field + torch.einsum("bjchw,jt->btchw", a, prof).reshape(b, CH, Hh, Ww)
+        if self.head_mean is not None:
+            b = len(prev)
+            fl = field.reshape(b, T_OUT, C, H, W)
+            fl = fl - fl.mean(1, keepdim=True)
+            field = (self.head_mean(h).unsqueeze(1) + fl).reshape(b, CH, H, W)
         logstd = None
         if self.head_logstd is not None:
             z = torch.cat(hs, 1) if self.var_deep else h
@@ -200,6 +387,39 @@ class StackedFNO(nn.Module):
         self.var_deep = getattr(first, "var_deep", False)
         self.var_in_std = getattr(first, "var_in_std", False)
         self.var_pred_std = getattr(first, "var_pred_std", False)
+        # The oscillatory head, fused. `head_osc` is two 1x1 convs, so it groups exactly like
+        # `head_field`. `osc_w` is an MLP on the SPATIALLY POOLED trunk, i.e. a per-member
+        # (width -> 64 -> J) matmul; stacking its weights along a member axis and using einsum
+        # is the same block-diagonal map a grouped conv would give, without reshaping to 1x1
+        # spatial. Everything the head does downstream (cos/sin synthesis, the zero-meaning,
+        # the sum over modes) is LINEAR in the member axis, so adding per-member `osc` to
+        # `f_all` before the mean is identical to the sequential loop's add-then-average.
+        self.osc_modes = getattr(first, "osc_modes", 0)
+        self.osc_global = getattr(first, "osc_global", False)
+        self.osc_zeromean = getattr(first, "osc_zeromean", False)
+        self.head_osc = None
+        if getattr(first, "head_osc", None) is not None:
+            self.head_osc = nn.Sequential(grouped([m.head_osc[0] for m in members]), nn.GELU(),
+                                          grouped([m.head_osc[2] for m in members]))
+            if self.osc_global:
+                for li, name in ((0, "ow0"), (2, "ow1")):
+                    self.register_parameter(name + "_w", nn.Parameter(torch.stack(
+                        [m.osc_w[li].weight.data for m in members])))
+                    self.register_parameter(name + "_b", nn.Parameter(torch.stack(
+                        [m.osc_w[li].bias.data for m in members])))
+            self.register_buffer("osc_t", first.osc_t.clone())
+
+        # The free temporal basis fuses the same way: `head_tb` is two 1x1 convs, and the
+        # profiles are a per-member (J, T_OUT) matrix, so an einsum over a member axis is the
+        # block-diagonal map. The zero-meaning and the contraction are both linear.
+        self.tbasis = getattr(first, "tbasis", 0)
+        self.head_tb = None
+        if getattr(first, "head_tb", None) is not None:
+            self.head_tb = nn.Sequential(grouped([m.head_tb[0] for m in members]), nn.GELU(),
+                                         grouped([m.head_tb[2] for m in members]))
+            self.register_parameter("tb", nn.Parameter(
+                torch.stack([m.tb.data for m in members])))       # (K, J, T_OUT)
+
         h0 = first.head_logstd
         if h0 is None:
             self.head_logstd = None
@@ -210,17 +430,92 @@ class StackedFNO(nn.Module):
         else:
             self.head_logstd = grouped([m.head_logstd for m in members])
 
+    def _packed(self, i, my, mx):
+        """Layer `i`'s spectral weights as ONE real (K*M, 2*width, 2*width) block, M = 2*my*mx.
+
+        A complex product (Ar + i.Ai)(Br + i.Bi) is a REAL matmul against the 2x2 block
+
+            [[ Br,  Bi],
+             [-Bi,  Br]]
+
+        fed [Ar | Ai], because that returns [Ar.Br - Ai.Bi | Ar.Bi + Ai.Br] -- exactly
+        [Re, Im]. Same arithmetic (a complex multiply IS four real multiplies), but it becomes
+        a single contiguous real `bmm` that cuBLAS can batch, instead of a complex einsum whose
+        operands are strided slices it has to copy first.
+
+        The +ky and -ky blocks are concatenated along the MODE axis, so the two einsums of the
+        shipped path become one call. Built once, on first use, and cached as a non-persistent
+        buffer -- it is a repacking of `w1`/`w2`, so it must never enter the state_dict.
+        """
+        key = f"_pk{i}"
+        p = getattr(self, key, None)
+        if p is not None:
+            return p
+        w1 = torch.view_as_complex(self.w1[i])[:, :, :, :my, :mx]      # (K, in, out, my, mx)
+        w2 = torch.view_as_complex(self.w2[i])[:, :, :, :my, :mx]
+        wc = torch.cat([w1, w2], dim=3)                               # (K, in, out, 2my, mx)
+        wc = wc.permute(0, 3, 4, 1, 2).reshape(-1, wc.shape[1], wc.shape[2])   # (K*M, in, out)
+        br, bi = wc.real.contiguous(), wc.imag.contiguous()
+        p = torch.cat([torch.cat([br, bi], 2), torch.cat([-bi, br], 2)], 1).contiguous()
+        self.register_buffer(key, p, persistent=False)
+        return p
+
+    def _spec_bmm(self, i, x, my, mx):
+        b, _, h, w = x.shape
+        k, wid = self.n_members, self.width
+        wf = w // 2 + 1
+        ft = torch.fft.rfft2(_fft_in(x)).reshape(b, k, wid, h, wf)
+        # (b, k, wid, 2my, mx) -> (k, 2my, mx, b, wid) -> (K*M, b, wid); the mode axis is
+        # ordered [+ky block, -ky block] to match `_packed`.
+        a = torch.cat([ft[:, :, :, :my, :mx], ft[:, :, :, -my:, :mx]], 3)
+        a = a.permute(1, 3, 4, 0, 2).reshape(-1, b, wid)
+        cr = torch.bmm(torch.cat([a.real, a.imag], 2).contiguous(), self._packed(i, my, mx))
+        oc = torch.complex(cr[..., :wid], cr[..., wid:])
+        oc = oc.reshape(k, 2 * my, mx, b, wid).permute(3, 0, 4, 1, 2)
+        out = torch.zeros(b, k, wid, h, wf, dtype=torch.cfloat, device=x.device)
+        out[:, :, :, :my, :mx] = oc[..., :my, :]
+        out[:, :, :, -my:, :mx] = oc[..., my:, :]
+        return torch.fft.irfft2(out.reshape(b, k * wid, h, wf), s=(h, w))
+
     def _spec(self, i, x):
         b, _, h, w = x.shape
         k, wid = self.n_members, self.width
-        ft = torch.fft.rfft2(x).reshape(b, k, wid, h, w // 2 + 1)
-        out = torch.zeros(b, k, wid, h, w // 2 + 1, dtype=torch.cfloat, device=x.device)
         my, mx = min(self.my, h // 2), min(self.mx, w // 2 + 1)
+        # The bmm path indexes `w1`/`w2` with [:my, :mx] up front, so it is only equivalent
+        # when the clamp is a no-op in the row axis -- `w2`'s rows run backwards in frequency
+        # and a clamped `my` would have to be taken from the OTHER end. At 32x64 with
+        # modes (8, 12) nothing clamps; anything else falls back rather than guess.
+        if _SPEC == "bmm" and my == self.my and mx == self.mx:
+            return self._spec_bmm(i, x, my, mx)
+        ft = torch.fft.rfft2(_fft_in(x)).reshape(b, k, wid, h, w // 2 + 1)
+        out = torch.zeros(b, k, wid, h, w // 2 + 1, dtype=torch.cfloat, device=x.device)
         for sl, wp in ((slice(None, my), self.w1), (slice(-my, None), self.w2)):
             wc = torch.view_as_complex(wp[i])[:, :, :, :my, :mx]
             out[:, :, :, sl, :mx] = torch.einsum("bkixy,kioxy->bkoxy",
                                                  ft[:, :, :, sl, :mx], wc)
         return torch.fft.irfft2(out.reshape(b, k * wid, h, w // 2 + 1), s=(h, w))
+
+    def _osc(self, h, b, k, hw):
+        """Per-member oscillatory term, (b, k, CH, H, W). Mirrors FNO2d.forward exactly."""
+        j = 2 if self.osc_global else 3
+        o = self.head_osc(h).reshape(b, k, self.osc_modes, j, C, *hw)
+        if self.osc_global:
+            hm = h.mean((-2, -1)).reshape(b, k, self.width)
+            a = torch.nn.functional.gelu(
+                torch.einsum("bki,koi->bko", hm, self.ow0_w) + self.ow0_b)
+            w = torch.einsum("bki,koi->bko", a, self.ow1_w) + self.ow1_b       # (b, k, J)
+            om = (OSC_W_LO + (OSC_W_HI - OSC_W_LO)
+                  * torch.sigmoid(w))[:, :, :, None, None, None]
+        else:
+            om = OSC_W_LO + (OSC_W_HI - OSC_W_LO) * torch.sigmoid(o[:, :, :, 2])
+        ph = om.unsqueeze(3) * self.osc_t.view(1, 1, 1, T_OUT, 1, 1, 1)
+        osc = (o[:, :, :, 0].unsqueeze(3) * torch.cos(ph)
+               - o[:, :, :, 1].unsqueeze(3) * torch.sin(ph)).sum(2)
+        if self.osc_zeromean:
+            # osc is (b, k, T_OUT, C, H, W) after the sum over modes, so the TIME axis is 2 --
+            # one further right than FNO2d's, which has no member axis and zero-means on 1.
+            osc = osc - osc.mean(2, keepdim=True)
+        return osc.reshape(b, k, CH, *hw)
 
     def forward(self, prev, detach_var: bool = False):
         b, k = len(prev), self.n_members
@@ -228,10 +523,18 @@ class StackedFNO(nn.Module):
         h = self.lift(x)                    # first lift conv is shared, see `shared()`
         hs = []
         for i in range(self.n_layers):
-            h = h + torch.nn.functional.gelu(self.norm[i](self._spec(i, h) + self.point[i](h)))
+            z = self.norm[i](self._spec(i, h) + self.point[i](h))
+            h = _res_gelu(h, z) if _TAIL == "jit" else h + torch.nn.functional.gelu(z)
             hs.append(h)
         hw = h.shape[-2:]
         f_all = self.head_field(h).reshape(b, k, CH, *hw)      # per member, before averaging
+        if self.head_osc is not None:
+            f_all = f_all + self._osc(h, b, k, hw)
+        if self.head_tb is not None:
+            a = self.head_tb(h).reshape(b, k, self.tbasis, C, *hw)
+            prof = self.tb - self.tb.mean(2, keepdim=True)         # (K, J, T_OUT)
+            f_all = f_all + torch.einsum("bkjchw,kjt->bktchw",
+                                         a, prof).reshape(b, k, CH, *hw)
         field = f_all.mean(1)
         logstd = None
         if self.head_logstd is not None:
@@ -255,10 +558,122 @@ class StackedFNO(nn.Module):
         return field, logstd
 
 
-def fuse(models):
-    """Group `models` by architecture and fuse each group. Order-preserving by first sight.
+def block(cin: int, cout: int) -> nn.Sequential:
+    return nn.Sequential(
+        nn.Conv2d(cin, cout, 3, padding=1), nn.GroupNorm(8, cout), nn.GELU(),
+        nn.Conv2d(cout, cout, 3, padding=1), nn.GroupNorm(8, cout), nn.GELU(),
+    )
 
-    A package of 5x width-24 + w48 + m1220 + w64 goes from 8 invocations to 4.
+
+class UNetTwoHead(nn.Module):
+    """Copy of `Track_1/unet/model.py:UNetTwoHead` -- 1.91M parameters at width 64.
+
+    Kept byte-compatible with the training class (same submodule names inc/down1/down2/up1/up2/
+    head_field/head_logstd, same `block` composition) so `unet_all_g1.pth`'s state_dict loads
+    with strict=True and a silent architecture drift cannot masquerade as a working member. The
+    only thing left out is the training-time constant init of `head_logstd`, which exists to
+    keep the TKE loss off the clamp at step 0 and is overwritten by load_state_dict here.
+
+    Why a second family is in the package at all: on the gate-M battery, adding this one member
+    to the 7-FNO ensemble was worth +0.091 proxy / +0.123 full wfinal, against +0.019 for an
+    extra FNO seed -- round 8's "architecture beats seeds" replicating across families rather
+    than within one. It costs one invocation, since nothing here shares a shape with an FNO.
+    """
+
+    def __init__(self, width: int = 64, var_head: bool = True, extra_ch: int = 0):
+        super().__init__()
+        w1, w2, w3 = width, width * 2, width * 4
+        self.inc = block(CH + extra_ch, w1)
+        self.down1 = block(w1, w2)
+        self.down2 = block(w2, w3)
+        self.up1 = block(w3 + w2, w2)
+        self.up2 = block(w2 + w1, w1)
+        self.head_field = nn.Conv2d(w1, CH, 1)
+        self.head_logstd = nn.Conv2d(w1, C, 1) if var_head else None
+        self.pool = nn.AvgPool2d(2)
+
+    def forward(self, prev, detach_var: bool = False):
+        h1 = self.inc(prev)
+        h2 = self.down1(self.pool(h1))
+        h3 = self.down2(self.pool(h2))
+        u2 = self.up1(torch.cat([nn.functional.interpolate(h3, scale_factor=2), h2], 1))
+        u1 = self.up2(torch.cat([nn.functional.interpolate(u2, scale_factor=2), h1], 1))
+        logstd = None if self.head_logstd is None else \
+            self.head_logstd(u1.detach() if detach_var else u1)
+        return self.head_field(u1), logstd
+
+
+class UFNO2d(nn.Module):
+    """Copy of `Track_1/unet/models_alt.py:UFNO2d` -- U-FNO (Wen et al., 2022), 15.6M at w96.
+
+    Vendored because `models_alt.py` is not in the archive and `load_any`'s repo-import branch
+    raises inside the evaluation container by design. Keep the two definitions in step: the
+    parameter NAMES and shapes are the contract, and `verify/diff_ufno.py` checks a checkpoint
+    loads into both and produces the same field to float32 noise.
+
+    Each block is spectral(h) + point(h) + unet(h) instead of the FNO's spectral + point. Mode
+    truncation is a low-pass and cannot represent the sharp zero set of the PIV field of view
+    and the airfoil body (3.3 % of elements, exactly zero); the 1x1 pointwise branch has no
+    spatial extent and cannot either. A two-level conv branch can, at a fraction of the
+    spectral block's parameters. Round 15 measured it as the largest single-model gain of the
+    project, with both of its controls negative -- a dilated ResNet with the same global
+    receptive field and no spectral machinery LOSES, and a plain U-Net at the same width loses
+    harder, so this is the FNO plus a local branch and not a conv net in disguise.
+
+    `dropout` is accepted and ignored: it is a training-time regularizer, the module is only
+    ever run in eval() here, and Dropout2d holds no parameters, so a --dropout checkpoint loads
+    into this class unchanged.
+    """
+
+    def __init__(self, width: int = 96, modes_y: int = 8, modes_x: int = 12,
+                 n_layers: int = 4, var_head: bool = True, extra_ch: int = 0,
+                 dropout: float = 0.0):
+        super().__init__()
+        self.lift = nn.Sequential(nn.Conv2d(CH + extra_ch + 2, 128, 1), nn.GELU(),
+                                  nn.Conv2d(128, width, 1))
+        self.spec = nn.ModuleList(
+            [SpectralConv2d(width, modes_y, modes_x) for _ in range(n_layers)])
+        self.point = nn.ModuleList([nn.Conv2d(width, width, 1) for _ in range(n_layers)])
+        self.norm = nn.ModuleList([nn.GroupNorm(8, width) for _ in range(n_layers)])
+        self.down = nn.ModuleList()
+        self.up = nn.ModuleList()
+        for _ in range(n_layers):
+            self.down.append(nn.Sequential(nn.Conv2d(width, width, 3, stride=2, padding=1),
+                                           nn.GroupNorm(8, width), nn.GELU(),
+                                           nn.Conv2d(width, width, 3, padding=1),
+                                           nn.GroupNorm(8, width), nn.GELU()))
+            self.up.append(nn.Sequential(nn.Conv2d(2 * width, width, 3, padding=1),
+                                         nn.GroupNorm(8, width), nn.GELU()))
+        self.drop = nn.Identity()
+        self.head_field = nn.Sequential(nn.Conv2d(width, 128, 1), nn.GELU(),
+                                        nn.Conv2d(128, CH, 1))
+        self.head_logstd = None
+        if var_head:
+            self.head_logstd = nn.Sequential(nn.Conv2d(width, 128, 1), nn.GELU(),
+                                             nn.Conv2d(128, C, 1))
+        yy, xx = torch.meshgrid(torch.linspace(-1, 1, H), torch.linspace(-1, 1, W),
+                                indexing="ij")
+        self.register_buffer("grid", torch.stack([xx, yy])[None])
+
+    def forward(self, prev: torch.Tensor, detach_var: bool = False):
+        h = self.lift(torch.cat([prev, self.grid.expand(len(prev), -1, -1, -1)], 1))
+        for s, p, n, dn, up in zip(self.spec, self.point, self.norm, self.down, self.up):
+            d = nn.functional.interpolate(dn(h), size=h.shape[-2:], mode="nearest")
+            h = h + self.drop(torch.nn.functional.gelu(n(s(h) + p(h) + up(torch.cat([d, h], 1)))))
+        logstd = None
+        if self.head_logstd is not None:
+            logstd = self.head_logstd(h.detach() if detach_var else h)
+        return self.head_field(h), logstd
+
+
+def fuse(models):
+    """Group `models` by architecture and fuse each FNO group. Order-preserving by first sight.
+
+    A package of 5x width-24 + w48 + m1220 + w64 goes from 8 invocations to 4, and the round-12
+    mixed package (8 FNO + 1 U-Net) from 9 to 4. Only FNO2d members are ever folded: StackedFNO
+    knows how to turn a member axis into `groups` for spectral blocks and 1x1 convs, and nothing
+    else. A U-Net's state_dict keys differ from every FNO's, so it lands in its own group and is
+    handed back untouched -- `predict_fno` then calls it as one more (field, logstd) module.
     """
     groups = {}
     for m in models:
@@ -268,33 +683,152 @@ def fuse(models):
         # exact, so a modes-(12,20) member joins its width-matched (8,12) siblings instead of
         # buying its own invocation. Width and every other shape still separate, because they
         # appear in lift / point / norm / the heads.
-        key = tuple((k, tuple(v.shape)) for k, v in m.state_dict().items()
-                    if not (k.endswith(".w1") or k.endswith(".w2")))
+        # `self_norm` is an ATTRIBUTE, not a parameter, so it does not appear in the shape
+        # signature -- two members trained under different normalizers would otherwise fuse
+        # into one StackedFNO whose input affine can only be right for one of them, and the
+        # fused module would carry no flag at all. Keying on it makes that impossible.
+        # `self_norm` and `osc_zeromean` are ATTRIBUTES, not parameters, so they do not appear
+        # in the shape signature -- members that disagree on either would otherwise fuse into
+        # one module that can only be right for some of them. `osc_modes` and `osc_global` DO
+        # show up (they set head_osc's out_channels and osc_w's out_features), but they are
+        # keyed explicitly rather than left to that coincidence.
+        key = (bool(getattr(m, "self_norm", False)),
+               getattr(m, "osc_modes", 0), bool(getattr(m, "osc_global", False)),
+               bool(getattr(m, "osc_zeromean", False)), getattr(m, "tbasis", 0),
+               tuple((k, tuple(v.shape)) for k, v in m.state_dict().items()
+                     if not (k.endswith(".w1") or k.endswith(".w2"))))
         groups.setdefault(key, []).append(m)
-    return [g[0] if len(g) == 1 else StackedFNO(g).to(g[0].grid.device).eval()
-            for g in groups.values()]
+    out = []
+    for g in groups.values():
+        # A member with a decoupled time-mean head is passed through UNFUSED. StackedFNO
+        # enumerates lift / point / norm / head_field / head_logstd explicitly, so a
+        # `head_mean` would be silently DROPPED and the member would emit a zero-mean field.
+        # Losing an invocation costs latency; losing a head is a wrong answer, and it would
+        # not show up as a crash.
+        # `head_mean` is still passed through UNFUSED: StackedFNO enumerates lift / point /
+        # norm / head_field / head_logstd / head_osc explicitly, so a `head_mean` would be
+        # silently DROPPED and the member would emit a zero-mean field. Losing an invocation
+        # costs latency; losing a head is a wrong answer that does not show up as a crash.
+        # `head_osc` used to be in this list for the same reason and no longer is -- it is
+        # implemented above, and `verify/fuse_osc.py` checks the fused path against the
+        # sequential one.
+        if (len(g) == 1 or not isinstance(g[0], FNO2d) or g[0].head_mean is not None):
+            out.extend(g)     # `extend`, not `append`: two U-Nets are two invocations, not one
+        else:
+            st = StackedFNO(g).to(g[0].grid.device).eval()
+            st.self_norm = bool(getattr(g[0], "self_norm", False))
+            out.append(st)
+    return out
+
+
+def _fno_from_blob(blob: dict, device: str):
+    def cfg(key, default):
+        """Read an architecture flag from the blob's top level, falling back to `config`.
+
+        train2.py writes each flag explicitly at the top level AND dumps all of `vars(args)`
+        under "config". The two lists drifted: `mean_head` was added to the model and to the
+        argparse but never to the top-level list, so a --mean-head checkpoint built a
+        head-less FNO2d here and died on unexpected state_dict keys -- at SCORING time, after
+        the training had been paid for. Falling back to `config` makes the top-level list an
+        optimization rather than a second source of truth, and fixes checkpoints already on
+        disk without re-training them.
+        """
+        if key in blob:
+            return blob[key]
+        return blob.get("config", {}).get(key, default)
+
+    m = FNO2d(cfg("width", 24), cfg("modes_y", 8), cfg("modes_x", 12),
+              cfg("n_layers", 4), cfg("var_head", True),
+              var_mlp=cfg("var_mlp", False),
+              lift_mlp=cfg("lift_mlp", False),
+              point_mlp=cfg("point_mlp", False),
+              var_hidden=cfg("var_hidden", 128),
+              var_deep=cfg("var_deep", False),
+              var_in_std=cfg("var_in_std", False),
+              var_pred_std=cfg("var_pred_std", False),
+              fgn_dim=cfg("fgn_dim", 0),
+              mean_head=cfg("mean_head", False),
+              osc_modes=cfg("osc_modes", 0),
+              osc_global=cfg("osc_global", False),
+              osc_zeromean=cfg("osc_zeromean", False),
+              tbasis=cfg("tbasis", 0)).to(device)
+    m.load_state_dict(blob["model_state_dict"])
+    m.eval()
+    m.self_norm = _self_norm_of(blob)
+    return m
 
 
 def load(path: str, device: str):
+    """Backwards-compatible alias for `load_any`.
+
+    This used to be an FNO-ONLY loader, on the assumption that the analysis scripts never see
+    anything else. Round 12 put a U-Net in the member set and falsified that: twenty scripts
+    call `load`, and the first member list containing `unet_g1.pth` crashed one of them
+    (`alpha_board.py`) with a wall of missing state_dict keys. Dispatching is
+    behaviour-identical for FNO blobs, so the fix belongs here rather than in twenty call
+    sites.
+    """
+    return load_any(path, device)
+
+
+def load_any(path: str, device: str):
+    """Load an FNO **or** a U-Net member, dispatching on the checkpoint's own `arch` field.
+
+    train2.py stores `arch` in every blob it writes, and pre-round-12 checkpoints predate the
+    U-Net branch, so a missing key means FNO. This is the loader every member list goes
+    through -- the package, fit_band, and the endgame scripts -- because any of them may now be
+    handed the mixed list.
+    """
     blob = torch.load(path, map_location=device)
-    m = FNO2d(blob.get("width", 24), blob.get("modes_y", 8), blob.get("modes_x", 12),
-              blob.get("n_layers", 4), blob.get("var_head", True),
-              var_mlp=blob.get("var_mlp", False),
-              lift_mlp=blob.get("lift_mlp", False),
-              point_mlp=blob.get("point_mlp", False),
-              var_hidden=blob.get("var_hidden", 128),
-              var_deep=blob.get("var_deep", False),
-              var_in_std=blob.get("var_in_std", False),
-              var_pred_std=blob.get("var_pred_std", False)).to(device)
+    arch = blob.get("arch", "fno")
+    cfg0 = blob.get("config", {})
+    if arch == "ufno":
+        m = UFNO2d(blob.get("width", cfg0.get("width", 96)),
+                   blob.get("modes_y", 8), blob.get("modes_x", 12),
+                   blob.get("n_layers", 4), blob.get("var_head", True)).to(device)
+        m.load_state_dict(blob["model_state_dict"])
+        m.eval()
+        m.self_norm = _self_norm_of(blob)
+        return m
+    if arch not in ("fno", "unet"):
+        # ROUND-15 EXPERIMENTAL FAMILIES (afno / dilres / ufno / vit). They live in
+        # `Track_1/unet/models_alt.py`, which is NOT vendored into the submission zip -- so
+        # this branch works for the local instruments (compare_v9, gap, ens_v9, kfold) and
+        # raises, loudly, inside the evaluation container. That is deliberate: a family only
+        # gets vendored once it has won its ensemble test, and until then a package that
+        # silently contained one would be a submission that fails at scoring time.
+        import importlib, os as _os, sys as _sys
+        _sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                                          "..", "unet"))
+        cfg = blob.get("config", {})
+        m = importlib.import_module("models_alt").build(
+            arch, blob.get("width", cfg.get("width", 96)), blob.get("var_head", True), 0,
+            blob.get("modes_y", 8), blob.get("modes_x", 12), blob.get("n_layers", 4),
+            dropout=cfg.get("dropout", 0.0)).to(device)
+        m.load_state_dict(blob["model_state_dict"])
+        m.eval()
+        m.self_norm = _self_norm_of(blob)
+        return m
+    if arch != "unet":
+        return _fno_from_blob(blob, device)
+    # extra_ch is 0 by construction: `--hist` and `--ctx > 20` both feed the trunk information
+    # from OUTSIDE the 20-frame window, which predict() never has and which would make the
+    # submission order-dependent. Refuse rather than build a model nothing can drive -- the
+    # strict load below would fail anyway, but on an unreadable shape error.
+    assert not blob.get("hist", False) and blob.get("ctx", T_IN) == T_IN, \
+        f"{path}: --hist/--ctx checkpoints are not deployable in predict()"
+    m = UNetTwoHead(blob.get("width", 64), blob.get("var_head", True)).to(device)
     m.load_state_dict(blob["model_state_dict"])
     m.eval()
+    m.self_norm = _self_norm_of(blob)
     return m
 
 
 @torch.no_grad()
 def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
                 batch: int = 64, out: np.ndarray | None = None,
-                sigma_out: np.ndarray | None = None) -> np.ndarray:
+                sigma_out: np.ndarray | None = None,
+                pad_batch: bool = _PAD_BATCH, amp=_AMP) -> np.ndarray:
     """(N,20,32,64,>=2) raw physical -> (N,20,32,64,2) raw physical.
 
     predict() is TIMED, and at ~0.1 ms/window of actual compute this function is dominated by
@@ -307,13 +841,36 @@ def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
       * the whole contiguous window is uploaded and sliced on the GPU. Slicing [..., :2] on the
         host first makes a non-contiguous view that ascontiguousarray must copy.
     """
-    mean = torch.from_numpy(MEAN).to(device)
-    std = torch.from_numpy(STD).to(device)
     models = list(model) if isinstance(model, (list, tuple)) else [model]
+    # A `--norm self` member divides each window by its own mean streamwise speed before the
+    # standardization, so its affine is per-WINDOW. Mixing the two conventions in one ensemble
+    # would average fields that were never in the same space; refuse rather than average.
+    sn = [bool(getattr(m, "self_norm", False)) for m in models]
+    if any(sn) and not all(sn):
+        raise ValueError("predict_fno: cannot mix --norm self and --norm real members")
+    sn = sn[0] if sn else False
+    mean = mean_c = torch.from_numpy(MEAN_SN if sn else MEAN).to(device)
+    std = std_c = torch.from_numpy(STD_SN if sn else STD).to(device)
     n = len(x_raw)
     dst = np.empty((n, T_OUT, H, W, C), dtype=np.float32) if out is None else out
+    cuda = str(device).startswith("cuda")
     for i in range(0, n, batch):
         xb = torch.from_numpy(x_raw[i:i + batch]).to(device, non_blocking=True)[..., :2].float()
+        # Fixed batch SHAPE (opt-in).  Every batch but the last is already `batch` rows; the
+        # tail is padded with copies of its own last window so cuDNN/cuBLAS cannot select a
+        # different kernel for it.  The copies are discarded after the members are averaged,
+        # below, so nothing they touch reaches the output.
+        nb = len(xb)
+        if pad_batch and nb < batch:
+            xb = torch.cat([xb, xb[-1:].expand(batch - nb, *xb.shape[1:])], 0)
+        # `mean`/`std` are (2,) and broadcast over the channel axis. Under self-normalization
+        # they additionally carry the window's own scale, which makes them (B,1,1,1,2) -- the
+        # SAME two lines then serve both conventions, in and out, including sigma. `s` is only
+        # computed when it is needed, so the scored path is untouched for a `--norm real`
+        # package (verified bit-identical).
+        if sn:
+            s = xb[..., 0].mean(dim=(1, 2, 3)).clamp(min=1e-3).reshape(-1, 1, 1, 1, 1)
+            mean, std = mean_c * s, std_c * s
         prev = ((xb - mean) / std).permute(0, 1, 4, 2, 3).reshape(len(xb), CH, H, W)
 
         # Members are averaged HERE, on the GPU, in raw field and sigma space -- before the
@@ -330,7 +887,16 @@ def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
             # silently change the ensemble's mixture.
             nm = getattr(m, "n_members", 1)
             total += nm
-            raw, logstd = m(prev)
+            if amp is None or not cuda:
+                raw, logstd = m(prev)
+            else:
+                # Only the network runs reduced-precision; everything after this -- the member
+                # average, the fluctuation rescaling, the denormalization -- stays fp32, so the
+                # variant differs from the reference in exactly one place.
+                with torch.autocast("cuda", dtype=amp):
+                    raw, logstd = m(prev)
+                raw = raw.float()
+                logstd = None if logstd is None else logstd.float()
             yi = raw.reshape(len(xb), T_OUT, C, H, W).permute(0, 1, 3, 4, 2) * nm
             y = yi if y is None else y + yi
             if logstd is not None:
@@ -340,6 +906,14 @@ def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
             y = y / total
             if sig is not None:
                 sig = sig / total
+        if pad_batch and len(y) != nb:
+            # Drop the padding here, before compose and before the write, so the tail costs
+            # only the forward pass it was padded for.  Under `--norm self` the affine is
+            # per-window and has to be sliced with it.
+            y = y[:nb]
+            sig = None if sig is None else sig[:nb]
+            if sn:
+                mean, std = mean[:nb], std[:nb]
 
         if sig is not None and alpha > 0:
             m_ = y.mean(1, keepdim=True)
@@ -352,5 +926,11 @@ def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
             # against 0.482 for ensemble spread, so it says which WINDOWS need a wider
             # interval. Costs one small copy -- 5.5 MB at N=336 against the field's 165 MB.
             sigma_out[i:i + batch] = (sig * std).float().cpu().numpy()
-        dst[i:i + batch, ..., :2] = (y * std + mean).float().cpu().numpy()
+        hb = (y * std + mean).float().cpu().numpy()
+        if _HOSTW == "torch":
+            # `torch.from_numpy` is a view, not a copy, and copy_ between two float32 tensors
+            # of the same shape is exact -- so this is bit-identical, only threaded.
+            torch.from_numpy(dst)[i:i + batch, ..., :2].copy_(torch.from_numpy(hb))
+        else:
+            dst[i:i + batch, ..., :2] = hb
     return dst

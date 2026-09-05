@@ -127,8 +127,9 @@ def main() -> None:
 
     import torch
     dev = "cuda" if torch.cuda.is_available() else "cpu"
-    m = [_fno.load(c, dev) for c in args.ckpt]
-    m_err = m if args.err_ckpt is None else [_fno.load(c, dev) for c in args.err_ckpt]
+    # load_any: both lists may contain the U-Net member of the round-12 mixed package.
+    m = [_fno.load_any(c, dev) for c in args.ckpt]
+    m_err = m if args.err_ckpt is None else [_fno.load_any(c, dev) for c in args.err_ckpt]
 
     ds = np.load(os.path.join(TRACK1, "val_seen.npz"))
     du = np.load(os.path.join(TRACK1, "val_unseen.npz"))

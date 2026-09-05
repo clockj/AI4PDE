@@ -22,7 +22,7 @@
 # quietly produce a package built from the wrong members.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-PY=/home/clockj/miniconda3/envs/realpde/bin/python
+PY=/users/PAS1187/qwu/.conda/envs/realpde/bin/python
 # MUST match submission.py's ALPHA: sigma_ref and the error field the band is solved against
 # both have to be measured at the alpha the package actually deploys.
 ALPHA=0.90

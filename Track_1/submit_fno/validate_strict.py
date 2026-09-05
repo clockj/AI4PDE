@@ -34,7 +34,7 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TRACK1 = os.path.dirname(HERE)
-KIT = "/home/clockj/RealPDE/realpde_t1_starting_kit_v9/realpde_t1_starting_kit_v9"
+KIT = "/users/PAS1187/qwu/RealPDE/realpde_t1_starting_kit_v9/realpde_t1_starting_kit_v9"
 MISSING = ["scipy", "h5py", "einops", "matplotlib", "pandas"]
 
 # Imported up front and the path entry removed again: the point of this script is that the
@@ -45,11 +45,19 @@ sys.path.pop(0)
 
 
 def main() -> None:
-    subprocess.run([sys.executable, os.path.join(HERE, "build_zip.py")] + sys.argv[1:],
-                   check=True)
+    # Every argument is forwarded to build_zip.py, so this script always validates a zip it
+    # just built from the member set named on the command line -- there is no way to check a
+    # stale archive by accident. `--out` picks the archive up again.
+    argv = sys.argv[1:]
+    subprocess.run([sys.executable, os.path.join(HERE, "build_zip.py")] + argv, check=True)
+    zip_path = (argv[argv.index("--out") + 1] if "--out" in argv
+                else os.path.join(HERE, "submission.zip"))
+    if not os.path.isabs(zip_path):
+        zip_path = os.path.abspath(zip_path)
     work = tempfile.mkdtemp(prefix="strict_fno_")
-    with zipfile.ZipFile(os.path.join(HERE, "submission.zip")) as z:
+    with zipfile.ZipFile(zip_path) as z:
         z.extractall(work)
+    print(f"validating {zip_path}")
 
     d = np.load(os.path.join(TRACK1, "val_unseen.npz"))
     X, Y = d["x"], d["y"]

@@ -19,9 +19,16 @@ both push the same way:
 
 So the objective here is over the four subscores that actually respond, evaluated on the AoA
 15-20 proxy. `mean4` weights them equally, which is what rounds 6-8 optimized; `final` uses the
-round-9 weights (final_v9.py) and is the one to read. They disagree about ALPHA because mean4
-implicitly prices `tke` at 0.25 and `sps` at 0.25, where the board prices them 0.243 and 0.181
--- and ALPHA is precisely a trade between those two.
+NINE-round weights (final_v9.py) and is the one to read. They disagree about ALPHA because
+mean4 implicitly prices `tke` at 0.25 and `sps` at 0.25, where the nine rounds price them
+0.097 and 0.224 -- and ALPHA is precisely a trade between those two.
+
+3. **The weights themselves are uncertain, and ALPHA sits on the axis they are least sure
+   about.** The admissible family's dominant spread direction is `rel_l2` against `tke`
+   (`sub_value.py`), which is exactly what ALPHA moves -- so a midpoint `final` can rank two
+   alphas one way and the family's other end rank them the other. The `dlo`/`dhi` columns are
+   `final_v9.delta` against the anchor: **choose on `dlo`, the worst case over the family, not
+   on the midpoint.** An alpha that cannot lose is worth more than one that might win.
 
 PER-METRIC CALIBRATION
 ----------------------
@@ -60,22 +67,40 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "submit_fno"))
 
 F_ELEM = 1.39                       # per-element error tail, inverted from the board's SPS
-BOARD = dict(rel=0.11472, tke=0.54687, mvpe=0.12970)   # 2026-08-05 evening, all-data x3
+# ROUND 13 IS THE ANCHOR, and it is a much better one than round 12 was: that round shipped
+# ALPHA **0.60** precisely to measure this axis, so the per-metric inflation factors are now
+# defined at an alpha the board actually ran, on the 8-member/1-invocation shape the next
+# package also uses.  Pair with the R13 HELD-OUT TWINS (`fno_vl_s1..s4`, `fno_vl_m1220`).
+#
+# Round 13 also moved the weights that this sweep is scored against: `tke` fell 0.170 -> 0.097
+# and `rel_l2` rose 0.545 -> 0.582 (final_v9.py).  ALPHA is the rel<->tke trade, so the answer
+# here is not the answer rounds 6-12 got, and it should not be expected to be.
+BOARD = dict(rel=0.112383, tke=0.564638, mvpe=0.136448)   # R13, 2026-08-31 (ALPHA 0.60)
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt", nargs="+", required=True)
     ap.add_argument("--alphas", type=float, nargs="+",
-                    default=[0.45, 0.6, 0.75, 0.9, 1.0, 1.1])
+                    default=[0.30, 0.45, 0.6, 0.75, 0.9])
     ap.add_argument("--aoa", type=int, nargs="+", default=[15, 20])
     ap.add_argument("--f", type=float, default=F_ELEM)
-    ap.add_argument("--time-score", type=float, default=90.5066,
+    ap.add_argument("--time-score", type=float, default=93.1154,
                     help="board time_score for the `final` column; constant down the sweep")
-    ap.add_argument("--anchor", type=float, default=0.75,
+    ap.add_argument("--anchor", type=float, default=0.60,
                     help="the ALPHA the board numbers were measured at; the per-metric "
                          "inflation factors are defined by this row and applied to the rest")
+    ap.add_argument("--board", type=float, nargs=3, default=None,
+                    metavar=("REL", "TKE", "MVPE"),
+                    help="board rel-L2 / TKE / MVPE ERRORS to anchor the inflation factors on, "
+                         "overriding the R13 defaults above. The factors are BOARD/local at "
+                         "--anchor, so pairing a newer, better member set with an older, "
+                         "higher board level inflates every metric and the sweep answers a "
+                         "question about a model that does not exist. Pass the errors of the "
+                         "round the CHECKPOINTS correspond to: e = 2*(100/subscore - 1).")
     args = ap.parse_args()
+    if args.board:
+        BOARD.update(zip(("rel", "tke", "mvpe"), args.board))
     if args.anchor not in args.alphas:
         args.alphas = sorted(set(args.alphas) | {args.anchor})
 
@@ -84,7 +109,8 @@ def main() -> None:
     from eval_v9 import infer
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
-    m = [_fno.load(c if os.path.isabs(c) else os.path.join(HERE, c), dev) for c in args.ckpt]
+    m = [_fno.load_any(c if os.path.isabs(c) else os.path.join(HERE, c), dev)
+         for c in args.ckpt]
     ds = np.load(os.path.join(HERE, "val_seen.npz"))
     du = np.load(os.path.join(HERE, "val_unseen.npz"))
     hi_s = np.isin([int(str(i).split(":")[0].split("_")[1]) for i in ds["ids"]], args.aoa)
@@ -105,26 +131,45 @@ def main() -> None:
     print(f"objective: AoA {args.aoa} proxy. per-metric inflation anchored at alpha="
           f"{args.anchor}: " + "  ".join(f"{k} {v:.3f}x" for k, v in fac.items())
           + f"   element tail {args.f:.2f}x")
-    print(f"`final` uses the round-9 weights with time_score = {args.time_score:.3f}; ALPHA "
-          f"does not change the invocation count, so time is constant DOWN this column")
+    print(f"`final` uses final_v9's {len(final_v9.BOARD)}-round pooled weights with "
+          f"time_score = {args.time_score:.3f}; "
+          f"ALPHA does not change the invocation count, so time is constant DOWN this column.")
+    print("`dmid/dlo/dhi` are final_v9.delta against the anchor row -- pick on dlo, the worst "
+          "case over\nthe admissible weight family, because ALPHA moves along the axis that "
+          "family is least sure of.")
 
     hdr = (f"{'alpha':>5s} | {'relL2':>7s} {'TKE':>7s} {'MVPE':>7s} | {'rel':>6s} {'tke':>6s} "
-           f"{'mvpe':>6s} {'sps':>6s} | {'mean4':>7s} {'final':>7s}")
+           f"{'mvpe':>6s} {'sps':>6s} | {'mean4':>7s} {'final':>7s} | {'dmid':>6s} {'dlo':>6s} "
+           f"{'dhi':>6s}")
     print(hdr)
     print("-" * len(hdr))
 
+    subs, rows = {}, []
     for alpha in args.alphas:
         (Af, af, sf, nf), (Au, _, su, nu), (dm, tk, mvv) = fields[alpha]
         band = optimal_band(f * Af, af, sf)
         r, k, mv = (raw[alpha][x] * fac[x] for x in ("rel", "tke", "mvpe"))
         a_b = sps9.weights_from_metrics(fac["rel"] * dm, fac["tke"] * tk, fac["mvpe"] * mvv)
-        s = sps_score(f * Au, a_b, su, nu, band)
-        four = [sc.score_error(r), sc.score_error(k), sc.score_error(mv), s]
-        star = "  <-- anchor" if alpha == args.anchor else ""
-        fin = final_v9.predict(four[:3] + [args.time_score, four[3]])[0]
-        print(f"{alpha:5.2f} | {r:7.4f} {k:7.4f} {mv:7.4f} | {four[0]:6.2f} {four[1]:6.2f} "
-              f"{four[2]:6.2f} {four[3]:6.2f} | {np.mean(four):7.3f} {fin:7.3f}{star}")
+        s_ = sps_score(f * Au, a_b, su, nu, band)
+        four = [sc.score_error(r), sc.score_error(k), sc.score_error(mv), s_]
+        subs[alpha] = four[:3] + [args.time_score, four[3]]
+        rows.append((alpha, r, k, mv, four))
 
+    # Deltas need the anchor row, so they are a SECOND pass -- computing them inline would
+    # print 0.000 for every alpha below the anchor, which is exactly the region in question.
+    for alpha, r, k, mv, four in rows:
+        dmid, dlo, dhi = final_v9.delta(subs[args.anchor], subs[alpha])
+        star = "  <-- anchor" if alpha == args.anchor else ""
+        print(f"{alpha:5.2f} | {r:7.4f} {k:7.4f} {mv:7.4f} | {four[0]:6.2f} {four[1]:6.2f} "
+              f"{four[2]:6.2f} {four[3]:6.2f} | {np.mean(four):7.3f} "
+              f"{final_v9.predict(subs[alpha])[0]:7.3f} | {dmid:+6.3f} {dlo:+6.3f} "
+              f"{dhi:+6.3f}{star}")
+
+    best = max(subs, key=lambda a: final_v9.delta(subs[args.anchor], subs[a])[1])
+    d = final_v9.delta(subs[args.anchor], subs[best])
+    print(f"\nminimax over the weight family: ALPHA {best:.2f}, worst case {d[1]:+.3f} against "
+          f"the anchor {args.anchor:.2f}\n(midpoint {d[0]:+.3f}, best case {d[2]:+.3f}). A "
+          f"change is only worth making if dlo is positive.")
 
 if __name__ == "__main__":
     main()

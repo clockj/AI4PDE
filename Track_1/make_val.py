@@ -21,7 +21,7 @@ T_IN = T_OUT = 20
 INTERVAL = 20
 SUB = 2
 HORIZON = T_IN + T_OUT
-DATA = "/home/clockj/RealPDE/train_real/train_real"  # overridden by --data
+DATA = "/users/PAS1187/qwu/RealPDE/train_real/train_real"  # overridden by --data
 
 UNSEEN = ["3750_0", "6300_10", "8850_20", "11400_20",
           "13950_10", "16500_5", "21600_15", "26700_0"]

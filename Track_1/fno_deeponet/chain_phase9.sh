@@ -4,7 +4,7 @@
 # bounded at 400 iterations (~3.3 h, comfortably past the ~80 min phase 8 needs), and it starts
 # phase 9 only if the completion marker is really there rather than falling through on timeout.
 set -u
-D=/home/clockj/RealPDE/AI4PDE/Track_1/fno_deeponet
+D=/users/PAS1187/qwu/workspace/realpde/main/Track_1/fno_deeponet
 for _ in $(seq 1 400); do
   grep -q "phase 8 done" "$D/phase8_train.log" 2>/dev/null && break
   sleep 30

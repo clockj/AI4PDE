@@ -9,9 +9,9 @@
 # moves width and modes together. DeepONet is dominated by the rank p and the branch width.
 source ~/miniconda3/etc/profile.d/conda.sh 2>/dev/null || source /opt/conda/etc/profile.d/conda.sh
 conda activate realpde
-cd /home/clockj/RealPDE/AI4PDE/Track_1/unet
+cd /users/PAS1187/qwu/workspace/realpde/main/Track_1/unet
 BASE="--epochs 150 --stride 5 --var-head --alpha-train 0 --loss mse --lam-v 0.3 --lam-t 0.15"
-LOG=/home/clockj/RealPDE/AI4PDE/Track_1/fno_deeponet/sweep_train.log
+LOG=/users/PAS1187/qwu/workspace/realpde/main/Track_1/fno_deeponet/sweep_train.log
 
 run () {  # name, flags...
   local name=$1; shift
