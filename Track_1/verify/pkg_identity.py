@@ -54,8 +54,12 @@ def unload(tag, d):
 
 def run_t1(d, tag, X):
     m, d = load_pkg(d, tag)
+    # getattr throughout: the BASELINE archive is the one already on the board, built before
+    # these constants existed, and it has neither `_TF32` nor `HOST_WRITE`/`SPEC_PATH`. An
+    # older package failing to introspect is not a difference in what it computes.
     print(f"  {tag}: ALPHA={m.ALPHA} HOST_WRITE={getattr(m, 'HOST_WRITE', '<absent>')!r} "
-          f"SPEC_PATH={getattr(m, 'SPEC_PATH', '<absent>')!r} TF32={m._TF32}", flush=True)
+          f"SPEC_PATH={getattr(m, 'SPEC_PATH', '<absent>')!r} "
+          f"TF32={getattr(m, '_TF32', '<absent>')}", flush=True)
     o = m.predict(X)
     out = tuple(np.asarray(o[k], dtype=np.float32).copy()
                 for k in ("prediction", "lower", "upper"))
@@ -67,7 +71,7 @@ def run_t2(d, tag, stream):
     import t2_common as t2
     m, d = load_pkg(d, tag)
     print(f"  {tag}: ALPHA={m.ALPHA} SPEC_PATH={getattr(m, 'SPEC_PATH', '<absent>')!r} "
-          f"TF32={m._TF32}", flush=True)
+          f"TF32={getattr(m, '_TF32', '<absent>')}", flush=True)
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     obj = m.get_ttt_model(str(d), dev)
     print(f"  {tag}: CUDA graph {'ACTIVE' if getattr(obj, 'graph', None) is not None else 'off'}",
