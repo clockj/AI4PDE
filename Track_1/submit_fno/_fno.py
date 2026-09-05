@@ -48,6 +48,11 @@ _AMP = {"fp16": torch.float16, "half": torch.float16,
 # `Track_1/prof_q1g.py --verify`.
 _SPEC = os.environ.get("RPDE_SPEC", "").lower()
 _TAIL = os.environ.get("RPDE_TAIL", "").lower()
+# RPDE_HOSTW=torch  do the strided output write with torch's `copy_` instead of numpy's
+#                   assignment. Same bytes to the same place, but numpy's strided assignment is
+#                   SINGLE-THREADED and this is bandwidth-bound -- exactly the finding round 11
+#                   made about the band stage, applied to the write it did not touch.
+_HOSTW = os.environ.get("RPDE_HOSTW", "").lower()
 
 
 def _res_gelu_eager(h, z):
@@ -921,5 +926,11 @@ def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
             # against 0.482 for ensemble spread, so it says which WINDOWS need a wider
             # interval. Costs one small copy -- 5.5 MB at N=336 against the field's 165 MB.
             sigma_out[i:i + batch] = (sig * std).float().cpu().numpy()
-        dst[i:i + batch, ..., :2] = (y * std + mean).float().cpu().numpy()
+        hb = (y * std + mean).float().cpu().numpy()
+        if _HOSTW == "torch":
+            # `torch.from_numpy` is a view, not a copy, and copy_ between two float32 tensors
+            # of the same shape is exact -- so this is bit-identical, only threaded.
+            torch.from_numpy(dst)[i:i + batch, ..., :2].copy_(torch.from_numpy(hb))
+        else:
+            dst[i:i + batch, ..., :2] = hb
     return dst
