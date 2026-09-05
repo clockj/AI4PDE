@@ -61,8 +61,18 @@ fi
 for c in $A $M; do [ -f "$c" ] || { echo "MISSING $c"; exit 1; }; done
 
 echo "=== 1/5  band for ALPHA=$ALPHA ============================================"
-$PY Track_1/submit_fno/fit_band.py --ckpt $A --err-ckpt $M --alpha "$ALPHA" --band-p 0.45 \
-    --out Track_2/submit/band8.npz || exit 1
+# RPDE_BAND=<path> REUSES an existing band instead of refitting.  A refit is not reproducible
+# to the bit (it re-runs the models over the fitting split), and a PURE-LATENCY A/B needs the
+# band the board already scored, or the four error subscores move and the experiment stops
+# being about `time`.  Unset -> fit, exactly as before.
+if [ -n "${RPDE_BAND:-}" ]; then
+  [ -f "$RPDE_BAND" ] || { echo "MISSING band $RPDE_BAND"; exit 1; }
+  cp "$RPDE_BAND" Track_2/submit/band8.npz
+  echo "  REUSING band $RPDE_BAND (no refit) -- md5 $(md5sum < Track_2/submit/band8.npz)"
+else
+  $PY Track_1/submit_fno/fit_band.py --ckpt $A --err-ckpt $M --alpha "$ALPHA" --band-p 0.45 \
+      --out Track_2/submit/band8.npz || exit 1
+fi
 
 echo "=== 2/5  ALPHA (both tracks) and BLEND_BETA (Track 1 only) ================"
 sed -i "s/^ALPHA = .*/ALPHA = $ALPHA/" Track_1/submit_fno/submission.py Track_2/submit/submission.py
@@ -73,6 +83,20 @@ sed -i "s/^ALPHA = .*/ALPHA = $ALPHA/" Track_1/submit_fno/submission.py Track_2/
 sed -i "s/^BLEND_BETA = .*/BLEND_BETA = $BETA/" Track_1/submit_fno/submission.py
 grep -H "^ALPHA = " Track_1/submit_fno/submission.py Track_2/submit/submission.py
 grep -H "^BLEND_BETA = " Track_1/submit_fno/submission.py
+
+# Round 17 Q1g fast paths.  The evaluation container sets no environment variables, so these
+# have to be CONSTANTS in the shipped submission.py -- written here the same way ALPHA is.
+# Unset -> "" -> the pre-round-17 behaviour, so a build with no new knobs is unchanged.
+# SPEC_PATH is per-track (it wins on Track 2 and loses on Track 1); HOST_WRITE is Track 1 only,
+# because Track 2's ttt_step copies through pinned torch buffers and never does a numpy
+# strided write.
+SPECP="${RPDE_SPEC_PATH:-}"
+HOSTW="${RPDE_HOST_WRITE:-}"
+sed -i "s/^SPEC_PATH = .*/SPEC_PATH = \"$SPECP\"/" \
+    Track_1/submit_fno/submission.py Track_2/submit/submission.py
+sed -i "s/^HOST_WRITE = .*/HOST_WRITE = \"$HOSTW\"/" Track_1/submit_fno/submission.py
+grep -H "^SPEC_PATH = \|^HOST_WRITE = " \
+    Track_1/submit_fno/submission.py Track_2/submit/submission.py
 
 # RPDE_FP16=1 stores the members' weights as float16. A width-24 package does not need it
 # (8 members = 32 MB); a width-96 one does -- 8 x 57.0 MB is 456 MB against a 256 MB cap, and

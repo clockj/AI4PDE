@@ -84,6 +84,34 @@ _TF32 = os.environ.get("RPDE_TF32", "") not in ("", "0")
 torch.backends.cuda.matmul.allow_tf32 = _TF32
 torch.backends.cudnn.allow_tf32 = _TF32
 
+# ---------------------------------------------------------------------------------------
+# ROUND 17 Q1g FAST PATHS, BAKED IN AS CONSTANTS.
+#
+# `_fno` reads these from the environment as a convenience for the measurement drivers, but the
+# EVALUATION CONTAINER SETS NO ENVIRONMENT VARIABLES, so a package must state them here. These
+# two assignments are what actually ship; `build_round13.sh` rewrites the constants with `sed`
+# exactly as it rewrites ALPHA, and `verify/pkg_identity.py` proves the built archive returns
+# the same arrays as the one already on the board.
+#
+# HOST_WRITE = "torch"  writes the strided output through torch's `copy_` instead of numpy's
+#   assignment. BIT-IDENTICAL -- same bytes to the same place -- but numpy's strided assignment
+#   is SINGLE-THREADED (1.4 GB/s measured) where torch's is not (29.0 GB/s), and this write is
+#   22.8 % of the shipped 4-member path. Worth -16.8 % ms/window at 4 members, -9.9 % at 8
+#   (job 7161342, contended). This is round 11's band-stage finding applied to the write three
+#   lines above it, which it never touched.
+#
+# SPEC_PATH = "bmm"  runs the spectral product as one batched REAL 2x2-block matmul instead of
+#   two complex einsums over strided slices. NOT bit-identical (~2e-06 relative: a complex
+#   einsum and a real block matmul accumulate in different orders). It is a TRACK-2 change:
+#   at batch 1 it deletes einsum's per-call strided WEIGHT copy, which the profiler puts at
+#   27.6 % of a Track-2 step, and is worth -16.6 % there -- while on Track 1's batched path it
+#   is +1.6 % SLOWER, because the copy it removes is O(1) in batch and the `cat` it adds is
+#   O(batch). One switch, opposite signs on the two tracks; set it per track, never globally.
+HOST_WRITE = ""
+SPEC_PATH = ""
+_fno._HOSTW = HOST_WRITE
+_fno._SPEC = SPEC_PATH
+
 _BAND = os.path.join(_HERE, "band.npz")
 _BAND_LEGACY = os.path.join(_HERE, "band.npy")
 
