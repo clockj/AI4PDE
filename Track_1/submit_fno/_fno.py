@@ -16,10 +16,70 @@ anywhere a member list may contain one.
 from __future__ import annotations
 
 import math
+import os
 
 import numpy as np
 import torch
 import torch.nn as nn
+
+# --- OPT-IN FAST PATHS (round 17 Q1) ------------------------------------------------------
+# Both default to OFF and both are read ONCE, here, so a package that does not set the
+# environment variable runs exactly the code it ran before these existed.  They are also
+# exposed as keyword arguments on `predict_fno`, which is what the measurement drivers use so
+# that one process can time several variants.
+#
+#   RPDE_PAD_BATCH=1     pad the final, partial batch up to `batch` rows with copies of its
+#                        last window and throw the padding away.  Round 15b measured TF32
+#                        making a window's output depend on its POSITION in the batch; the
+#                        hypothesis this tests is that the dependence is really a dependence on
+#                        the batch SHAPE -- only the last, smaller batch picks a different
+#                        kernel -- in which case a fixed shape removes it.
+#   RPDE_AMP=fp16|bf16   run the network under autocast.  The 1x1 convolutions are ~70 % of the
+#                        FLOPs at w96 L8 and are exactly what tensor cores accelerate; the FFT
+#                        and the complex einsum stay fp32 (see `_fft_in`).
+_PAD_BATCH = os.environ.get("RPDE_PAD_BATCH", "") not in ("", "0")
+_AMP = {"fp16": torch.float16, "half": torch.float16,
+        "bf16": torch.bfloat16}.get(os.environ.get("RPDE_AMP", "").lower())
+
+# RPDE_SPEC=bmm    run the spectral product as ONE batched REAL matmul per layer instead of
+#                  two complex einsums over strided slices (see StackedFNO._spec_bmm).
+# RPDE_TAIL=jit    fuse the residual add and the GELU into one scripted kernel.
+# Both are OFF by default and both are checked against the shipped path by
+# `Track_1/prof_q1g.py --verify`.
+_SPEC = os.environ.get("RPDE_SPEC", "").lower()
+_TAIL = os.environ.get("RPDE_TAIL", "").lower()
+
+
+def _res_gelu_eager(h, z):
+    """h + gelu(z), as one fused kernel. Two full passes over a (B, K*width, H, W) tensor
+    become one; at width 96 x 4 members x batch 112 that tensor is 352 MB, so the pass that
+    disappears is ~350 MB of traffic per layer.
+
+    Scripted at import, inside a try: this file has to import in the evaluation container
+    under any circumstances, and an opt-in that is OFF by default must never be the reason a
+    submission fails to load. `torch.compile` is not an option there at all -- the runtime
+    image carries no compiler -- but `torch.jit.script` needs none.
+    """
+    return h + torch.nn.functional.gelu(z)
+
+
+try:
+    _res_gelu = torch.jit.script(_res_gelu_eager)
+except Exception:                                    # pragma: no cover
+    _res_gelu = _res_gelu_eager
+
+
+def _fft_in(x):
+    """The spectral path always runs in fp32.
+
+    `w1`/`w2` are real fp32 parameters viewed as complex64, and there is no complex-half
+    einsum to match them with, so a half-precision `h` arriving from an autocast 1x1 conv has
+    to be promoted before the FFT.  `Tensor.float()` RETURNS SELF when the tensor is already
+    float32, so with autocast off this call is the identity and the shipped path is unchanged
+    -- `verify/fast_paths.py` checks that bit-exactly rather than trusting the docstring.
+    """
+    return x.float()
+
 
 T_IN = T_OUT = 20
 # Oscillatory-head frequency band, mirrored from unet/models_alt.py: periods of
@@ -73,7 +133,7 @@ class SpectralConv2d(nn.Module):
 
     def forward(self, x):
         b, _, h, w = x.shape
-        ft = torch.fft.rfft2(x)
+        ft = torch.fft.rfft2(_fft_in(x))
         out = torch.zeros(b, self.w1.shape[1], h, w // 2 + 1, dtype=torch.cfloat,
                           device=x.device)
         my, mx = min(self.my, h // 2), min(self.mx, w // 2 + 1)
@@ -365,12 +425,65 @@ class StackedFNO(nn.Module):
         else:
             self.head_logstd = grouped([m.head_logstd for m in members])
 
+    def _packed(self, i, my, mx):
+        """Layer `i`'s spectral weights as ONE real (K*M, 2*width, 2*width) block, M = 2*my*mx.
+
+        A complex product (Ar + i.Ai)(Br + i.Bi) is a REAL matmul against the 2x2 block
+
+            [[ Br,  Bi],
+             [-Bi,  Br]]
+
+        fed [Ar | Ai], because that returns [Ar.Br - Ai.Bi | Ar.Bi + Ai.Br] -- exactly
+        [Re, Im]. Same arithmetic (a complex multiply IS four real multiplies), but it becomes
+        a single contiguous real `bmm` that cuBLAS can batch, instead of a complex einsum whose
+        operands are strided slices it has to copy first.
+
+        The +ky and -ky blocks are concatenated along the MODE axis, so the two einsums of the
+        shipped path become one call. Built once, on first use, and cached as a non-persistent
+        buffer -- it is a repacking of `w1`/`w2`, so it must never enter the state_dict.
+        """
+        key = f"_pk{i}"
+        p = getattr(self, key, None)
+        if p is not None:
+            return p
+        w1 = torch.view_as_complex(self.w1[i])[:, :, :, :my, :mx]      # (K, in, out, my, mx)
+        w2 = torch.view_as_complex(self.w2[i])[:, :, :, :my, :mx]
+        wc = torch.cat([w1, w2], dim=3)                               # (K, in, out, 2my, mx)
+        wc = wc.permute(0, 3, 4, 1, 2).reshape(-1, wc.shape[1], wc.shape[2])   # (K*M, in, out)
+        br, bi = wc.real.contiguous(), wc.imag.contiguous()
+        p = torch.cat([torch.cat([br, bi], 2), torch.cat([-bi, br], 2)], 1).contiguous()
+        self.register_buffer(key, p, persistent=False)
+        return p
+
+    def _spec_bmm(self, i, x, my, mx):
+        b, _, h, w = x.shape
+        k, wid = self.n_members, self.width
+        wf = w // 2 + 1
+        ft = torch.fft.rfft2(_fft_in(x)).reshape(b, k, wid, h, wf)
+        # (b, k, wid, 2my, mx) -> (k, 2my, mx, b, wid) -> (K*M, b, wid); the mode axis is
+        # ordered [+ky block, -ky block] to match `_packed`.
+        a = torch.cat([ft[:, :, :, :my, :mx], ft[:, :, :, -my:, :mx]], 3)
+        a = a.permute(1, 3, 4, 0, 2).reshape(-1, b, wid)
+        cr = torch.bmm(torch.cat([a.real, a.imag], 2).contiguous(), self._packed(i, my, mx))
+        oc = torch.complex(cr[..., :wid], cr[..., wid:])
+        oc = oc.reshape(k, 2 * my, mx, b, wid).permute(3, 0, 4, 1, 2)
+        out = torch.zeros(b, k, wid, h, wf, dtype=torch.cfloat, device=x.device)
+        out[:, :, :, :my, :mx] = oc[..., :my, :]
+        out[:, :, :, -my:, :mx] = oc[..., my:, :]
+        return torch.fft.irfft2(out.reshape(b, k * wid, h, wf), s=(h, w))
+
     def _spec(self, i, x):
         b, _, h, w = x.shape
         k, wid = self.n_members, self.width
-        ft = torch.fft.rfft2(x).reshape(b, k, wid, h, w // 2 + 1)
-        out = torch.zeros(b, k, wid, h, w // 2 + 1, dtype=torch.cfloat, device=x.device)
         my, mx = min(self.my, h // 2), min(self.mx, w // 2 + 1)
+        # The bmm path indexes `w1`/`w2` with [:my, :mx] up front, so it is only equivalent
+        # when the clamp is a no-op in the row axis -- `w2`'s rows run backwards in frequency
+        # and a clamped `my` would have to be taken from the OTHER end. At 32x64 with
+        # modes (8, 12) nothing clamps; anything else falls back rather than guess.
+        if _SPEC == "bmm" and my == self.my and mx == self.mx:
+            return self._spec_bmm(i, x, my, mx)
+        ft = torch.fft.rfft2(_fft_in(x)).reshape(b, k, wid, h, w // 2 + 1)
+        out = torch.zeros(b, k, wid, h, w // 2 + 1, dtype=torch.cfloat, device=x.device)
         for sl, wp in ((slice(None, my), self.w1), (slice(-my, None), self.w2)):
             wc = torch.view_as_complex(wp[i])[:, :, :, :my, :mx]
             out[:, :, :, sl, :mx] = torch.einsum("bkixy,kioxy->bkoxy",
@@ -405,7 +518,8 @@ class StackedFNO(nn.Module):
         h = self.lift(x)                    # first lift conv is shared, see `shared()`
         hs = []
         for i in range(self.n_layers):
-            h = h + torch.nn.functional.gelu(self.norm[i](self._spec(i, h) + self.point[i](h)))
+            z = self.norm[i](self._spec(i, h) + self.point[i](h))
+            h = _res_gelu(h, z) if _TAIL == "jit" else h + torch.nn.functional.gelu(z)
             hs.append(h)
         hw = h.shape[-2:]
         f_all = self.head_field(h).reshape(b, k, CH, *hw)      # per member, before averaging
@@ -708,7 +822,8 @@ def load_any(path: str, device: str):
 @torch.no_grad()
 def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
                 batch: int = 64, out: np.ndarray | None = None,
-                sigma_out: np.ndarray | None = None) -> np.ndarray:
+                sigma_out: np.ndarray | None = None,
+                pad_batch: bool = _PAD_BATCH, amp=_AMP) -> np.ndarray:
     """(N,20,32,64,>=2) raw physical -> (N,20,32,64,2) raw physical.
 
     predict() is TIMED, and at ~0.1 ms/window of actual compute this function is dominated by
@@ -733,8 +848,16 @@ def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
     std = std_c = torch.from_numpy(STD_SN if sn else STD).to(device)
     n = len(x_raw)
     dst = np.empty((n, T_OUT, H, W, C), dtype=np.float32) if out is None else out
+    cuda = str(device).startswith("cuda")
     for i in range(0, n, batch):
         xb = torch.from_numpy(x_raw[i:i + batch]).to(device, non_blocking=True)[..., :2].float()
+        # Fixed batch SHAPE (opt-in).  Every batch but the last is already `batch` rows; the
+        # tail is padded with copies of its own last window so cuDNN/cuBLAS cannot select a
+        # different kernel for it.  The copies are discarded after the members are averaged,
+        # below, so nothing they touch reaches the output.
+        nb = len(xb)
+        if pad_batch and nb < batch:
+            xb = torch.cat([xb, xb[-1:].expand(batch - nb, *xb.shape[1:])], 0)
         # `mean`/`std` are (2,) and broadcast over the channel axis. Under self-normalization
         # they additionally carry the window's own scale, which makes them (B,1,1,1,2) -- the
         # SAME two lines then serve both conventions, in and out, including sigma. `s` is only
@@ -759,7 +882,16 @@ def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
             # silently change the ensemble's mixture.
             nm = getattr(m, "n_members", 1)
             total += nm
-            raw, logstd = m(prev)
+            if amp is None or not cuda:
+                raw, logstd = m(prev)
+            else:
+                # Only the network runs reduced-precision; everything after this -- the member
+                # average, the fluctuation rescaling, the denormalization -- stays fp32, so the
+                # variant differs from the reference in exactly one place.
+                with torch.autocast("cuda", dtype=amp):
+                    raw, logstd = m(prev)
+                raw = raw.float()
+                logstd = None if logstd is None else logstd.float()
             yi = raw.reshape(len(xb), T_OUT, C, H, W).permute(0, 1, 3, 4, 2) * nm
             y = yi if y is None else y + yi
             if logstd is not None:
@@ -769,6 +901,14 @@ def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
             y = y / total
             if sig is not None:
                 sig = sig / total
+        if pad_batch and len(y) != nb:
+            # Drop the padding here, before compose and before the write, so the tail costs
+            # only the forward pass it was padded for.  Under `--norm self` the affine is
+            # per-window and has to be sliced with it.
+            y = y[:nb]
+            sig = None if sig is None else sig[:nb]
+            if sn:
+                mean, std = mean[:nb], std[:nb]
 
         if sig is not None and alpha > 0:
             m_ = y.mean(1, keepdim=True)

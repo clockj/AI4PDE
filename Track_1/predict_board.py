@@ -37,8 +37,10 @@ and its alpha) and it scores both packages on the same instrument, then predicts
 
 The board/proxy ratio cancels into the anchor, so what is being extrapolated is only the
 RATIO OF TWO PROXIES -- and the anchor's own recorded board result carries the level. `final`
-is then priced with `final_v9`'s twelve-round weights on the DELTA, where the intercept
-cancels too.
+is then priced with `final_v9`'s FREE eighteen-round weights on the DELTA, where the
+intercept cancels too.  (Round 17 dropped the `sum(w) = 1` constraint the weights had carried
+since round 9: max residual 0.049 -> 0.0023.  Deltas priced before 2026-09-04 used the
+constrained weights and are worth re-pricing before they are cited.)
 
 The anchors are real board rounds with recorded subscores; T2R2 (2026-09-02, the 8 all-data
 dropout members at ALPHA 0.60) is the default because it is the most recent, it is the package
@@ -99,6 +101,24 @@ ANCHORS = {
     # 4060-equivalent in both cases, since it is the identical package).
     "r16w96": dict(rel_l2=94.764049, tke=78.433653, mvpe=94.030389, time=92.699846,
                    sps=41.259088, final=81.119780),
+    # 2026-09-04 22:06, 4 all-data width-96 EIGHT-layer members at dropout 0.45, one fused
+    # invocation, fp16, ALPHA 0.60 (id 915380). The account's best score on either board and
+    # the DEFAULT anchor for any Track-1 candidate built on the 4xL8 do45 package. Depth at 4
+    # members turned out to be a wash against `r16w96`'s 8 members at 4 layers (+0.023 of
+    # accuracy; the rest of its +0.050 was a better time draw), so the two are interchangeable
+    # as anchors on accuracy -- but this one carries the newer, faster latency level:
+    # 1 invocation, 2.803 ms 4060-equivalent, 4.15 board ms against r16w96's 4.52.
+    "r17L8": dict(rel_l2=94.745531, tke=78.635462, mvpe=93.974234, time=92.988361,
+                  sps=41.324574, final=81.169843),
+    # 2026-09-04 22:06, the SAME four members on the TRACK-2 board (id 915381) -- the fifth
+    # cross-track identity check. Anchor a Track-2 twin here and its Track-1 sibling on
+    # `r17L8`; the packages are identical, so the pair differs only in which board's level the
+    # delta is added to. Note the two are NOT as close as the earlier identity checks: T1 beat
+    # T2 on every error subscore (rel -0.36 %, tke -1.64 %, mvpe -4.76 %, sps +0.133), the
+    # third ~1.5 % tke gap in a row at width 96, so a Track-2 prediction anchored here already
+    # has that path difference folded into its level.
+    "t2r16L8": dict(rel_l2=94.727329, tke=78.357043, mvpe=93.692366, time=92.427051,
+                    sps=41.191134, final=81.019298),
     "t1r15drop": dict(rel_l2=94.780094, tke=77.747643, mvpe=94.122329, time=93.180177,
                       sps=40.140948, final=80.835124),
     "t2r2": dict(rel_l2=94.787655, tke=77.667926, mvpe=93.882222, time=93.633350,
@@ -262,7 +282,7 @@ def main():
     order = ("rel_l2", "tke", "mvpe", "time", "sps")
     for k in order:
         print(f"{k:>10s} {base[k]:10.3f} {subs[k]:10.3f} {subs[k] - base[k]:+8.3f}")
-    # Priced with final_v9's TWELVE-round pooled weights, on the DELTA -- the level fit's
+    # Priced with final_v9's FREE eighteen-round pooled weights, on the DELTA -- the level fit's
     # common-mode error cancels in a difference, which is round 12's post-mortem in one line.
     import final_v9
     mid, lo, hi = final_v9.delta([base[k] for k in order], [subs[k] for k in order])

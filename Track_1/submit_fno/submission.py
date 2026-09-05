@@ -75,8 +75,14 @@ import _fno  # noqa: E402  (must follow the sys.path insertion above)
 #
 # It is free: round 11 measured TF32 on the spectral matmul at +0.05 ms and no subscore change
 # past 1e-5, so there is nothing to trade against.
-torch.backends.cuda.matmul.allow_tf32 = False
-torch.backends.cudnn.allow_tf32 = False
+#
+# OPT-IN (round 17 Q1): RPDE_TF32=1 turns it back on, for the measurement drivers only. The
+# default is unchanged -- OFF -- and stays that way until a batch-position test says the
+# dependence above is really a dependence on the batch SHAPE (i.e. that it disappears once
+# every batch is padded to the same size), measured on the members a package actually ships.
+_TF32 = os.environ.get("RPDE_TF32", "") not in ("", "0")
+torch.backends.cuda.matmul.allow_tf32 = _TF32
+torch.backends.cudnn.allow_tf32 = _TF32
 
 _BAND = os.path.join(_HERE, "band.npz")
 _BAND_LEGACY = os.path.join(_HERE, "band.npy")

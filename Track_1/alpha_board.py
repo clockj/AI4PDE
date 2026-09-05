@@ -90,7 +90,17 @@ def main() -> None:
     ap.add_argument("--anchor", type=float, default=0.60,
                     help="the ALPHA the board numbers were measured at; the per-metric "
                          "inflation factors are defined by this row and applied to the rest")
+    ap.add_argument("--board", type=float, nargs=3, default=None,
+                    metavar=("REL", "TKE", "MVPE"),
+                    help="board rel-L2 / TKE / MVPE ERRORS to anchor the inflation factors on, "
+                         "overriding the R13 defaults above. The factors are BOARD/local at "
+                         "--anchor, so pairing a newer, better member set with an older, "
+                         "higher board level inflates every metric and the sweep answers a "
+                         "question about a model that does not exist. Pass the errors of the "
+                         "round the CHECKPOINTS correspond to: e = 2*(100/subscore - 1).")
     args = ap.parse_args()
+    if args.board:
+        BOARD.update(zip(("rel", "tke", "mvpe"), args.board))
     if args.anchor not in args.alphas:
         args.alphas = sorted(set(args.alphas) | {args.anchor})
 

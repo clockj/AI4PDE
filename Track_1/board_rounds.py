@@ -1,14 +1,32 @@
 """Every scored Codabench round, and what the five subscores imply about `final_score`.
 
 v9 stopped publishing the combination rule.  Round 9 inferred a weight family from three
-rounds; round 10 falsified the no-intercept form with a fourth.  With FOURTEEN scored rounds the
-no-intercept model is comfortably OVERDETERMINED (9 dof) and is tested, not assumed.
+rounds; round 10 falsified the no-intercept form with a fourth.  With EIGHTEEN scored rounds
+the linear no-intercept model is comfortably OVERDETERMINED and is tested, not assumed.
+
+**ROUND 17: THE `sum(w) = 1` CONSTRAINT IS DROPPED, AND IT WAS NEVER TESTED.**  Every fit from
+round 9 to round 16 imposed it -- not because anything measured it, but because a weighted mean
+was the natural guess and nobody removed the row to see what happened.  Removing it:
+
+    fit (18 rounds, both tracks)  rel_l2    tke   mvpe   time    sps   sum w  max resid
+    sum(w) = 1  (rounds 9-16)      0.570  0.066  0.047  0.085  0.232   1.000     0.049
+    FREE linear  (round 17+)       0.475  0.102  0.094  0.097  0.250   1.018    0.0023
+
+**Twenty times tighter with one fewer assumption**, and it is confirmed by the only weight ever
+read off the board WITHOUT a fit: `W_TIME_DIRECT` below is 0.0956 from the R13/R14
+single-subscore A/B, and the free fit says **0.0967** where the constrained fit said 0.085.
+Leave-one-out predicts a held-out round's `final` to +-0.004 (rms 0.002), so this is now an
+instrument rather than a regression.  Why `sum(w)` lands at 1.018 rather than 1 is unknown -- a
+sixth term, or a subscore transformed before the average -- and the ~0.002 residual says
+whatever it is, it is small.  It does not matter for DELTAS, which is how the fit is used.
+
+`fit()` returns the FREE fit by default; pass `constrained=True` for the historical one.
 
 **The fit POOLS BOTH TRACKS.**  Round 13 shipped the identical package to Track 1 and Track 2
 on the same day and the two boards returned the same four error subscores to <=0.3 % of the
 error (mvpe excepted, and even that is one window's worth), and Track 1's fitted weights
 reprice Track 2's subscores to 80.650 against a published 80.653 -- so the two tracks are one
-test set under one scoring rule (ROADMAP 1.16).  Pooling costs nothing and buys three rounds.
+test set under one scoring rule (ROADMAP 1.16).  Pooling costs nothing and buys five rounds.
 Set `POOL_TRACKS = False` to recover the Track-1-only fit.
 
     python board_rounds.py
@@ -52,6 +70,15 @@ ROUNDS = [
     # checks (mvpe the outlier); tke's 1.5 % is the largest tke offset of the four and is
     # worth watching, not acting on.  Board latency 4.52 ms against T2R3's 4.78.
     ("R16 w96x8/1inv a60 fp16", "2026-09-04", 914506, 94.764049, 78.433653, 94.030389, 92.699846, 41.259088, 81.119780),
+    # R17 = DEPTH at dropout 0.45: 4 all-data width-96 EIGHT-layer members, one fused
+    # invocation, fp16, ALPHA 0.60.  The account's best score on either board.  Against R16
+    # (8 members at FOUR layers, same width, same invocation count) it is a WASH in accuracy:
+    # rel +0.37 % of error WORSE, tke -1.19 %, mvpe +1.00 % worse, sps +0.066, which the free
+    # weights price at +0.023.  The rest of the +0.050 is a better time draw (4.52 -> 4.15
+    # board ms).  Equal FLOPs, equal score -- 4xL8 and 8xL4 sit on one accuracy-per-FLOP
+    # frontier.  The prediction (81.188) over-read tke and sps, as the FNO-family proxy has
+    # now done twice at this operating point.
+    ("R17 L8do45x4/1inv a60", "2026-09-04", 915380, 94.745531, 78.635462, 93.974234, 92.988361, 41.324574, 81.169843),
 ]
 
 UNSCORED = []   # every round on both tracks now has full subscores
@@ -107,6 +134,20 @@ ROUNDS_T2 = [
     # interior Re-band k-fold, the one instrument that called T2R3's shape, was never run on
     # it.  Do NOT submit the Track-1 twin of this package.
     ("T2R4 ufno3/3inv a60 fp16", "2026-09-04", 914508, 94.661471, 78.413683, 93.727402, 90.154359, 41.600131, 80.879200),
+    # T2R5 = THE SAME FOUR MEMBERS AS R17 on the Track-2 board -- the FIFTH cross-track
+    # identity check.  (The staged recommendation for this slot was the do30 twin
+    # `track2_r16_L8x4_a060.zip`; the user uploaded the do45 archive, so the pair became an
+    # identity check instead of the dropout-at-depth A/B it was designed as.)  R17 vs T2R5 in
+    # error terms: rel -0.36 %, tke -1.64 %, mvpe -4.76 %, sps +0.133 -- Track 1 better on
+    # every error subscore.  Since w96 the T1 package has beaten its T2 twin on tke by ~1.5 %
+    # three times running; at w24 the two tracks agreed to +-0.3 %.  Something in the Track-2
+    # path costs ~0.03 `final` at width 96 (plan_20260905.md Q1e).
+    # Against its own T2R3 anchor the depth change is a wash, exactly as on Track 1: rel
+    # +0.57 % worse, tke -1.07 %, mvpe +0.81 % worse, sps +0.031 -> fitted +0.0003, actual
+    # +0.0001.  The user's leaderboard LIST line read 80.97843 while the detail read
+    # 81.019298; 81.019298 is the consistent value -- hold it out of the fit and the other 17
+    # rounds predict 81.02032, which is 0.8 sigma from 81.019298 and 35 sigma from 80.97843.
+    ("T2R5 L8do45x4/1inv a60", "2026-09-04", 915381, 94.727329, 78.357043, 93.692366, 92.427051, 41.191134, 81.019298),
 ]
 
 # The fit pools both tracks -- see the module docstring.  ROUNDS first, then ROUNDS_T2, so the
@@ -123,13 +164,17 @@ Y = np.array([r[8] for r in FIT_ROUNDS], float)
 W_TIME_DIRECT = (80.630755 - 80.643823) / (92.978725 - 93.115432)   # = 0.0956
 
 
-def fit(nonneg: bool = True):
-    """Least squares for `final = w . subscores`, with sum(w) = 1 and no intercept.
+def fit(constrained: bool = False, nonneg: bool = True):
+    """Least squares for `final = w . subscores`, no intercept.
 
-    Twelve pooled rounds against five weights plus one constraint is comfortably
-    overdetermined (7 dof), so unlike rounds 9-10 this is a TESTABLE model rather than an
-    exact interpolation: the residual is now evidence.
+    Default (round 17 onward) is the FREE fit: eighteen pooled rounds against five weights,
+    13 dof, max |residual| 0.0023.  `constrained=True` adds the historical `sum(w) = 1` row,
+    which costs a factor of twenty in residual (0.049) and is what rounds 9-16 reported.  The
+    constraint was assumed, never tested; the residual is the test and it fails it.
     """
+    if not constrained:
+        w, *_ = np.linalg.lstsq(X, Y, rcond=None)
+        return w, X @ w - Y
     from scipy.optimize import nnls
     A = np.vstack([X, np.ones(5) * 100.0])       # scale the constraint row into range
     b = np.concatenate([Y, [100.0]])
@@ -140,25 +185,46 @@ def fit(nonneg: bool = True):
     return w, X @ w - Y
 
 
-def weight_bounds(tol_mult: float = 2.0, tol_floor: float = 0.01):
+def loo():
+    """Leave-one-round-out: weight spread, and how well a held-out round's `final` is predicted.
+
+    The honest test of a fit with no held-out data of its own.  Refit on 17 rounds, predict
+    the 18th; the spread of the weights says how much any single round is carrying.
+    """
+    n = len(Y)
+    ws, errs = [], []
+    for i in range(n):
+        m = np.ones(n, bool)
+        m[i] = False
+        wi, *_ = np.linalg.lstsq(X[m], Y[m], rcond=None)
+        ws.append(wi)
+        errs.append(float(X[i] @ wi - Y[i]))
+    return np.array(ws), np.array(errs)
+
+
+def weight_bounds(tol_mult: float = 2.0, tol_floor: float = 0.005,
+                  constrained: bool = False):
     """Range of each weight over every non-negative weighting that fits nearly as well.
 
-    Linear program: minimise/maximise w_i subject to |X w - Y| <= tol, sum(w) = 1, w >= 0.
-    `tol` is whichever is larger -- a multiple of the best achievable max-residual, or a floor
-    -- so a knife-edge best fit does not collapse the reported interval to a point.
+    Linear program: minimise/maximise w_i subject to |X w - Y| <= tol and w >= 0, plus
+    sum(w) = 1 only when `constrained`.  `tol` is whichever is larger -- a multiple of the
+    best achievable max-residual, or a floor -- so a knife-edge best fit does not collapse the
+    reported interval to a point.  With the constraint dropped the best fit is 20x tighter, so
+    the floor drops with it (0.01 -> 0.005); the resulting family is far narrower than the one
+    rounds 9-16 reported, which is the point.
     """
     from scipy.optimize import linprog
-    w_best, r_best = fit()
+    w_best, r_best = fit(constrained=constrained)
     tol = max(tol_mult * np.abs(r_best).max(), tol_floor)
     n = 5
     A_ub = np.vstack([X, -X])
     b_ub = np.concatenate([Y + tol, -(Y - tol)])
-    A_eq, b_eq = np.ones((1, n)), np.array([1.0])
+    eq = dict(A_eq=np.ones((1, n)), b_eq=np.array([1.0])) if constrained else {}
     out = {}
     for i in range(n):
         c = np.zeros(n); c[i] = 1.0
-        lo = linprog(c, A_ub=A_ub, b_ub=b_ub, A_eq=A_eq, b_eq=b_eq, bounds=[(0, None)] * n)
-        hi = linprog(-c, A_ub=A_ub, b_ub=b_ub, A_eq=A_eq, b_eq=b_eq, bounds=[(0, None)] * n)
+        lo = linprog(c, A_ub=A_ub, b_ub=b_ub, bounds=[(0, None)] * n, **eq)
+        hi = linprog(-c, A_ub=A_ub, b_ub=b_ub, bounds=[(0, None)] * n, **eq)
         out[NAMES[i]] = (lo.x[i] if lo.success else np.nan,
                          hi.x[i] if hi.success else np.nan)
     return w_best, np.abs(r_best).max(), tol, out
@@ -187,35 +253,64 @@ def main():
         print(f"{r[0]:<24s} {tr:>2d} {r[1]:<11s} {r[2]:>7d}  " +
               "  ".join(f"{v:9.4f}" for v in r[3:8]) + f"  {r[8]:9.5f}")
 
+    wc, resc = fit(constrained=True)
+    _, res_free = fit()
     w, res, tol, bounds = weight_bounds()
-    print("\n=== final_score = w . subscores,  sum(w) = 1,  w >= 0 ===")
+    ndof = len(FIT_ROUNDS) - 5
+    print("\n=== final_score = w . subscores,  no intercept ===")
     print(f"  {len(FIT_ROUNDS)} rounds"
           f"{' POOLED across both tracks' if POOL_TRACKS else ' (Track 1 only)'}"
-          f", five weights -> {len(FIT_ROUNDS) - 4} degrees of freedom")
-    print(f"  max |residual| {res:.4f}   (an exact-fit artefact would be ~0 with 0 dof)")
+          f", five weights -> {ndof} degrees of freedom free / {ndof - 1} constrained")
+    print("\n  --- (a) the historical fit: sum(w) = 1, w >= 0  [rounds 9-16] ---")
+    print(f"  {'subscore':<10s} {'fitted':>8s}")
+    for n, v in zip(NAMES, wc):
+        print(f"  {n:<10s} {v:>8.3f}")
+    print(f"  {'sum':<10s} {wc.sum():>8.3f}      max |residual| {np.abs(resc).max():.4f}")
+
+    print("\n  --- (b) THE FREE FIT: no constraint at all  [round 17 onward, the default] ---")
+    print(f"  max |residual| {res:.4f}   rms {np.sqrt((res_free ** 2).mean()):.4f}"
+          f"   -- {np.abs(resc).max() / max(res, 1e-12):.0f}x tighter than (a)")
     print(f"  weight interval = every non-negative weighting fitting to within {tol:.4f}\n")
-    print(f"  {'subscore':<10s} {'fitted':>8s}   {'admissible':>18s}   round-9 claim")
+    print(f"  {'subscore':<10s} {'fitted':>8s}   {'admissible':>18s}   {'sum=1 fit':>9s}"
+          f"   round-9 claim")
     r9 = dict(rel_l2="0.266", tke="0.244", mvpe="0.241", time="0.069", sps="0.181")
-    for n, v in zip(NAMES, w):
+    for n, v, vc in zip(NAMES, w, wc):
         lo, hi = bounds[n]
-        print(f"  {n:<10s} {v:>8.3f}   {lo:>8.3f} - {hi:<7.3f}   {r9[n]}")
+        print(f"  {n:<10s} {v:>8.4f}   {lo:>8.4f} - {hi:<7.4f}   {vc:>9.3f}   {r9[n]}")
+    print(f"  {'sum':<10s} {w.sum():>8.4f}"
+          f"   -- NOT 1, and nothing forces it to be; see the module docstring")
 
     print("\n  --- and one weight is MEASURED, not fitted ---")
     print("  R13 and R14 differ in `time_score` alone: the gated mean-blend never fired on a")
     print("  single hidden window, so all four error subscores came back bit-identical.")
     print(f"    d time  {92.978725 - 93.115432:+.6f}")
     print(f"    d final {80.630755 - 80.643823:+.6f}")
-    print(f"    => w_time = {W_TIME_DIRECT:.4f}   (fit {w[3]:.4f}, "
-          f"admissible {bounds['time'][0]:.3f}-{bounds['time'][1]:.3f})")
-    print("  A single-subscore A/B is the only way to read a weight without the fit; this one")
-    print("  lands at the fitted value, which is the first independent check the family has.")
+    print(f"    => w_time = {W_TIME_DIRECT:.4f}   (FREE fit {w[3]:.4f}, "
+          f"admissible {bounds['time'][0]:.4f}-{bounds['time'][1]:.4f}; "
+          f"sum=1 fit {wc[3]:.4f})")
+    print("  A single-subscore A/B is the only way to read a weight without the fit.  It lands")
+    print("  on the FREE fit and is 12 % away from the constrained one: the direct measurement")
+    print("  picks the model, and it picks the one without the assumed constraint.")
+
+    print("\n=== Leave-one-round-out (free fit) ===")
+    ws, errs = loo()
+    print("  Refit on 17 rounds, predict the 18th.  This is the only out-of-sample number the")
+    print("  weight family has, and it is what licenses calling it an instrument.")
+    print(f"    prediction error   max {np.abs(errs).max():.4f}   rms "
+          f"{np.sqrt((errs ** 2).mean()):.4f}")
+    print(f"\n  {'subscore':<10s} {'full fit':>9s}   {'LOO min':>8s} - {'LOO max':<8s}")
+    for i, n in enumerate(NAMES):
+        print(f"  {n:<10s} {w[i]:>9.4f}   {ws[:, i].min():>8.4f} - {ws[:, i].max():<8.4f}")
+    worst = int(np.argmax(np.abs(errs)))
+    print(f"\n  worst held-out round: {FIT_ROUNDS[worst][0].strip()} "
+          f"({errs[worst]:+.4f})")
 
     print("\n=== Deltas, R12 vs the two rounds that matter ===")
     compare("R10", "R12")
     compare("R11", "R12")
 
     print("\n=== Time-normalised final: what each round scores at a COMMON board latency ===")
-    print("  Board `time_score` swings 2.8 points across the twelve rounds and is only partly")
+    print("  Board `time_score` swings 3.5 points across the eighteen rounds and is only partly")
     print("  under our control, so the raw ranking conflates model quality with eval-machine")
     print("  luck. This holds time_score fixed at the median and re-prices the other four.")
     ref = float(np.median(X[:, 3]))
@@ -254,7 +349,15 @@ def main():
              # T2R4: 3 U-FNO members, 3 invocations. 5.457 ms/step measured in the build log
              # (slurm-7144661) x1.850 = 10.10 4060-equivalent.  The README's "1.28 ms/step"
              # was wrong and is withdrawn.
-             "T2R4": (3, 10.10)}
+             "T2R4": (3, 10.10),
+             # R17: 4 all-data w96 L8 members, one fused invocation. 1.515 ms A100 x1.850 =
+             # 2.803 4060-equivalent (lat_r15 on an idle node, log slurm-7152736.out); the
+             # do45 build itself could not be timed (rp_q4b held the cpuset) but is the
+             # identical architecture, so the do30 timing carries.
+             "R17": (1, 2.803),
+             # T2R5: the same four members through the Track-2 streaming path, batch 1.
+             # 2.904 ms/step measured (validate_t2, log slurm-7156902.out) x1.850 = 5.37.
+             "T2R5": (1, 5.37)}
     for r in FIT_ROUNDS:
         key = r[0].split()[0]
         t = 0.72896 * (100.0 / r[6] - 1.0) ** 2 * 1000.0

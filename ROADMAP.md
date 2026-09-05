@@ -3,18 +3,23 @@
 Written 2026-08-31 after the round-12 board result; revised the same day after the Track-2
 build; revised again 2026-09-01 after the round-13 board result, which changed the subscore
 weights and turned the two boards into one instrument; revised 2026-09-02 after the round-14
-PAIR, which answered where the hidden set lives and put dropout on the board; **revised
+PAIR, which answered where the hidden set lives and put dropout on the board; revised
 2026-09-04 after the round-16 pair, which took Track 1 to the account's best and closed the
-first non-FNO family behind a k-fold gate.** This is the
+first non-FNO family behind a k-fold gate; **revised 2026-09-04 22:06 after the round-17 pair,
+which read the scoring rule correctly for the first time.** This is the
 handoff document: it records what the leaderboard actually says, what is closed, and what to do
 next. Read it with `CLAUDE.md` (contracts, measurements, per-round detail),
 `Track_1/board_rounds.py` (every number in Part 1 is reproducible from it) and
-**`Track_1/plan/plan_20260904.md` (the CURRENT round's plan and recorded predictions)**.
+**`Track_1/plan/plan_20260905.md` (the CURRENT round's plan and recorded predictions)**.
 
-**One-line state:** **Track 1 sits at 81.119780** (round 16 — the account's best on either
-board, and the same 8 all-data **width-96** dropout FNOs that score **81.019213** as Track 2
-round 3, the fourth cross-track identity check). Leader 81.76136 ⇒ **gap 0.641 ≈ 6.7 % of
-error**, down from 0.742. Round 16 also spent a slot on the first non-FNO family, **U-FNO ×3,
+**One-line state:** **Track 1 sits at 81.169843** (round 17 — the account's best on either
+board: 4 all-data **width-96 8-layer dropout-0.45** FNOs in one fused invocation, the same
+members that score **81.019298** as Track 2 round 5, the fifth cross-track identity check).
+Leader 81.76136 (read 08-25) ⇒ **gap 0.591 ≈ 6.2 % of error**, down from 0.641. **Round 17
+also dropped the `Σw = 1` constraint the subscore-weight fit had carried since round 9**: the
+free eighteen-round fit is rel_l2 **0.4754** · tke **0.1017** · mvpe **0.0936** · time
+**0.0967** · sps **0.2503** at max residual **0.0023** (against 0.049), it agrees with the one
+weight ever measured directly, and it re-prices `tke` at 1.5× and `mvpe` at 2.4× — see §1.22. Round 16 also spent a slot on the first non-FNO family, **U-FNO ×3,
 and it MISSED by −0.45** (§1.20): the proxy that ranked it was wrong on `rel_l2` by 4.0 pp, so
 every non-FNO family is now gated on the interior Re-band k-fold. **The plateau since
 2026-08-08 is broken, and both breaks are regularization**: dropout (+0.200, T2 R2) and then
@@ -24,9 +29,10 @@ lives — the gated mean-blend returned **all four error subscores bit-identical
 (`relo`, `rehi`, band 0) is retired. Round 15
 settled how to attack it: **T2 R3's whole gain arrived through `sps` (+1.01) and `tke` while
 `rel_l2` got WORSE** — capacity × dropout removes the per-element **tail**, not the rms, which
-is what SPS's containment scoring pays for. Weights refit on **sixteen pooled rounds**: rel_l2
-0.578 · tke 0.068 · mvpe 0.039 · time 0.083 · sps 0.231 (`w_time` *measured* at 0.0956 off the
-R13/R14 pair).
+is what SPS's containment scoring pays for. ~~Weights refit on **sixteen pooled rounds**: rel_l2
+0.578 · tke 0.068 · mvpe 0.039 · time 0.083 · sps 0.231~~ — **superseded by the free fit above
+(§1.22)**; `w_time` *measured* at 0.0956 off the R13/R14 pair, which is what picked the free
+form over the constrained one.
 
 **Revision, 2026-08-31 evening.** Two things changed the plan:
 
@@ -650,6 +656,51 @@ monotone in Re, reversed at the top band (+1.3 %). Rule earned: **within the FNO
 interior Re-band k-fold has called every board move; across families NO local instrument
 predicts the board — a new family costs a slot, not a k-fold.** Next slot pair, staged with
 recorded predictions: T2 `L8x4` do30 (81.035) / T1 `L8x4` do45 (81.188).
+
+### 1.22 Round 17: T1 81.170, depth is a wash, and the weight fit was mis-specified
+
+Board 2026-09-04 22:06. **T1 R17** (915380) 94.745531 / 78.635462 / 93.974234 / 92.988361 /
+41.324574 → **81.169843**, predicted 81.188. **T2 R5** (915381), the *same four members*,
+94.727329 / 78.357043 / 93.692366 / 92.427051 / 41.191134 → **81.019298**, predicted 81.088.
+Detail: CLAUDE.md "Round 17 BOARD RESULT"; plan `Track_1/plan/plan_20260905.md`.
+
+* **Depth at 4 members ≈ 8 members at 4 layers.** Both boards agree on every subscore's sign:
+  rel **worse** by 0.37 %/0.57 % of error, tke −1.19 %/−1.07 %, mvpe worse by 1.00 %/0.81 %,
+  sps +0.066/+0.031 → accuracy worth **+0.023 (T1) / +0.008 (T2)**. R17's +0.050 over R16 is
+  mostly the time draw (**4.52 → 4.15 board ms**, 4 members instead of 8). **4×L8 and 8×L4 are
+  on one accuracy-per-FLOP frontier**, so the next capacity step must beat that frontier, not
+  just R16.
+* **Fifth cross-track identity check, unplanned**: the staged Track-2 archive was the **do30**
+  twin, the do45 twin went up, so both boards ran one package. T1 beat T2 on **every** error
+  subscore (rel −0.36 %, tke −1.64 %, mvpe −4.76 %, sps +0.133). `mvpe` is the standing
+  outlier; **`tke` is not** — three ~1.5 % T1-over-T2 gaps in a row since w96, against ±0.3 %
+  at w24. **~0.03 `final` is sitting in the Track-2 path at width 96** (Q1e). The
+  dropout-at-depth axis is still unread on the board.
+* **THE SUM-TO-ONE CONSTRAINT WAS NEVER TESTED, AND IT IS WRONG.** Every fit since round 9
+  imposed `Σw = 1`. Dropped, on eighteen pooled rounds:
+
+  | fit | rel_l2 | tke | mvpe | time | sps | Σw | max resid | LOO pred err |
+  |---|---|---|---|---|---|---|---|---|
+  | Σw = 1 (rounds 9–16) | 0.570 | 0.066 | 0.047 | 0.085 | 0.232 | 1 | **0.049** | — |
+  | **free linear** | **0.4754** | **0.1017** | **0.0936** | **0.0967** | **0.2503** | 1.018 | **0.0023** | 0.004 max / 0.002 rms |
+  | LOO spread | 0.474–0.477 | 0.101–0.102 | 0.092–0.094 | 0.096–0.097 | 0.250–0.251 | | | |
+
+  **20× tighter with one fewer assumption**, and the only weight ever measured without a fit
+  (`w_time` = 0.0956, R13/R14) lands on the free value 0.0967, not the constrained 0.085.
+  Leave-one-out predicts a held-out round to ±0.004. `Track_1/final_v9.py` self-checks all 18
+  rounds at import and raises above 0.0025.
+  → **`tke` ×1.5 and `mvpe` ×2.4.** A 10 % cut in one error is worth rel **+0.238** / tke
+  **+0.175** / mvpe **+0.053** (direct subscore, before SPS). `rel_l2 + sps` still ≈0.73.
+  → **WITHDRAWN**: "mvpe is worth nothing", "tke is the cheapest error subscore", "the variance
+  branch is retired". The variance branch is *cheap*, not worthless.
+  → **ALPHA 0.60 was never settled.** R13's 0.90 → 0.60 re-prices to **±0.000** (rel +0.090,
+  tke −0.120, mvpe +0.018, sps +0.013); its entire +0.128 was the **4 → 1 invocation collapse**.
+  Two alphas tie ⇒ the optimum is between them. Re-sweep under the free weights (Q1d),
+  expected +0.02…0.05 free on both tracks.
+* **Bookkeeping**: the user's list line read T2 = 80.97843, the detail 81.019298. Holding the
+  round out, the other 17 predict 81.02032 — **0.8σ** from 81.019298 and **35σ** from 80.97843.
+  Ledgered as 81.019298.
+
 
 ## Part 2 — Closed. Do not re-propose without new evidence.
 

@@ -4,14 +4,21 @@ Solution code for the **RealPDE** competition (real-world PDE / sim-to-real flui
 Site: https://realpdecompetition.github.io/ · Data: https://huggingface.co/datasets/AI4Science-WestlakeU/RealPDEBench
 Track 1 (Sim2Real): https://www.codabench.org/competitions/17363/ · Track 2 (LTTTA): https://www.codabench.org/competitions/17385/
 
-> **START HERE: [`ROADMAP.md`](ROADMAP.md).** It carries the full **sixteen-round** board
-> record across both tracks, the refitted subscore weights (sixteen rounds, pooled: rel_l2
-> **0.578** · tke **0.068** · mvpe **0.039** · time **0.083** · sps **0.231**, max residual
-> 0.047, which overturn several conclusions still written below), and the current
-> recommendation. This file is the reference manual; the roadmap is the plan. Best score:
-> **81.120** (Track 1 round 16 — the same 8 all-data width-96 dropout FNOs that score 81.019
-> as Track 2 round 3). Current plan:
-> [`Track_1/plan/plan_20260904.md`](Track_1/plan/plan_20260904.md).
+> **START HERE: [`ROADMAP.md`](ROADMAP.md).** It carries the full **eighteen-round** board
+> record across both tracks, the refitted subscore weights and the current recommendation.
+> This file is the reference manual; the roadmap is the plan. Best score: **81.170** (Track 1
+> round 17 — 4 all-data width-96 **8-layer** dropout-0.45 FNOs, one fused invocation; the same
+> members score 81.019 as Track 2 round 5). Current plan:
+> [`Track_1/plan/plan_20260905.md`](Track_1/plan/plan_20260905.md).
+>
+> **THE WEIGHTS CHANGED IN ROUND 17, AND EVERY EARLIER WEIGHT TABLE IN THIS FILE IS THE OLD
+> ONE.** Every fit from round 9 to round 16 imposed `Σw = 1`, which was never tested. Dropped,
+> the eighteen-round pooled fit is **rel_l2 0.4754 · tke 0.1017 · mvpe 0.0936 · time 0.0967 ·
+> sps 0.2503** (Σw 1.018) at a max residual of **0.0023** against the constrained fit's 0.049
+> — twenty times tighter, and it agrees with the one weight ever measured directly
+> (`w_time` = 0.0956 from the R13/R14 A/B). **`mvpe` is worth 2.4× and `tke` 1.5× what this
+> file says below**; "mvpe is worth nothing", "tke is the cheapest subscore" and "ALPHA 0.60 is
+> settled" are all withdrawn. `Track_1/final_v9.py` is the authority.
 
 This repo (`~/RealPDE/AI4PDE`, remote `github.com/clockj/AI4PDE`) holds **our** code.
 Datasets, starting kits and official checkpoints live one level up in `~/RealPDE/` and are **not**
@@ -1117,8 +1124,13 @@ interpolation. Round 10 "falsified" the no-intercept form on four points; with e
 "**stop optimizing rel-L2**, TKE and SPS carry the response" is **FALSIFIED** — it was a
 correct reading of the *curve* (`100/(1+0.5e)` is flat near e ≈ 0.1) paired with a weight that
 was off by half.
-→ **`mvpe` is worth approximately nothing** (≤0.16, best estimate 0). Stop spending on it, and
-stop counting its regressions as losses. Its 96.75 ceiling is irrelevant.
+→ ~~**`mvpe` is worth approximately nothing** (≤0.16, best estimate 0). Stop spending on it,
+and stop counting its regressions as losses. Its 96.75 ceiling is irrelevant.~~
+**FALSIFIED in round 17.** The 0.000 was an artefact of the `Σw = 1` constraint this fit
+imposed and never tested. Free, `mvpe` is **0.094** — 2.4× — and the whole weight table in this
+section is the constrained one. See "Round 17 BOARD RESULT".
+→ **Every conclusion below that is priced with these weights needs re-reading**, `rel_l2`'s
+promotion included: free, `rel_l2` is 0.475, not 0.545.
 → Re-pricing round 9's exchange rate with these weights, a **10 % error cut is worth +0.93
 `final`**, split **sps 49 % / rel_l2 38 % / tke 14 % / mvpe 0 %**. The leader is 81.76; closing
 1.25 needs a **~13 % error reduction**.
@@ -1455,9 +1467,14 @@ Track 2 (910642), the **identical** package: 94.694512 / 77.942224 / 93.399401 /
   `rel_l2` ↔ `tke` trade; the board returned rel **+0.189** / tke **−1.184**, worth +0.019 at
   the eight-round weights and **+0.128** in fact. Nine-round fit (max residual 0.035):
   **rel_l2 0.582 · tke 0.097 · mvpe 0.011 · time 0.087 · sps 0.224.**
-  → **`tke` is now the cheapest error subscore**, below `time`, a sixth of `rel_l2`. Round
+  → ~~**`tke` is now the cheapest error subscore**, below `time`, a sixth of `rel_l2`. Round
   10's +7.71 σ-oracle re-prices to +0.75 `final` *for a model that knows the answer*.
-  **The variance branch is retired.** (It is paid ~1.6× its direct weight because SPS's
+  **The variance branch is retired.**~~ **FALSIFIED in round 17** — free of the `Σw = 1`
+  constraint, `tke` is **0.102**, 1.5× this and *above* `time`, so the σ-oracle is +1.13 and
+  the variance branch is cheap rather than worthless. Worse, the *evidence* offered here is
+  gone too: re-priced free, R13's ALPHA 0.90 → 0.60 is rel +0.090, tke −0.120, mvpe +0.018,
+  sps +0.013 = **+0.001**, and the entire +0.128 was the 4 → 1 invocation collapse (time
+  +0.127). The board never said `tke` is cheap; the constrained fit did. (It is paid ~1.6× its direct weight because SPS's
   per-sample factor carries a 0.3 TKE branch — still small.)
   → A 10 % error cut is worth **+0.948 `final`**, split **sps 52 % / rel_l2 39 % / tke 8 % /
   mvpe 1 %**. **More than half the return on accuracy arrives through per-element
@@ -1475,7 +1492,11 @@ Track 2 (910642), the **identical** package: 94.694512 / 77.942224 / 93.399401 /
   **a day's two slots are one controlled A/B** with the test set, the scoring rule and the
   eval machine held fixed. With ~26 days to 2026-09-27 the board is a **52-run instrument**.
   Design slots in pairs.
-* **ALPHA = 0.60, settled.** `alpha_board.py` re-anchored on R13's own board errors at the
+* ~~**ALPHA = 0.60, settled.**~~ **UNSETTLED in round 17** — this was decided on the
+  nine-round *constrained* weights, and under the free fit R13's alpha move prices at ±0.000
+  (above), so the board's two alphas TIE and the optimum is somewhere between them. Re-sweep
+  (plan_20260905.md Q1d). The mechanical rule at the end of the bullet still stands.
+  `alpha_board.py` re-anchored on R13's own board errors at the
   alpha it actually ran, scored with the nine-round weights, on two independent member
   families: both peak at 0.60 (R13 twins 80.394; dropout twins 80.380) and the **minimax over
   the admissible weight family picks 0.60 on both**. Rounds 11–12 shipped 0.90 and each gave
@@ -1680,7 +1701,8 @@ Two submissions at 14:57, both clean A/Bs against a package already on their own
 
   **Nothing moved by more than its own interval.** Same conclusions as round 13: `rel_l2` and
   `sps` carry ~80 % of the value, a 10 % error cut is worth ~**+0.95** `final`, `tke` is cheap,
-  `mvpe` is nothing. Leader (read 08-25) 81.761 ⇒ gap **0.909 on Track 2 ≈ 9.6 % of error**.
+  `mvpe` is nothing. **CONSTRAINED FIT; see round 17 — the free fit is 20× tighter** and moves
+  `tke` to 0.102 and `mvpe` to 0.094, so "tke is cheap, mvpe is nothing" does not survive. Leader (read 08-25) 81.761 ⇒ gap **0.909 on Track 2 ≈ 9.6 % of error**.
 * **THE DECISION INSTRUMENT FOR A PACKAGE IS NOW THE Re-BAND K-FOLD ON INTERIOR BANDS.**
   `kfold.py --split re`, decision number = **bands 1–3 pooled** (Re 8850–22875 — unseen
   Reynolds numbers *inside* the training range, ≈2150 windows). It matches the board's
@@ -1750,7 +1772,9 @@ Two submissions. Full staging record and the pre-upload predictions:
 
   Nothing moved beyond its own interval; `rel_l2 + sps` have carried ~0.80 across the nine-,
   twelve- and fourteen-round fits. `w_time` measured directly (R13/R14) is 0.0956 against a
-  fitted 0.088.
+  fitted 0.088 — **and that 8 % gap was the standing clue that the FORM was wrong.
+  CONSTRAINED FIT; see round 17 — the free fit is 20× tighter** and puts `w_time` at 0.0967,
+  i.e. on the measurement.
 * **Calibration refit**: level ratios rel **1.068** / tke **1.136** / mvpe **1.454**; delta
   residual rms **4.15 %**. New corroboration that the residual belongs to the *proxy* and not
   to a board draw: **R14→R15 and T2R1→T2R2 are the same package change (blend8 → dropout8)
@@ -1808,7 +1832,9 @@ Two submissions read 01:45. Plan for the round: `Track_1/plan/plan_20260904.md`.
 * **Weights, SIXTEEN pooled rounds** (max residual **0.047**; R16 residual −0.041, T2R4 −0.007;
   `board_rounds.py`, `final_v9.py`): rel_l2 **0.578** · tke 0.068 · mvpe 0.039 · time 0.083 ·
   sps **0.231**. Nothing moved beyond its own interval; `rel_l2 + sps` ≈ 0.81 for the fourth
-  refit running.
+  refit running. **CONSTRAINED FIT; see round 17 — the free fit is 20× tighter** (max residual
+  0.0023 against this 0.047), and the stability across four refits was stability of a
+  mis-specified model, not evidence for it.
 
 ### Round 16 campaign (2026-09-04) — depth pays, nothing else in the FNO family does; the U-FNO miss is unexplained locally
 
@@ -1852,3 +1878,80 @@ pair is the first board reading of the dropout-at-depth axis.
 * `ufno3` on Track 2 measured **5.457 ms/step** locally (the README's 1.28 was wrong): a
   conv-heavy model at batch 1 gains nothing from the CUDA graph and pays ~50 % for
   `allow_tf32 = False`. Track-2 packages should stay FFT + 1×1.
+
+### Round 17 BOARD RESULT (2026-09-04 22:06) — 81.170 on Track 1, and the scoring rule read correctly
+
+Two submissions. Plan for round 17: `Track_1/plan/plan_20260905.md`; instrument log
+`leaderboard/` (`python leaderboard/lb.py --html` regenerates it).
+
+| | id | rel_l2 | tke | mvpe | time | sps | **final** | predicted |
+|---|---|---|---|---|---|---|---|---|
+| **T1 R17** `track1_r16_L8do45x4_a060.zip` (4 all-data w96 **L8** do45, 1 inv, fp16, α 0.60) | 915380 | 94.745531 | 78.635462 | 93.974234 | 92.988361 | 41.324574 | **81.169843** | 81.188 |
+| **T2 R5** `track2_r16_L8do45x4_a060.zip` (the **same four members**) | 915381 | 94.727329 | 78.357043 | 93.692366 | 92.427051 | 41.191134 | **81.019298** | 81.088 |
+
+**T1 81.170 is the account's best on either board.** Leader (read 08-25) 81.76136 ⇒ **gap
+0.591 ≈ 6.2 % of error**, down from 0.641.
+
+* **DEPTH AT 4 MEMBERS = 8 MEMBERS AT 4 LAYERS — a wash in accuracy, on both boards, in the
+  same direction on every subscore.** Priced with the free weights below:
+
+  | | R17 vs R16 (T1) | T2R5 vs T2R3 (T2) |
+  |---|---|---|
+  | rel_l2 | −0.0185 (**+0.37 % error, worse**) −0.009 | −0.0285 (+0.57 % worse) −0.014 |
+  | tke | +0.2018 (−1.19 %) +0.021 | +0.1827 (−1.07 %) +0.019 |
+  | mvpe | −0.0562 (+1.00 % worse) −0.005 | −0.0473 (+0.81 % worse) −0.004 |
+  | time | +0.2885 +0.028 | −0.0819 −0.008 |
+  | sps | +0.0655 +0.016 | +0.0305 +0.008 |
+  | **fitted / actual** | **+0.051 / +0.050** | **+0.0003 / +0.0001** |
+
+  The accuracy part is **+0.023 (T1) / +0.008 (T2)**; R17's +0.050 is mostly a better time
+  draw (**4.52 → 4.15 board ms** for 4 members instead of 8). **Equal FLOPs, equal score:
+  4×L8 and 8×L4 sit on one accuracy-per-FLOP frontier.** The prediction over-read `tke`
+  (+0.353 → +0.202/+0.183) and `sps` (+0.138 → +0.066/+0.031) on both boards — the FNO-family
+  proxy is 1–2 pp optimistic in the direction of the change, as it was for w96.
+* **FIFTH CROSS-TRACK IDENTITY CHECK — and it was an accident.** The staged Track-2 slot was
+  the **do30** twin `track2_r16_L8x4_a060.zip` (predicted 81.035), which would have made the
+  pair a dropout-at-depth A/B; the do45 archive went up instead, so the two boards ran the
+  identical package. R17 vs T2R5 in error terms: rel **−0.36 %**, tke **−1.64 %**, mvpe
+  **−4.76 %**, sps +0.133 — **Track 1 better on every error subscore.** `mvpe` is the standing
+  outlier, but `tke` is new: **since w96 the T1 package has beaten its T2 twin on `tke` by
+  ~1.5 % three times running** (R16 −1.52, R17 −1.64) where at w24 the two tracks agreed to
+  ±0.3 %. That is ~0.03 `final` sitting in the **Track-2 path** at this width — a batch-1 /
+  CUDA-graph / fp16 difference is the suspect (plan §4 Q1e). **The dropout-at-depth axis
+  remains unread on the board.**
+* **THE SCORING RULE, READ CORRECTLY AT LAST: DROP `Σw = 1`.** Every fit from round 9 to round
+  16 imposed it. Nothing ever measured it — a weighted mean was the natural guess, and no one
+  removed the row. Eighteen rounds pooled across both tracks (`board_rounds.py`, `final_v9.py`):
+
+  | fit | rel_l2 | tke | mvpe | time | sps | Σw | max resid |
+  |---|---|---|---|---|---|---|---|
+  | Σw = 1 (rounds 9–16) | 0.570 | 0.066 | 0.047 | 0.085 | 0.232 | 1 | **0.049** |
+  | **FREE linear** | **0.4754** | **0.1017** | **0.0936** | **0.0967** | **0.2503** | 1.018 | **0.0023** |
+  | LOO spread (17-of-18) | 0.474–0.477 | 0.101–0.102 | 0.092–0.094 | 0.096–0.097 | 0.250–0.251 | | |
+
+  **Twenty times tighter with one fewer assumption**, and it is confirmed by the one weight
+  ever read WITHOUT a fit: `w_time` from the R13/R14 single-subscore A/B is **0.0956**; the
+  free fit says **0.0967**, the constrained fit said 0.085. Leave-one-round-out predicts a
+  held-out round's `final` to **±0.004 (rms 0.002)** and the LOO weight spread is a thousandth
+  wide — no single round carries it. **This is an instrument now, not a regression.** Why Σw
+  lands at 1.018 is unknown (a hidden sixth term, or a transformed subscore); the ±0.002
+  residual says it is small, and it cancels in deltas.
+  → **Re-pricing at R17's levels** (10 % cut in one error, direct subscore only, before SPS):
+  rel **+0.238** (was +0.289) · tke **+0.175** (was +0.117) · mvpe **+0.053** (was +0.022).
+  **`tke` is worth 1.5× and `mvpe` 2.4× what we priced them at.** `rel_l2 + sps` still carry
+  ~0.73, so the strategy does not invert — but the three error subscores are far closer
+  together than four rounds of planning assumed.
+  → **WITHDRAWN**: "`mvpe` is worth approximately nothing" (round 12 §3), "`tke` is now the
+  cheapest error subscore" and "the variance branch is retired" (round 13). Notes are in place
+  at all four sites.
+  → **ALPHA 0.60 WAS NEVER SETTLED.** Round 13's +0.128 was read as evidence that `tke` is
+  cheap. Re-priced free, its ALPHA 0.90 → 0.60 is rel +0.090, tke −0.120, mvpe +0.018, sps
+  +0.013 = **+0.001, i.e. nothing** — the whole +0.128 was the **4 → 1 invocation collapse**
+  (time +0.127). Two alphas tie on the board, so the optimum lies between them: re-sweep under
+  the free weights (Q1d). Expected +0.02…0.05, free, both tracks.
+* **Bookkeeping.** The user's leaderboard *list* line read T2 = 80.97843 while the *detail*
+  read 81.019298. **81.019298 is the consistent value**: hold T2R5 out of the fit and the other
+  17 rounds predict 81.02032 — 0.8σ from 81.019298 and **35σ** from 80.97843. Ledgered as
+  81.019298; the list line is worth a second look.
+* 1 board ms at 4.15 ms = **−0.071 `final`**, unchanged. Latency is worth as much as any
+  accuracy arm on the table.

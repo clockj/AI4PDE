@@ -69,8 +69,19 @@ import _fno  # noqa: E402
 #
 # It is free: round 11 measured TF32 on the spectral matmul at +0.05 ms and no subscore change
 # past 1e-5, so there is nothing to trade against.
-torch.backends.cuda.matmul.allow_tf32 = False
-torch.backends.cudnn.allow_tf32 = False
+#
+# OPT-IN (round 17 Q1): RPDE_TF32=1 turns it back on, for the measurement drivers only. The
+# default is unchanged -- OFF -- and stays that way until a batch-position test says the
+# dependence above is really a dependence on the batch SHAPE (i.e. that it disappears once
+# every batch is padded to the same size), measured on the members a package actually ships.
+_TF32 = os.environ.get("RPDE_TF32", "") not in ("", "0")
+torch.backends.cuda.matmul.allow_tf32 = _TF32
+torch.backends.cudnn.allow_tf32 = _TF32
+
+# `_body` below runs the members itself rather than going through `_fno.predict_fno`, so the
+# RPDE_AMP switch has to be honoured here too. Default None = the shipped fp32 path.
+_AMP = {"fp16": torch.float16, "half": torch.float16,
+        "bf16": torch.bfloat16}.get(os.environ.get("RPDE_AMP", "").lower())
 
 T_IN = T_OUT = 20
 H, W = 32, 64
@@ -171,7 +182,13 @@ class FrozenEnsemble:
         for m in self.models:
             nm = getattr(m, "n_members", 1)      # a fused group stands in for nm members
             total += nm
-            raw, logstd = m(pv)
+            if _AMP is None:
+                raw, logstd = m(pv)
+            else:
+                with torch.autocast("cuda", dtype=_AMP):
+                    raw, logstd = m(pv)
+                raw = raw.float()
+                logstd = None if logstd is None else logstd.float()
             yi = raw.reshape(1, T_OUT, 2, H, W).permute(0, 1, 3, 4, 2) * nm
             y = yi if y is None else y + yi
             if logstd is not None:

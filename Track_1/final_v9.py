@@ -2,49 +2,61 @@
 
 v9 does not publish the combination.  Rounds 9 and 10 inferred it from three and four board
 rounds respectively, where a five-weight linear model fits ANY three points exactly and the
-"fit" carried no evidence.  **This version uses all FOURTEEN scored rounds, POOLED ACROSS BOTH
-TRACKS** -- eleven on Track 1 (two of them a collaborator's) and three on Track 2.  Fourteen
-equations against five weights with sum(w) = 1 leaves 9 degrees of freedom, so the
-no-intercept linear form is TESTED rather than assumed -- and it survives, at a max residual
-of 0.044 against subscores quoted to six decimals.
+"fit" carried no evidence.  **This version uses all EIGHTEEN scored rounds, POOLED ACROSS BOTH
+TRACKS** -- thirteen on Track 1 (two of them a collaborator's) and five on Track 2.
+
+**ROUND 17 DROPPED THE `sum(w) = 1` CONSTRAINT, AND THAT IS THE WHOLE STORY OF THIS FILE.**
+Every fit from round 9 to round 16 imposed it.  Nothing ever measured it; a weighted mean was
+the natural guess, and no one removed the row to see what happened.  Removing it:
+
+    subscore   round-9 claim   FOURTEEN-rd   SIXTEEN-rd    EIGHTEEN-rd    LOO range
+                                (sum w = 1)   (sum w = 1)    **FREE**     (17-of-18 refits)
+    rel_l2         0.266          0.573         0.578        0.4754      0.4742 - 0.4771
+    tke            0.244          0.075         0.068        0.1017      0.1013 - 0.1019
+    mvpe           0.241          0.035         0.039        0.0936      0.0920 - 0.0944
+    time           0.069          0.088         0.083        0.0967      0.0961 - 0.0971
+    sps            0.181          0.229         0.231        0.2503      0.2499 - 0.2505
+    sum w          1.000          1.000         1.000        1.0177
+    max residual     --           0.044         0.047        **0.0023**
+
+**Twenty times tighter, with one fewer assumption.**  Leave-one-round-out predicts a held-out
+round's `final` to +-0.004 (rms 0.002), and the LOO weight spread above is a thousandth wide:
+no single round carries the fit.  This is an instrument now, not a regression.
+
+**And the one weight ever measured WITHOUT a fit picks the free form.**  R14 is R13's package
+plus a gate that never fired, so the two rounds differ in `time_score` alone: d time -0.136707,
+d final -0.013068 => **w_time = 0.0956**.  The free fit says **0.0967**; the constrained fit
+said 0.085.  The direct A/B is 12 % from the constrained value and 1 % from the free one.
+
+Why `sum(w)` lands at 1.018 rather than 1 is unknown -- a hidden sixth term, or a subscore
+transformed before the average.  The ~0.002 residual says whatever it is, it is small, and it
+cancels in DELTAS, which is how this module should be used.
+
+WHAT THIS RE-PRICES, and these are retractions, not refinements:
+
+* **`mvpe` is NOT worth nothing.**  0.094, not 0.035 -- 2.4x.  "Stop spending on mvpe" (round
+  12 §3) is WITHDRAWN.
+* **`tke` is NOT the cheapest error subscore.**  0.102, not 0.068 -- 1.5x, and above `time`.
+  Round 13's "the variance branch is retired" rested on the constrained weights and is
+  WITHDRAWN; the branch is cheap, not worthless.
+* At R17's levels a 10 % cut in one error is worth (direct subscore only, before SPS):
+  rel **+0.238** (was +0.289) / tke **+0.175** (was +0.117) / mvpe **+0.053** (was +0.022).
+  `rel_l2` + `sps` still carry ~0.73 of the total, so the strategy does not invert -- but the
+  three error subscores are much closer together than four rounds of planning assumed.
+* **ALPHA 0.60 WAS NEVER SETTLED.**  Round 13 read its +0.128 as evidence that `tke` is cheap.
+  Re-priced free, R13's ALPHA 0.90 -> 0.60 is rel +0.090, tke -0.120, mvpe +0.018, sps +0.013
+  = **+0.001, i.e. nothing**; the entire +0.128 was the 4 -> 1 invocation collapse (time
+  +0.127).  Two alphas tie on the board, so the optimum is somewhere between them and the
+  sweep has to be redone under these weights (plan_20260905.md Q1d).
 
 Pooling is licensed by round 13, which shipped the IDENTICAL package to both boards on the
-same day, and re-confirmed by round 15, which did it again with a different member set: three
-of the four error subscores agree to <=0.5 % of the error both times (R15 vs T2R2: rel
-+0.15 %, tke -0.46 %, sps -0.02 %; mvpe is the outlier at -4.17 %, as it was at +3.59 % in
-round 13 -- 36 scored probe points per window is the smallest effective sample of the five).
-One test set, one rule (ROADMAP 1.16).  The pooled residual (0.044) is no worse than the
-Track-1-only fit (0.035), which is the evidence that pooling did not paper over a second
-rule.
+same day, and re-confirmed four times since (R15/T2R2, R16/T2R3, and R17/T2R5): three of the
+four error subscores agree to <=0.5 % of the error every time, with mvpe the standing outlier
+(36 scored probe points per window is the smallest effective sample of the five).  One test
+set, one rule (ROADMAP 1.16).
 
     from final_v9 import predict
     mid, lo, hi = predict([rel, tke, mvpe, time, sps])
-
-What changed, and it matters:
-
-    subscore   round-9 claim   nine-round   twelve-round   FOURTEEN-round   admissible (14)
-    rel_l2         0.266           0.582         0.568           0.573        0.271 - 0.699
-    tke            0.244           0.097         0.085           0.075        0.000 - 0.153
-    mvpe           0.241           0.011         0.029           0.035        0.000 - 0.278
-    time           0.069           0.087         0.091           0.088        0.026 - 0.184
-    sps            0.181           0.224         0.226           0.229        0.206 - 0.252
-
-`rel_l2` is worth more than twice what round 9 priced it at, and `mvpe` is worth approximately
-nothing.  Round 10's "stop optimizing rel-L2" followed from the old weights and is withdrawn.
-Nothing has moved by more than its own interval across the nine-, twelve- and fourteen-round
-fits: `rel_l2` + `sps` have carried ~0.80 of the total weight in every one of them.
-
-Round 13 was submitted FOR this: ALPHA 0.90 -> 0.60 is a near-pure `rel_l2` <-> `tke` trade,
-which is the family's dominant undetermined axis.  It moved the board +0.128 where the
-eight-round weights predicted +0.019, and the only way to fit that is `tke` DOWN and `rel_l2`
-UP.  **`tke` is the cheapest error subscore on the board**, below `time` and a sixth of
-`rel_l2` -- so the composition (ALPHA) and the variance head, which trade exactly along this
-axis, were re-decided: see `Track_1/alpha_board.py`.
-
-**`time` is now MEASURED, not only fitted.**  R14 is R13's package plus a gate that never
-fired, so the two rounds differ in `time_score` alone: d time -0.136707, d final -0.013068
-=> **w_time = 0.0956**, against a fitted 0.091.  That is the first weight in this project read
-off a single-subscore A/B rather than a regression, and it agrees.
 
 **Still a fit, not a law.**  Report the range, not the midpoint alone, and work in DELTAS
 between rounds wherever possible -- a delta is insensitive to everything the level fit gets
@@ -57,8 +69,8 @@ import numpy as np
 
 # rel_l2, tke, mvpe, time, sps, final -- every scored round from the shared account on BOTH
 # tracks, read off Codabench (2026-08-31 for R6..T2R1, 2026-09-02 for R14/T2R2, 2026-09-03 for
-# R15/T2R3).  Kept in sync with Track_1/board_rounds.py: rows are ROUNDS then ROUNDS_T2, in
-# that order.
+# R15/T2R3, 2026-09-04 for R16/T2R4/R17/T2R5).  Kept in sync with Track_1/board_rounds.py:
+# rows are ROUNDS then ROUNDS_T2, in that order.
 BOARD = np.array([
     [94.4342,   78.1660,   93.7922,   91.6973,   36.9374,   79.733],      # R6   U-Net
     [94.5754,   78.5278,   93.9100,   91.7264,   37.4680,   79.984883],   # R7   FNO x3
@@ -76,35 +88,44 @@ BOARD = np.array([
     [94.755824, 78.174302, 93.739707, 92.508902, 41.160630, 81.019213],   # T2R3 w96 x8, fp16
     [94.764049, 78.433653, 94.030389, 92.699846, 41.259088, 81.119780],   # R16  = T2R3's members
     [94.661471, 78.413683, 93.727402, 90.154359, 41.600131, 80.879200],   # T2R4 U-FNO x3, 3 inv
+    [94.745531, 78.635462, 93.974234, 92.988361, 41.324574, 81.169843],   # R17  w96 L8 do45 x4
+    [94.727329, 78.357043, 93.692366, 92.427051, 41.191134, 81.019298],   # T2R5 = R17's members
 ])
 _X, _Y = BOARD[:, :5], BOARD[:, 5]
 NAMES = ["rel_l2", "tke", "mvpe", "time", "sps"]
 
 # The subscore matrix is atrociously conditioned -- every column sits in [36, 95] and moves by
-# ~1 across fourteen rounds -- so this needs a real solver, not a hand-rolled projected gradient
-# (which lands on max|residual| 0.072 against nnls's 0.044 and gets the weights wrong by a
-# factor of two).  scipy is in the `realpde` env; it is absent only from the SUBMISSION
-# container, and nothing shipped imports this module.
-from scipy.optimize import linprog, nnls  # noqa: E402
+# ~1 across eighteen rounds -- so this needs a real solver.  scipy is in the `realpde` env; it
+# is absent only from the SUBMISSION container, and nothing shipped imports this module.
+from scipy.optimize import linprog  # noqa: E402
 
-_A = np.vstack([_X, np.ones(5) * 100.0])       # constraint row scaled into the subscore range
-_b = np.concatenate([_Y, [100.0]])
-W0, _ = nnls(_A, _b)
+# THE FIT: plain least squares, no constraint row and no intercept (round 17).  The
+# `sum(w) = 1` row that rounds 9-16 carried was never tested and costs a factor of twenty in
+# residual -- see the docstring.  Non-negativity is not imposed either; it is CHECKED below,
+# and it holds, which is one more thing the constrained fit was buying on credit.
+W0, *_ = np.linalg.lstsq(_X, _Y, rcond=None)
 RESID = _X @ W0 - _Y
+if (W0 < 0).any():                       # never fires today; a future round could change that
+    raise AssertionError(f"free fit went negative: {dict(zip(NAMES, W0))}")
+if np.abs(RESID).max() > 0.0025:
+    raise AssertionError(
+        f"final_v9: the free fit no longer reproduces the board to 0.0025 "
+        f"(max |residual| {np.abs(RESID).max():.4f}).  A round was mistyped, or the scoring "
+        f"rule changed -- do not price anything until this is understood.")
 
-# Admissible family: {w >= 0, sum w = 1, |X w - Y| <= TOL}.  TOL is twice the best achievable
-# max-residual (floored), so a knife-edge best fit does not collapse the interval to a point.
-TOL = max(2.0 * float(np.abs(RESID).max()), 0.01)
+# Admissible family: {w >= 0, |X w - Y| <= TOL}.  NO equality row -- imposing sum(w) = 1 makes
+# this set EMPTY at any tolerance the free fit can reach, which is the cleanest statement of
+# why the constraint is gone.  TOL is twice the best achievable max-residual, floored at 0.005
+# so a knife-edge best fit does not collapse the interval to a point.
+TOL = max(2.0 * float(np.abs(RESID).max()), 0.005)
 _A_UB = np.vstack([_X, -_X])
 _B_UB = np.concatenate([_Y + TOL, -(_Y - TOL)])
-_A_EQ, _B_EQ = np.ones((1, 5)), np.array([1.0])
 _BOUNDS = [(0.0, None)] * 5
 
 
 def _extreme(v, sign):
     """min (sign=+1) or max (sign=-1) of w . v over the admissible family."""
-    r = linprog(sign * np.asarray(v, float), A_ub=_A_UB, b_ub=_B_UB,
-                A_eq=_A_EQ, b_eq=_B_EQ, bounds=_BOUNDS)
+    r = linprog(sign * np.asarray(v, float), A_ub=_A_UB, b_ub=_B_UB, bounds=_BOUNDS)
     return float(r.x @ np.asarray(v, float)) if r.success else float(W0 @ np.asarray(v, float))
 
 
@@ -127,7 +148,7 @@ def delta(subs_a, subs_b) -> tuple[float, float, float]:
     """(midpoint, min, max) of `final(b) - final(a)`.
 
     Prefer this to two `predict` calls whenever both packages are ours: the level fit's
-    common-mode error cancels in a difference, so a delta is the number the fourteen rounds
+    common-mode error cancels in a difference, so a delta is the number the eighteen rounds
     actually constrain.  Round 12's post-mortem turns on exactly this distinction.
     """
     d = np.asarray(subs_b, float) - np.asarray(subs_a, float)

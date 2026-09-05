@@ -187,14 +187,16 @@ def section_calib(B):
     print("  >>> metrics -- the residual is a property of the proxy, not of a board draw.")
     print("  >>> `mvpe` inverts sign between the proxy and the board in BOTH tracks (R12->R13:")
     print("  >>> proxy +2.34 %, board -3.17 %; T2R1->T2R2: proxy +1.25 %, board -7.79 %), which")
-    print("  >>> is why it is worth 0.035 and ignored.")
+    print("  >>> is why the proxy cannot be trusted on it. NOTE mvpe is worth 0.094 under the")
+    print("  >>> FREE weights -- 2.4x the constrained fit -- so it is no longer safe to IGNORE.")
 
     print("\n  Other calibrated constants, and where they came from:")
     print("    SPS element-tail stretch f   1.360 (T1) / 1.350 (T2)   calib_band13.py, round 13")
     print("      -- two boards returned two SPS values for one band, so this is measured twice")
     print("    w_time = 0.0956   R13 vs R14: identical error subscores, `time` alone moved")
-    print("      -- the only weight in the family read off a single-subscore A/B, and it agrees")
-    print("         with the twelve-round fit (0.091, admissible 0.038-0.169)")
+    print("      -- the only weight in the family read off a single-subscore A/B, and it PICKS")
+    print("         THE FIT: the free eighteen-round fit says 0.0967, the sum(w)=1 fit that")
+    print("         rounds 9-16 used said 0.085.  Round 17 dropped the constraint.")
     print("    board ms = 2.616 + 0.435*inv + 0.803*local_ms   rms 0.690 ms, 7 rounds")
     print("      -- residuals are ordered by DATE: the eval machine drifts, the intercept is not")
     print("         a constant. The one clean number is the same-day R12/R13 pair: an")
@@ -576,8 +578,9 @@ def html(B, Rn, w, path):
     T2 = [r for r in scored if r["track"] == 2]
     norm2 = [r["actual"]["final"] + (ref - r["actual"]["time"]) * w[3] for r in T2]
     gap = 81.76136 - best_any["actual"]["final"]
-    # Exchange rate, re-priced with the twelve-round weights: 10 % of error removed is worth
-    # ~0.948 `final` (Track_1/exchange_v9.py, round 9's instrument, round 13's weights).
+    # Exchange rate, re-priced with the FREE eighteen-round weights (round 17): 10 % of error
+    # removed is worth ~0.95 `final` (Track_1/exchange_v9.py, round 9's instrument).  The
+    # total barely moved when the constraint came off; its SPLIT across subscores did.
     gap_pct = gap / 0.0948
     best2 = max(T2, key=lambda r: r["actual"]["final"])
 
@@ -899,9 +902,10 @@ def html(B, Rn, w, path):
     import final_v9                       # the fit also carries two collaborator rounds that
     n_fit = len(final_v9.BOARD)           # were never staged here, so it is wider than board.jsonl
     o.append("<footer>"
-             + t(f"subscore weights, {n_fit} rounds pooled across both tracks, max residual "
+             + t(f"subscore weights, FREE fit (no sum-to-one constraint), {n_fit} rounds pooled "
+                 f"across both tracks, max residual "
                  f"{abs(final_v9.RESID).max():.3f}",
-                 f"子分数权重，两个赛道合并 "
+                 f"子分数权重，自由拟合（不强制权重和为 1），两个赛道合并 "
                  f"{n_fit} 轮拟合，最大残差 "
                  f"{abs(final_v9.RESID).max():.3f}")
              + " &nbsp;&mdash;&nbsp; "
