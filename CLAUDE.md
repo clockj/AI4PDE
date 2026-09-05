@@ -1955,3 +1955,51 @@ Two submissions. Plan for round 17: `Track_1/plan/plan_20260905.md`; instrument 
   81.019298; the list line is worth a second look.
 * 1 board ms at 4.15 ms = **−0.071 `final`**, unchanged. Latency is worth as much as any
   accuracy arm on the table.
+
+### Round 17 campaign (2026-09-05) — the FNO recipe is saturated except for sim; two pairs staged
+
+Ledger `Track_1/plan/campaign_20260905.md`; reading `Track_1/plan/plan_20260905.md` §7;
+roadmap §1.23. ~105 GPU-h of the new 200-h budget. **Nothing submitted**; staged in
+`../sub_candidates/README.md` §1 (the latency pair, R18/T2R6, predicted **81.192 / 81.078**)
+and §1b (the sim pair, R19/T2R7, predicted **81.340 / 81.163** nominal).
+
+* **Latency (Q1).** TF32 / fp16 / bf16: **+0.000** at 4 members — the forward runs at 6 % of
+  the A100's FLOPs, 279 launches per batch, GPU busy 63 %. **41 % of the shipped path is
+  member-independent host work**; the strided numpy output write (1.4 GB/s, single-threaded)
+  through `torch.copy_` is **bit-identical and −17 %** on Track 1 (`submission.py:HOST_WRITE =
+  "torch"`). On Track 2 the einsum's strided weight copy is 28 % of the batch-1 step; the
+  batched real 2×2-block matmul (`SPEC_PATH = "bmm"`, 2e-06 relative) is **−16.6 %**,
+  replicated ×3. **A baked constant overrides the `RPDE_*` env var** — two in-job env A/Bs
+  were no-ops; set the constant. **ALPHA stays 0.60** (0.55–0.70 plateau ±0.006 under the free
+  weights). **8 members ≈ 4 + a latency bill** at w96 L8.
+* **Capacity and data (Q2).** **The ladder ends at w96 L8**: L12 / w128 / modes (12,20) at do45
+  fit better and generalize the same (sps inside the seed floor on both splits), each costing
+  2–3 of the 4 fp16 members. `--phases 4` (400 ep and equal-step 100 ep) and `--aug-scale
+  0.25`: null at capacity. `do60`, `lr1e-4`: split; `lr4e-4`: floor. **The interior Re-band
+  k-fold reference for L8 (Q2d)** reads depth vs L4 as rel −1.21 % (z −8.2) / TKE −1.5 % / sps
+  +0.31 where the board returned rel **+0.37 % worse** / tke −1.19 % / sps +0.066 — the k-fold
+  overstates `rel_l2` at the 1 % level and has tke and sps right.
+* **SIM CO-TRAINING AT CAPACITY (Q2c → Q3) — the candidate.** `--sim --lam-sim 0.3 --sim-loss
+  full --sim-exclude-held` on the leak-free map (26 conditions on the freestream law). One
+  seed: sps +0.33 proxy / +0.12 full, all four errors down. **3-vs-3 (Q3a)**: proxy rel
+  −1.15 % / TKE −1.04 % / MVPE −1.06 % / sps **+0.33**; full −0.78 / −0.52 / −0.43 / **+0.15**;
+  every sim seed beats every control seed (p = 1/20); the single-seed margin retained in full
+  at ensemble size. **Interior k-fold (Q3b, paired, 2152 windows)**: rel −0.65 % (z −4.5),
+  **TKE +0.03 % null**, MVPE −1.00 %, sps 48.674 → **48.774 (+0.10)**; band 0 −15.5 % is the
+  retired regime. **Real, small, below the ~2 % transfer resolution.** Staged anyway (same
+  shape, members and latency as R17/T2R5; nowhere negative; no competing candidate; a board
+  null calibrates the k-fold). Honest bracket for the accuracy part **0…+0.14, centre ≈
+  +0.05**; after R18/T2R6 its `time` delta is ≈ 0 — do not count the fast paths twice.
+  Members `unet/fno_all_w96L8do45sim_s1..4.pth` (weights, never evidence); twins
+  `fno_r17_sim{,_s2,_s3}.pth`; band `band_r17_simx4.npz` shared by both arms.
+* **Overnight (q3d/e/f/g)**: `lam_sim` 0.1 / 1.0, sim + do30, sim + L12, sim + w128,
+  `--sim-stride 2`, 600 epochs, and **`--sim-map std|meanstd`** (per-pixel σ field and
+  optionally the time-mean field from the real twin, gain clamped to [g/3, 3g], 21–33 % of
+  live pixels at the clamp; scalar mode bit-identical to the old map, same cache tag). A pass
+  goes into the next k-fold, not this package.
+* **Method.** HDF5 advisory-lock race between co-scheduled jobs → `HDF5_USE_FILE_LOCKING=FALSE`
+  in `jobs/common.sh`. **Running jobs re-import the working tree per arm** → edit shared
+  modules in a copy, install with an atomic `mv` after `ast.parse`, keep the default path
+  bit-identical. Timing inside a job that shares a node with training is CONTENDED (gate
+  1.412 A100 ms ±3 %); record ratios only. `fold`-wise domain maps are rebuilt per k-fold
+  fold so each is blind to its own held-out set (fall-back count = 18 + held-out count).

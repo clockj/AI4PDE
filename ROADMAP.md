@@ -6,7 +6,8 @@ weights and turned the two boards into one instrument; revised 2026-09-02 after 
 PAIR, which answered where the hidden set lives and put dropout on the board; revised
 2026-09-04 after the round-16 pair, which took Track 1 to the account's best and closed the
 first non-FNO family behind a k-fold gate; **revised 2026-09-04 22:06 after the round-17 pair,
-which read the scoring rule correctly for the first time.** This is the
+which read the scoring rule correctly for the first time; **revised 2026-09-05 after the
+round-17 campaign, which saturated the FNO recipe everywhere except sim and staged two pairs (§1.23)**. This is the
 handoff document: it records what the leaderboard actually says, what is closed, and what to do
 next. Read it with `CLAUDE.md` (contracts, measurements, per-round detail),
 `Track_1/board_rounds.py` (every number in Part 1 is reproducible from it) and
@@ -701,6 +702,77 @@ Detail: CLAUDE.md "Round 17 BOARD RESULT"; plan `Track_1/plan/plan_20260905.md`.
   round out, the other 17 predict 81.02032 — **0.8σ** from 81.019298 and **35σ** from 80.97843.
   Ledgered as 81.019298.
 
+
+### 1.23 Round 17 campaign (2026-09-05): the recipe is saturated except for sim; the latency pair; the sim pair
+
+~105 GPU-h of the new 200-h budget, one day, ledger `Track_1/plan/campaign_20260905.md`,
+reading `Track_1/plan/plan_20260905.md` §7. Two packages staged, neither submitted:
+
+| slot | archives | change | predicted |
+|---|---|---|---|
+| **next** (R18 / T2R6) | `track1_r17_L8do45x4_hostw_a060.zip` / `track2_r17_L8do45x4_bmm_a060.zip` | R17's members and band bit-for-bit; T1 `HOST_WRITE="torch"`, T2 `SPEC_PATH="bmm"` — **only `time` moves** | 81.192 / 81.078 |
+| **the one after** (R19 / T2R7) | `track1_r17_simx4_hostw_a060.zip` / `track2_r17_simx4_bmm_a060.zip` | 4 all-data w96 L8 do45 members **co-trained on mapped sim** (λ 0.3), band refit `band_r17_simx4.npz` shared by both arms | 81.340 / 81.163 nominal; accuracy part +0.14 nominal, **≈+0.05 honest** |
+
+* **Latency: bet 1 died, a better one replaced it.** TF32 / fp16 / bf16 buy **+0.000** at 4
+  members — the forward runs at **6 % of the A100's FLOPs**, GPU busy 63 %, 279 launches per
+  batch. **41 % of the shipped path is member-independent host work**, its largest item a
+  strided numpy output write at 1.4 GB/s single-threaded; through `torch.copy_` it runs at
+  29–33 GB/s, **bit-identical, −17 % at 4 members** (Track 1). On Track 2 the complex einsum's
+  strided *weight* copy is 28 % of the batch-1 step; a batched real 2×2-block matmul
+  (`SPEC_PATH="bmm"`, 2e-06 relative) is **−16.6 % on the graph step**, replicated three times
+  (Q1g −16.6 %, Q1h ×0.834, Q3build ×0.828). Both are baked into `submission.py` as constants
+  next to `ALPHA`. **Trap, twice**: a baked constant overrides the `RPDE_*` environment
+  variable at import, so an in-job env-var A/B on a built archive is a no-op (2.732 → 2.731,
+  2.745 → 2.735) — measurement drivers must set the constant. Rejected: pinned/async D2H,
+  contiguous output buffer, `jit` tail, wider `_pick_batch`. `pkg_identity.py` gates the pair:
+  T1 **0.000e+00**, T2 1.8e-06 on 336 windows.
+* **ALPHA stays 0.60**: 0.55–0.70 is a ±0.006 plateau under the free weights. **8 members ≈ 4
+  members + a latency bill** at w96 L8 (−0.015 / −0.008 fp32). **The capacity ladder ENDS at
+  w96 L8**: L12 / w128 / modes (12,20) at do45 fit better (training field 0.033–0.034 vs
+  0.038) and generalize the same — sps inside the seed floor on both splits — and each costs
+  2–3 of the 4 fp16 members. **The real-data axis is closed at capacity**: `--phases 4` (400
+  ep and equal-step 100 ep) and `--aug-scale 0.25` are null; `do60` and `lr1e-4` split the
+  splits; `lr4e-4` sits at the floor.
+* **The interior Re-band k-fold reference for L8 exists (Q2d)** and calibrates the instrument:
+  depth vs L4 read rel **−1.21 %** (z −8.2), TKE −1.5 %, sps +0.31 (48.366 → 48.674) where the
+  board returned rel **+0.37 % worse**, tke −1.19 %, sps +0.066 / +0.031. **The k-fold
+  overstates `rel_l2` at the 1 % level**; it has the sign of tke and sps right.
+* **SIM CO-TRAINING AT CAPACITY IS THE ROUND'S CANDIDATE, and it survived every local gate.**
+  `--sim --lam-sim 0.3 --sim-loss full --sim-exclude-held` on the leak-free domain map
+  (26 conditions on the freestream law). One seed (Q2c): sps **+0.33 proxy / +0.12 full**, all
+  four errors down on both splits — the only Q2 arm to clear the drop rule. Replicated (Q3a):
+  seeds 2–3 reproduce seed 1's `var` to five figures; **every sim seed beats every control
+  seed on sps on both splits** (p = 1/20). **3-vs-3, band refit per set**: proxy rel 0.1039 →
+  0.1027 (−1.15 %), TKE −1.04 %, MVPE −1.06 %, sps 37.24 → **37.57 (+0.33)**; full rel −0.78 %,
+  TKE −0.52 %, MVPE −0.43 %, sps 43.98 → **44.13 (+0.15)** — the single-seed margin retained in
+  full at ensemble size, which no in-distribution arm since round 10 had managed (§1.15).
+  **Interior Re-band k-fold (Q3b, paired vs Q2d, 2152 windows)**: rel −0.65 % (z −4.49),
+  **TKE +0.03 % (null)**, MVPE −1.00 %, sps 48.674 → **48.774 (+0.10)**, wfinal +0.038; band 0
+  reads −15.5 % / −10.7 % and is the retired extrapolation regime. **Real, small, below the
+  ~2 % transfer resolution on every error; TKE null in the interior.** Staged anyway: same
+  shape, member count and latency as R17/T2R5, non-negative on every local instrument, no
+  competing candidate for the slot, and a null on the board is the calibration point the
+  k-fold needs at this effect size. Honest bracket: rel and tke within ±0.5 %, mvpe slightly
+  better, sps 0…+0.36, accuracy part 0…+0.14, centre ≈ +0.05. **Do not count the fast paths
+  twice**: after R18/T2R6 the sim pair's `time` delta is ≈ 0.
+* **Overnight screens on the sim recipe, one seed each, bit-matched to `fno_r17_sim.pth`**
+  (q3d/e/f/g, ≈28 GPU-h): `lam_sim` 0.1 / 1.0 and sim + do30 (dose-response = mechanism);
+  sim + L12 and sim + w128 (does data re-open capacity?); `--sim-stride 2` and 600 epochs
+  (volume / steps); and a **per-pixel domain map** `--sim-map std|meanstd` (twin's per-pixel
+  σ field, optionally the twin's time-mean field, gain clamped to [g/3, 3g] with 21–33 % of
+  live pixels at the clamp — the guard against round 14's `--sim-loss shape` failure). Scalar
+  mode and its cache tag verified bit-identical to the pre-round-17 map. Any pass goes into
+  the NEXT k-fold, not this package.
+* **Method, earned this round.** (i) An HDF5 advisory-lock race between co-scheduled jobs on
+  one node killed an arm; `HDF5_USE_FILE_LOCKING=FALSE` in `jobs/common.sh`, and Slurm
+  snapshots scripts at submit. (ii) **Running jobs re-import the working tree per arm/fold/
+  seed**: shared modules are edited in a copy and installed with an atomic `mv` after
+  `ast.parse`, with the default path and its cache tag bit-identical. (iii) A timing inside
+  a job that shares the node with training is CONTENDED (gate: the R17 shape must reproduce
+  1.412 A100 ms ±3 %); only ratios to an in-job baseline are recorded. (iv) The Q1h build
+  job's identity and prediction stages crashed on a missing attribute and a repo-relative
+  path after a `cd`; both were re-run on CPU and the numbers stand, and `q3build` fixes the
+  paths.
 
 ## Part 2 — Closed. Do not re-propose without new evidence.
 

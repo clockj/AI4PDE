@@ -475,6 +475,18 @@ def main() -> None:
                          "statistic in sim_map.py rules out and which the round-10 oracle "
                          "prices as the largest reachable component under the nine-round "
                          "weights.")
+    ap.add_argument("--sim-map", choices=["scalar", "std", "meanstd"], default="scalar",
+                    help="how much of the real twin's STATIC statistics the domain map copies "
+                         "onto sim (simreal.load_sim_mapped). 'scalar' is the shipped map: sim "
+                         "keeps its own time-mean field and its own per-pixel std shape, and "
+                         "only their magnitudes are matched. 'std' replaces the fluctuation "
+                         "amplitude per PIXEL, 'meanstd' also replaces the time-mean field -- "
+                         "the bet being that the more of sim's static statistics come from "
+                         "real, the more the sim term teaches only the dynamics, which is the "
+                         "one thing no statistic in sim_map.py rules out. The per-pixel gain "
+                         "is clamped to a factor of 3 either side of the scalar one, because "
+                         "an unclamped sigma_twin/sigma_sim is the round-14 --sim-loss shape "
+                         "failure. Conditions with no usable twin keep the scalar map.")
     ap.add_argument("--sim-stride", type=int, default=5)
     ap.add_argument("--sim-batch", type=int, default=0, help="0 = same as --batch")
     ap.add_argument("--sim-frames", type=int, default=0, help="0 = all 1000")
@@ -562,12 +574,12 @@ def main() -> None:
         sim_trajs = load_sim_mapped(args.sim, args.data, phases=PHASES_ALL[:args.phases],
                                     frames=args.sim_frames,
                                     exclude=excl if args.sim_exclude_held else None,
-                                    real_exclude=excl)
+                                    real_exclude=excl, mode=args.sim_map)
         sim_idx = window_index(sim_trajs, args.sim_stride)
         sim_trajs_t = [torch.from_numpy(d) for d in sim_trajs]
         sim_idx_t = torch.from_numpy(sim_idx)
         print(f"sim: {len(sim_idx)} windows at stride {args.sim_stride}, "
-              f"lam_sim {args.lam_sim} loss '{args.sim_loss}'", flush=True)
+              f"lam_sim {args.lam_sim} loss '{args.sim_loss}' map '{args.sim_map}'", flush=True)
 
     stats = NORM_STATS[args.norm]
     mean_v = torch.from_numpy(stats[0]).to(dev)
