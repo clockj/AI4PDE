@@ -35,6 +35,7 @@ R_4060 = 1.850
 BOARD_LOC = 0.803
 FINAL_PER_BOARD_MS = -0.070
 REF_MS = 1.412          # lat_fast17 job 7161154, fp32, 4xL8 do45, batch 112
+T_OUT_, H_, W_ = 20, 32, 64
 
 
 def band_of(path):
@@ -135,6 +136,121 @@ def phases(models, x, band, ref, p, alpha, batch, rep=5):
     return {k: v / n * 1e3 for k, v in out.items()}
 
 
+def host_probe(x, band, ref, p, batch, rep=5):
+    """The MEMBER-INDEPENDENT half, component by component.
+
+    `lat_r15`'s two member counts give t = 0.573 + 0.2098*K ms/window, so 0.573 -- 41 % of the
+    shipped path -- is host work that no model change touches. This says what it is made of and
+    what the three obvious repairs are worth:
+
+      * a PINNED, asynchronous D2H instead of `.cpu()` on pageable memory (and, since the copy
+        can then overlap the next batch's forward, whether there is anything left to overlap);
+      * writing a CONTIGUOUS (N, 20, 32, 64, 2) buffer instead of the strided
+        `dst[i:i+b, ..., :2] = ...`, with the zero-filled 3-channel array assembled once at the
+        end in a single pass;
+      * the band stage, which round 11 rewrote to run through torch (numpy's ufuncs are
+        single-threaded and this is bandwidth-bound) -- re-checked at THIS N and this size.
+
+    Everything is wrapped by the caller in try/except: this is a diagnostic and must never be
+    the reason the profiling job returns nothing.
+    """
+    n, B = len(x), batch
+    cuda = torch.cuda.is_available()
+    dev = "cuda" if cuda else "cpu"
+    sync = torch.cuda.synchronize if cuda else (lambda: None)
+    y = torch.randn(B, T_OUT_, H_, W_, 2, device=dev)
+    mb = y.numel() * 4 / 1e6
+    dst3 = np.zeros((n, T_OUT_, H_, W_, 3), dtype=np.float32)
+    buf2 = np.empty((n, T_OUT_, H_, W_, 2), dtype=np.float32)
+    pin = torch.empty(B, T_OUT_, H_, W_, 2, dtype=torch.float32, pin_memory=cuda)
+
+    def t(fn, r=rep):
+        fn()
+        sync()
+        ts = []
+        for _ in range(r):
+            t0 = time.perf_counter()
+            fn()
+            sync()
+            ts.append(time.perf_counter() - t0)
+        return float(np.median(ts))
+
+    def d2h_pinned():
+        pin.copy_(y, non_blocking=True)
+        sync()
+        return pin.numpy()
+
+    h = y.cpu().numpy()
+    t_dst3, t_buf2, t_h = (torch.from_numpy(a) for a in (dst3, buf2, h))
+    nbatch = int(np.ceil(n / B))
+    rows = [
+        ("D2H .cpu() pageable  (per batch)", t(lambda: y.cpu().numpy()), mb, nbatch),
+        ("D2H pinned + copy_   (per batch)", t(d2h_pinned), mb, nbatch),
+        ("host write STRIDED dst[...,:2] (per batch)",
+         t(lambda: dst3.__setitem__((slice(0, B), Ellipsis, slice(0, 2)), h)), mb, nbatch),
+        ("host write CONTIGUOUS buf2[i:i+b] (per batch)",
+         t(lambda: buf2.__setitem__(slice(0, B), h)), mb, nbatch),
+        ("np.zeros((N,20,32,64,3)) once",
+         t(lambda: np.zeros((n, T_OUT_, H_, W_, 3), dtype=np.float32)),
+         n * T_OUT_ * H_ * W_ * 3 * 4 / 1e6, 1),
+        ("final assembly dst3[...,:2] = buf2 once (numpy)",
+         t(lambda: dst3.__setitem__((Ellipsis, slice(0, 2)), buf2)),
+         n * T_OUT_ * H_ * W_ * 2 * 4 / 1e6, 1),
+        # Round 11's lesson, applied to the OUTPUT write rather than the band: numpy's strided
+        # assignment is single-threaded, torch's `copy_` is not, and this is bandwidth-bound.
+        # If this row is fast, the contiguous-buffer rewrite is unnecessary -- the strided
+        # write was never the problem, the single thread was.
+        ("host write STRIDED via torch copy_  (per batch)",
+         t(lambda: t_dst3[:B, ..., :2].copy_(t_h)), mb, nbatch),
+        ("final assembly via torch copy_ once",
+         t(lambda: t_dst3[..., :2].copy_(t_buf2)),
+         n * T_OUT_ * H_ * W_ * 2 * 4 / 1e6, 1),
+    ]
+
+    sig = np.random.rand(n, 1, H_, W_, 2).astype(np.float32) * 0.01 + 0.005
+
+    def band_stage():
+        r3 = np.zeros((n, 1, H_, W_, 3), dtype=np.float32)
+        np.power(np.clip(sig / ref[..., :2], 0.3, 3.0), np.float32(p), out=r3[..., :2])
+        lo, hi = np.empty_like(dst3), np.empty_like(dst3)
+        tp, tl, th = (torch.from_numpy(a) for a in (dst3, lo, hi))
+        torch.mul(torch.from_numpy(band), torch.from_numpy(r3), out=th)
+        torch.sub(tp, th, out=tl)
+        torch.add(tp, th, out=th)
+
+    rows.append(("band stage (torch-threaded, round 11) once", t(band_stage),
+                 n * T_OUT_ * H_ * W_ * 3 * 4 * 3 / 1e6, 1))
+
+    print(f"\n--- host-side components (batch {B}, N = {n}, {nbatch} batches) ---")
+    print(f"{'component':<46} {'ms':>8} {'MB':>8} {'GB/s':>7} {'ms/window total':>16}")
+    for name, sec, mbytes, count in rows:
+        gbs = mbytes / 1e3 / sec if sec > 0 else float("nan")
+        print(f"{name:<46} {sec*1e3:>8.3f} {mbytes:>8.1f} {gbs:>7.1f} "
+              f"{sec * count / n * 1e3:>16.4f}")
+    d_pag, d_pin = rows[0][1], rows[1][1]
+    w_str, w_con, asm_np, w_torch = rows[2][1], rows[3][1], rows[5][1], rows[6][1]
+    optA = (w_str - w_con) * nbatch - asm_np           # contiguous buffer + one assembly
+    optB = (w_str - w_torch) * nbatch                  # same strided write, threaded
+    asm_t = rows[7][1]
+    optC = (w_str * nbatch) - (w_con * nbatch + asm_t)   # contiguous buffer + THREADED assembly
+
+    def fin(sec):
+        """`final` gained by SAVING `sec` of A100 wall time over the whole N."""
+        return -sec / n * 1e3 * R_4060 * BOARD_LOC * FINAL_PER_BOARD_MS
+    print(f"\n  pinned D2H saves {(d_pag-d_pin)*nbatch/n*1e3:+.4f} A100 ms/window "
+          f"({fin((d_pag-d_pin)*nbatch):+.4f} `final`)")
+    print(f"  option A, contiguous (N,...,2) buffer + one 3-channel assembly: "
+          f"{optA/n*1e3:+.4f} ms/window ({fin(optA):+.4f} `final`) -- the assembly is ITSELF a "
+          f"strided write of the same bytes, so it gives most of it back")
+    print(f"  option B, the SAME strided write through torch (threaded): "
+          f"{optB/n*1e3:+.4f} ms/window ({fin(optB):+.4f} `final`) -- no buffer, no assembly")
+    print(f"  option C, contiguous buffer + THREADED assembly: "
+          f"{optC/n*1e3:+.4f} ms/window ({fin(optC):+.4f} `final`) -- both repairs together")
+    print(f"  overlap ceiling: an async D2H can hide at most the pinned copy itself, "
+          f"{d_pin*nbatch/n*1e3:.4f} ms/window, and only if the next batch's forward is "
+          f"longer than it.")
+
+
 def do_profile(fn, label, warm=3):
     from torch.profiler import ProfilerActivity, profile
     for _ in range(warm):
@@ -188,7 +304,7 @@ def main():
               f" ================", flush=True)
 
         # --- CONTENTION GATE -------------------------------------------------------------
-        _fno._SPEC, _fno._TAIL = "", ""
+        _fno._SPEC, _fno._TAIL, _fno._HOSTW = "", "", ""
         base112 = timeit(lambda: full_step(models, x, band, ref, p, a.alpha, 112), a.rep)
         ms112 = base112 / len(x) * 1e3
         ok = abs(ms112 - REF_MS) / REF_MS <= 0.03
@@ -217,6 +333,11 @@ def main():
         print(f"  {'TOTAL':<10} {tot:7.4f}   (member-independent = everything but `forward`: "
               f"{tot - ph['forward']:.4f})", flush=True)
 
+        try:
+            host_probe(x, band, ref, p, a.batch, a.rep)
+        except Exception as e:                      # never lose the rest of the job to this
+            print(f"  host_probe FAILED: {type(e).__name__}: {e}", flush=True)
+
         if a.profile:
             do_profile(lambda: full_step(models, x[:a.batch], band, ref, p, a.alpha, a.batch),
                        f"T1 predict_fno, one batch of {a.batch}")
@@ -224,12 +345,14 @@ def main():
         if a.variants:
             print(f"\n--- rewrite variants (batch {a.batch} and 112) ---")
             ref_out = None
-            print(f"{'variant':<18} {'ms/win@'+str(a.batch):>12} {'ms/win@112':>11} "
+            print(f"{'spec/tail/hostwrite':<24} {'ms/win@'+str(a.batch):>12} "
+                  f"{'ms/win@112':>11} "
                   f"{'max|d| vs shipped':>18} {'d board ms':>11} {'d final':>8}")
             base_b, base_112 = None, None
-            for vs, vt in (("", ""), ("bmm", ""), ("", "jit"), ("bmm", "jit")):
-                _fno._SPEC, _fno._TAIL = vs, vt
-                lab = f"spec={vs or 'einsum'},tail={vt or 'eager'}"
+            for vs, vt, vh in (("", "", ""), ("bmm", "", ""), ("", "jit", ""),
+                               ("", "", "torch"), ("bmm", "jit", "torch")):
+                _fno._SPEC, _fno._TAIL, _fno._HOSTW = vs, vt, vh
+                lab = f"{vs or 'einsum'}/{vt or 'eager'}/{vh or 'numpy'}"
                 try:
                     tb = timeit(lambda: full_step(models, x, band, ref, p, a.alpha, a.batch),
                                 a.rep) / len(x) * 1e3
@@ -237,16 +360,16 @@ def main():
                                   a.rep) / len(x) * 1e3
                     o = full_step(models, x, band, ref, p, a.alpha, a.batch)
                 except RuntimeError as e:
-                    print(f"{lab:<18} FAILED {type(e).__name__}: {str(e)[:60]}")
+                    print(f"{lab:<24} FAILED {type(e).__name__}: {str(e)[:60]}")
                     torch.cuda.empty_cache()
                     continue
                 if ref_out is None:
                     ref_out, base_b, base_112 = o.copy(), tb, t112
                 d = float(np.abs(o - ref_out).max())
                 dms = (t112 - base_112) * R_4060 * BOARD_LOC
-                print(f"{lab:<18} {tb:>12.3f} {t112:>11.3f} {d:>18.2e} {dms:>+11.3f} "
+                print(f"{lab:<24} {tb:>12.3f} {t112:>11.3f} {d:>18.2e} {dms:>+11.3f} "
                       f"{dms*FINAL_PER_BOARD_MS:>+8.3f}", flush=True)
-            _fno._SPEC, _fno._TAIL = "", ""
+            _fno._SPEC, _fno._TAIL, _fno._HOSTW = "", "", ""
 
         del models
         torch.cuda.empty_cache()
