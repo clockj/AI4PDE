@@ -807,6 +807,39 @@ def dequant8(sd: dict) -> dict:
     return sd
 
 
+def pack_state_dict(sd: dict, fp16: bool = False, int8: bool = False,
+                    min_numel: int = 4096) -> dict:
+    """The INVERSE of dequant8, and the only place either packing is implemented.
+
+    build_zip.py (Track 1) and Track_2/build_t2.py both write the archive's checkpoints, and
+    before this existed each had its own copy of the fp16 cast.  A second copy of the int8
+    format -- which carries a companion key per tensor and a scale granularity that decides
+    whether the package is shippable -- is exactly the kind of duplication that drifts, so both
+    callers come here and the suffix contract lives in one file with its reader.
+
+    int8 quantizes every floating tensor of at least `min_numel` elements and at least 2 dims,
+    symmetric, with an fp16 scale per (out, in) channel pair; everything else falls back to
+    fp16.  Measured over 96 val_unseen windows (quant8.py) at 29.0 MB/member against fp16's
+    56.9: rel-L2 8.3e-4 of the field for a single member, 3.9e-4 for an eight-member ensemble
+    (the quantization noise is independent across members and averages down), against a model
+    rel-L2 of 0.077.
+    """
+    if not (fp16 or int8):
+        return sd
+    out = {}
+    for k, v in sd.items():
+        if not v.is_floating_point():
+            out[k] = v
+        elif int8 and v.numel() >= min_numel and v.dim() >= 2:
+            red = tuple(range(2, v.dim()))
+            sc = v.abs().amax(dim=red, keepdim=True).clamp(min=1e-12).div(127.0).half()
+            out[k] = torch.clamp(torch.round(v / sc.float()), -127, 127).to(torch.int8)
+            out[k + _Q8_SUFFIX] = sc
+        else:
+            out[k] = v.half()
+    return out
+
+
 def load_any(path: str, device: str):
     """Load an FNO **or** a U-Net member, dispatching on the checkpoint's own `arch` field.
 

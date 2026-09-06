@@ -66,12 +66,14 @@ def main() -> None:
                          "load time, and it is a no-op on any blob that does not carry the "
                          "companion scale keys. Implies --fp16 for the tensors it leaves alone.")
     args = ap.parse_args()
-    if args.int8:
-        import importlib.util as _ilu
-        _sp = _ilu.spec_from_file_location("_fno_pack", os.path.join(HERE, "_fno.py"))
-        _m = _ilu.module_from_spec(_sp); _sp.loader.exec_module(_m)
-        assert _m._Q8_SUFFIX == Q8_SUFFIX, (
-            f"packer/unpacker suffix drift: {Q8_SUFFIX!r} here, {_m._Q8_SUFFIX!r} in _fno.py")
+    # The packer and the unpacker are the same file, loaded by path so this script keeps
+    # working from any cwd and so the int8 format cannot drift between the two.
+    import importlib.util as _ilu
+    _sp = _ilu.spec_from_file_location("_fno_pack", os.path.join(HERE, "_fno.py"))
+    _m = _ilu.module_from_spec(_sp); _sp.loader.exec_module(_m)
+    assert _m._Q8_SUFFIX == Q8_SUFFIX, (
+        f"packer/unpacker suffix drift: {Q8_SUFFIX!r} here, {_m._Q8_SUFFIX!r} in _fno.py")
+    _pack = _m.pack_state_dict
 
     names = ["fno.pth"] + [f"fno_{i}.pth" for i in range(2, len(args.ckpt) + 1)]
     files = [
@@ -95,23 +97,8 @@ def main() -> None:
         if (args.fp16 or args.int8) and name in ckpt_names:
             import torch
             blob = torch.load(src, map_location="cpu")
-            sd = {}
-            for k, v in blob["model_state_dict"].items():
-                if not v.is_floating_point():
-                    sd[k] = v
-                elif args.int8 and v.numel() >= 4096 and v.dim() >= 2:
-                    # Symmetric int8 with a scale per (out, in) channel pair. The spectral
-                    # weights are (win, wout, my, mx, 2) real tensors and are ~97 % of the
-                    # archive; the scale then costs 2 bytes per 2*my*mx values, which is the
-                    # 0.6 MB/member difference between this and a per-tensor scale.
-                    red = tuple(range(2, v.dim()))
-                    sc_ = v.abs().amax(dim=red, keepdim=True).clamp(min=1e-12).div(127.0)
-                    sc_ = sc_.half()
-                    sd[k] = torch.clamp(torch.round(v / sc_.float()), -127, 127).to(torch.int8)
-                    sd[k + Q8_SUFFIX] = sc_
-                else:
-                    sd[k] = v.half()
-            blob["model_state_dict"] = sd
+            blob["model_state_dict"] = _pack(blob["model_state_dict"],
+                                             fp16=args.fp16 or args.int8, int8=args.int8)
             torch.save(blob, os.path.join(STAGE, name))
         else:
             shutil.copy2(src, os.path.join(STAGE, name))

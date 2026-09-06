@@ -31,6 +31,14 @@ def main():
     ap.add_argument("--band", default=os.path.join(HERE, "submit", "band8.npz"))
     ap.add_argument("--stage", default=os.path.join(HERE, "_pkg"))
     ap.add_argument("--out", default=os.path.join(HERE, "submission_t2.zip"))
+    ap.add_argument("--int8", action="store_true",
+                    help="int8 the large tensors with an fp16 scale per (out, in) channel pair "
+                         "and fp16 the rest, via _fno.pack_state_dict -- the same packer "
+                         "Track_1/submit_fno/build_zip.py --int8 uses, and the inverse of "
+                         "_fno.dequant8. A width-96 8-layer member is 108.5 MB fp32 / 54.3 fp16 "
+                         "/ 29.0 int8, so EIGHT are 232 MB against the 256 MB cap where eight "
+                         "fp16 would be 434. Verified end to end by "
+                         "Track_1/verify/quant_identity.py.")
     ap.add_argument("--fp16", action="store_true",
                     help="store the members' floating tensors as float16, exactly as "
                          "Track_1/submit_fno/build_zip.py --fp16 does. Needed for width-96 "
@@ -52,16 +60,24 @@ def main():
              (a.band, "band.npz")] + list(zip(a.ckpt, names))
     if os.path.isdir(a.stage):
         shutil.rmtree(a.stage)
+    # Same packer as Track 1's build_zip.py, loaded by path from the submission's own _fno.py
+    # so the int8 format has exactly one implementation and exactly one reader.
+    import importlib.util as _ilu
+    _sp = _ilu.spec_from_file_location(
+        "_fno_pack", os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                  "..", "Track_1", "submit_fno", "_fno.py"))
+    _m = _ilu.module_from_spec(_sp); _sp.loader.exec_module(_m)
+    _pack = _m.pack_state_dict
     os.makedirs(a.stage)
     for src, name in files:
         src = os.path.realpath(src)
         if not os.path.exists(src):
             raise SystemExit(f"missing {src}")
-        if a.fp16 and name.startswith("fno") and name.endswith(".pth"):
+        if (a.fp16 or a.int8) and name.startswith("fno") and name.endswith(".pth"):
             import torch
             blob = torch.load(src, map_location="cpu")
-            blob["model_state_dict"] = {k: (v.half() if v.is_floating_point() else v)
-                                        for k, v in blob["model_state_dict"].items()}
+            blob["model_state_dict"] = _pack(blob["model_state_dict"],
+                                             fp16=a.fp16 or a.int8, int8=a.int8)
             torch.save(blob, os.path.join(a.stage, name))
         else:
             shutil.copy2(src, os.path.join(a.stage, name))

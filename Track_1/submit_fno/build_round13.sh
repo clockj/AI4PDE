@@ -104,6 +104,14 @@ grep -H "^SPEC_PATH = \|^HOST_WRITE = " \
 # of 0.078, which adds in quadrature to 2e-6 of the error. The strict gate below re-scores the
 # built archive through the official scoring.py, so a real degradation cannot slip past.
 FP16=""; [ "${RPDE_FP16:-0}" = "1" ] && FP16="--fp16"
+# RPDE_INT8=1 halves the archive AGAIN, via _fno.pack_state_dict (scales per (out, in) channel
+# pair) and _fno.dequant8. A width-96 8-LAYER member is 54.3 MB fp16, so four fill 217 MB of
+# the cap and eight need 434; at 29.0 MB int8 eight are 232. R18/T2R6 measured the board's
+# latency slope at 0.25 / -0.04 board ms per local ms against the round-13 model's 0.803, which
+# is what makes the eighth member worth having: the bill for doubling is ~0.037 `final` on
+# Track 1 and ~0 on Track 2, against +0.086 of accuracy. Cost of the packing itself: rel-L2
+# 3.9e-4 of an eight-member field, verified archive-against-source by verify/quant_identity.py.
+[ "${RPDE_INT8:-0}" = "1" ] && FP16="--int8"
 echo "=== 3/5  Track 1: build + strict gate ==================================="
 $PY Track_1/submit_fno/validate_strict.py --band Track_2/submit/band8.npz $FP16 \
     --stage Track_1/submit_fno/_package8 --out Track_1/submit_fno/submission8.zip --ckpt $A
