@@ -2004,8 +2004,11 @@ and §1b (the sim pair, R19/T2R7, predicted **81.340 / 81.163** nominal).
   for the round's lowest TKE (−1.1 %); at 2–3 fp16 members it cannot pay. **Sim is a
   STRUCTURED PERTURBATION — a regularizer, not data** — and the shipped recipe (λ 0.3, scalar
   map, stride 5, 400 ep, do45, L8) sits on a plateau whose height is Q3a's +0.33 / +0.15 sps.
-  Follow-ups on that reading: q3h (mixed sim + no-sim ensembles, eval) and q3i (the same
-  perturbation from REAL windows at frame stride 2 / 3, `--aux-fstride`, alone and with sim).
+  q3h: mixed sim + no-sim ensembles buy nothing (6 = 3 on the proxy; a no-sim member is a
+  worse member, not a diverse one). **q3i: a structured perturbation built from REAL data
+  (frame-stride 2 / 3 windows, `--aux-fstride`) is null alone and adds nothing to sim** —
+  sim's value is its CONTENT, not the perturbation. q3j (training-only pressure head on sim
+  windows, `--sim-p-head`, stripped at save) tests the last unused piece of that content.
 * **Method.** HDF5 advisory-lock race between co-scheduled jobs → `HDF5_USE_FILE_LOCKING=FALSE`
   in `jobs/common.sh`. **Running jobs re-import the working tree per arm** → edit shared
   modules in a copy, install with an atomic `mv` after `ast.parse`, keep the default path

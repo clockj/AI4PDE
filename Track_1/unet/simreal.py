@@ -55,6 +55,15 @@ regions into noise. A factor of 3 either side of the scalar the map already trus
 by construction; the clamped fraction is printed per trajectory. Pixels inside the mask are
 zero in both fields and are re-zeroed at the end regardless.
 
+PRESSURE (round 17 Q3j). `with_p=True` carries sim's `p` as a THIRD channel of the mapped
+array, `[u, v, p]`. Real has no pressure -- it is zero-filled in every real file and never
+scored -- so p can only ever be a sim-side auxiliary TARGET, and there is no twin to match it
+to. It therefore gets exactly two of the map's three steps: the FOV/airfoil zero mask (so its
+support matches u,v) and the speed match, applied as the SQUARE of the velocity factor, since
+p scales as U^2 in an incompressible flow. The fluctuation-amplitude step is NOT applied -- it
+is fitted against a twin quantity real does not have. The u,v channels are bit-identical to the
+2-channel map, and the cache carries its own `_p` tag so the existing caches are untouched.
+
 Both variants are TWIN-ONLY. A condition whose twin is held out (`real_exclude`) or absent from
 real has no sigma_twin(x) and no m_twin(x) to copy, and falls back to the scalar map with the
 freestream law exactly as before -- round 14's leak guard is unchanged and still binding. The
@@ -92,7 +101,7 @@ def load_sim_mapped(sim_dir: str, real_dir: str, exclude: list[str] | None = Non
                     frames: int = 0, verbose: bool = True,
                     cache: str | None = CACHE,
                     real_exclude: list[str] | None = None,
-                    mode: str = "scalar") -> list[np.ndarray]:
+                    mode: str = "scalar", with_p: bool = False) -> list[np.ndarray]:
     """Every sim trajectory, mapped into real's measurement space. Raw physical units.
 
     `real_exclude` IS NOT OPTIONAL WHEN THERE IS A HELD-OUT SPLIT. The map reads each sim
@@ -108,6 +117,9 @@ def load_sim_mapped(sim_dir: str, real_dir: str, exclude: list[str] | None = Non
     round before 17), "std" (the twin's per-pixel fluctuation amplitude instead of one scalar)
     or "meanstd" (that, plus the twin's time-mean field instead of sim's). See the module
     docstring for the gain's clamp rule and for why a twin-less condition still gets "scalar".
+
+    `with_p` adds sim's pressure as a third channel (see the module docstring); the u,v
+    channels are unchanged and the cache file is a different one.
 
     Building the map reads ~10 GB of HDF5 (82 real trajectories for the twins' statistics,
     then 100 sim ones) and takes ~10 min on shared storage -- longer than a training run.
@@ -128,7 +140,8 @@ def load_sim_mapped(sim_dir: str, real_dir: str, exclude: list[str] | None = Non
         # The scalar tag is EMPTY, so every pre-round-17 cache file keeps its exact name and a
         # job already running against the old code still hits it.
         mtag = "" if mode == "scalar" else "_m" + mode
-        key = os.path.join(cache, f"simmap_p{len(phases)}_f{frames}{mtag}{tag}.npy")
+        ptag = "_p" if with_p else ""
+        key = os.path.join(cache, f"simmap_p{len(phases)}_f{frames}{mtag}{ptag}{tag}.npy")
         nk = key[:-4] + "_names.npy"
         if os.path.exists(key) and os.path.exists(nk):
             arr = np.load(key, mmap_mode="r")
@@ -164,6 +177,7 @@ def load_sim_mapped(sim_dir: str, real_dir: str, exclude: list[str] | None = Non
         with h5py.File(p, "r") as f:
             u = f["u"][: frames or None].astype(np.float32)
             v = f["v"][: frames or None].astype(np.float32)
+            q = f["p"][: frames or None].astype(np.float32) if with_p else None
         has_twin = nm in twin
         if has_twin:
             mu_r, sd_r, mask, mt_r, sg_r = twin[nm]
@@ -185,7 +199,8 @@ def load_sim_mapped(sim_dir: str, real_dir: str, exclude: list[str] | None = Non
             # twin measures, so the mapped mean and amplitude match the twin's rather than
             # landing a few percent low because the zeroed pixels dilute the average.
             d = d * mask[None, :, :, None]               # 3. support
-            d = d * (mu_r / d[..., 0].mean())            # 1. speed match
+            sc = mu_r / d[..., 0].mean()                 # 1. speed match
+            d = d * sc
             m = d.mean(0, keepdims=True)
             sg = d.std(0)
             sd_s = np.linalg.norm(sg)
@@ -207,6 +222,11 @@ def load_sim_mapped(sim_dir: str, real_dir: str, exclude: list[str] | None = Non
                 g = np.clip(g, lo, hi).astype(np.float32)
                 d = (m if mode == "std" else mt_r[None]) + (d - m) * g[None]
             d = d * mask[None, :, :, None]               # re-zero: step 2 lifts the mask off
+            if q is not None:
+                # p gets the mask and the speed match SQUARED (p ~ U^2), and nothing else:
+                # there is no real twin pressure to match an amplitude to.
+                qd = q[:, py::SUB, px::SUB] * mask[None, :, :] * (sc * sc)
+                d = np.concatenate([d, qd[..., None]], -1)
             out.append(np.ascontiguousarray(d, dtype=np.float32))
             names.append(nm)
 
@@ -218,7 +238,8 @@ def load_sim_mapped(sim_dir: str, real_dir: str, exclude: list[str] | None = Non
         print(f"simmap: mode {mode} on {len(fr)} twin condition(s), clamped fraction "
               f"mean {np.mean(fr):.4%} max {np.max(fr):.4%}", flush=True)
     if verbose:
-        print(f"sim: map mode '{mode}'; {len(out)} trajectory-phases mapped into real's space "
+        print(f"sim: map mode '{mode}'{' +p' if with_p else ''}; "
+              f"{len(out)} trajectory-phases mapped into real's space "
               f"({n_law} condition(s) placed by the freestream law, the rest by their twin"
               + (f"; {len(rex)} real trajectories withheld from the twin table)" if rex
                  else ")"), flush=True)

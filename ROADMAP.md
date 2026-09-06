@@ -783,6 +783,12 @@ reading `Track_1/plan/plan_20260905.md` §7. Two packages staged, neither submit
   statistics), i.e. a regularizer, not data. Two follow-ups queued on that reading: q3h
   (mixed sim + no-sim ensembles from existing twins, eval only) and q3i (the same perturbation
   built from REAL data alone — real windows at frame stride 2 / 3, alone and on top of sim).
+  → **q3i (real-data perturbation) is NULL**: real windows at frame stride 2 / 3 as an
+  auxiliary term perturb training as much as sim (+3.1 % field) and buy nothing alone
+  (43.97 = 43.97 proxy, −0.08 full; K = 3 loses) or on top of sim. **"Any structured
+  perturbation" is falsified: sim's value is its CONTENT** — conditions and dynamics the real
+  grid lacks — delivered as a regularizer. q3j (a training-only pressure head on sim windows,
+  the last unused piece of sim content) is the follow-up.
 * **Method, earned this round.** (i) An HDF5 advisory-lock race between co-scheduled jobs on
   one node killed an arm; `HDF5_USE_FILE_LOCKING=FALSE` in `jobs/common.sh`, and Slurm
   snapshots scripts at submit. (ii) **Running jobs re-import the working tree per arm/fold/

@@ -516,6 +516,24 @@ def main() -> None:
                          "deployment situation -- the Track-2 example trajectory is Re 2968, "
                          "below sim's own range. Separates 'sim teaches this condition' from "
                          "'sim teaches the regime'.")
+    ap.add_argument("--sim-p-head", action="store_true",
+                    help="TRAINING-ONLY auxiliary PRESSURE target on sim windows. Sim has `p` "
+                         "and real does not -- real's p is zero-filled and never scored -- so "
+                         "it is the one piece of sim content nothing in this project has used "
+                         "(CLAUDE.md Strategy item 6 proposed it in round 1 and it was never "
+                         "built). Q3i measured sim's value to be its CONTENT rather than the "
+                         "perturbation it delivers, and pressure is the field that couples u "
+                         "and v dynamically -- the variable a 2D velocity-only forecaster has "
+                         "to infer implicitly. Adds `head_p`, a 1x1 conv on the same trunk "
+                         "features head_field reads, and the same field-loss form as the sim "
+                         "term at --lam-p-sim, on sim windows only. The head is STRIPPED from "
+                         "the saved checkpoint, so the shipped _fno.py loads the blob "
+                         "unchanged. Requires --sim and --arch fno.")
+    ap.add_argument("--lam-p-sim", type=float, default=0.3,
+                    help="weight on the auxiliary pressure loss, on the same scale as "
+                         "--lam-sim (it is added to the TOTAL loss, not nested inside the sim "
+                         "term, so the `sim` training column stays comparable with every "
+                         "earlier sim arm and `psim` is reported on its own).")
     ap.add_argument("--aux-fstride", type=int, default=0,
                     help="0 = OFF (nothing is built, nothing is drawn, the RNG is untouched). "
                          "k >= 1 adds a SECOND loss term on real windows taken every k-th "
@@ -552,6 +570,14 @@ def main() -> None:
     # while its checkpoint claimed otherwise. That is the same failure `--fgn` guards against.
     if args.mode_drop > 0.0 and args.arch != "fno":
         raise SystemExit(f"--mode-drop is implemented for --arch fno only (got {args.arch})")
+    # Same rule for the auxiliary pressure head, and checked HERE rather than beside the sim
+    # loader: `load_trajectories` runs first and reads ~7 GB of HDF5, so a guard placed after it
+    # makes a typo cost three minutes instead of one second.
+    if args.sim_p_head:
+        if not args.sim:
+            raise SystemExit("--sim-p-head needs --sim: the pressure target exists in sim only")
+        if args.arch != "fno":
+            raise SystemExit(f"--sim-p-head is implemented on --arch fno (got {args.arch})")
     # --ctx > 20 and --hist feed the trunk tensors built OUTSIDE the 20-frame window; the mask
     # would have to be painted on those too, and neither is deployable in predict() anyway
     # (_fno.load_any refuses them). Refuse rather than mask an inconsistent input.
@@ -601,6 +627,7 @@ def main() -> None:
     idx_t = torch.from_numpy(idx)
 
     sim_trajs_t = sim_idx_t = None
+    p_mean = p_std = 0.0
     if args.sim:
         if self_norm_mode:
             raise SystemExit("--sim assumes the global real normalizer; --norm self would "
@@ -609,12 +636,26 @@ def main() -> None:
         sim_trajs = load_sim_mapped(args.sim, args.data, phases=PHASES_ALL[:args.phases],
                                     frames=args.sim_frames,
                                     exclude=excl if args.sim_exclude_held else None,
-                                    real_exclude=excl, mode=args.sim_map)
+                                    real_exclude=excl, mode=args.sim_map,
+                                    with_p=args.sim_p_head)
         sim_idx = window_index(sim_trajs, args.sim_stride)
         sim_trajs_t = [torch.from_numpy(d) for d in sim_trajs]
         sim_idx_t = torch.from_numpy(sim_idx)
         print(f"sim: {len(sim_idx)} windows at stride {args.sim_stride}, "
               f"lam_sim {args.lam_sim} loss '{args.sim_loss}' map '{args.sim_map}'", flush=True)
+        if args.sim_p_head:
+            # Pooled over the trajectories the loss will actually see -- i.e. AFTER `exclude`,
+            # so the held-out semantics are the map's, unchanged. Two passes in float64 rather
+            # than one concatenation: the pool is ~190M elements and materializing it would
+            # cost 1.5 GB for two scalars. Zeros inside the FOV mask are included, because the
+            # loss averages over them too.
+            n_p = sum(d[..., 2].size for d in sim_trajs)
+            s1 = sum(float(d[..., 2].sum(dtype=np.float64)) for d in sim_trajs)
+            s2 = sum(float((d[..., 2].astype(np.float64) ** 2).sum()) for d in sim_trajs)
+            p_mean = s1 / n_p
+            p_std = max((s2 / n_p - p_mean ** 2) ** 0.5, 1e-8)
+            print(f"sim p: pooled mean {p_mean:.9g} std {p_std:.9g} over {n_p} elements "
+                  f"(mapped physical units, lam_p_sim {args.lam_p_sim})", flush=True)
 
     aux_idx_t = None
     if args.aux_fstride >= 1:
@@ -659,7 +700,7 @@ def main() -> None:
                   mean_head=args.mean_head, osc_modes=args.osc_modes,
                   osc_global=args.osc_global, osc_zeromean=args.osc_zeromean,
                   tbasis=args.tbasis, mode_drop=args.mode_drop,
-                  fgn_dim=args.fgn_dim).to(dev)
+                  fgn_dim=args.fgn_dim, p_head=args.sim_p_head).to(dev)
     print(f"params: {sum(p.numel() for p in model.parameters())/1e6:.2f}M", flush=True)
 
     if args.init:
@@ -705,7 +746,7 @@ def main() -> None:
         # steps over a differently-weighted pool rather than one pass over every window.
         perm = (torch.randperm(len(idx_t)) if w_samp is None else
                 torch.multinomial(w_samp, len(idx_t), replacement=True))
-        acc = np.zeros(12)
+        acc = np.zeros(13)
         n = 0
         for i in range(0, len(idx_t), args.batch):
             pos = perm[i:i + args.batch]
@@ -914,7 +955,7 @@ def main() -> None:
                         sk = std_t(xs.detach().reshape(k_s * b, T_OUT, H, W, C))
                         l_svar = rel_l2(sk.reshape(k_s, b, 1, H, W, C).mean(0), std_t(y)).mean()
 
-                l_sim = torch.zeros((), device=dev)
+                l_sim = l_psim = torch.zeros((), device=dev)
                 if sim_idx_t is not None and args.lam_sim > 0.0:
                     # One sim batch per real step. Real defines the epoch: sim is a regularizer
                     # on a wrong-but-related distribution, not a second dataset to fit.
@@ -923,9 +964,22 @@ def main() -> None:
                     xs_ = torch.stack([sim_trajs_t[i][t:t + T_IN] for i, t in ss.tolist()])
                     ys_ = torch.stack([sim_trajs_t[i][t + T_IN:t + T_IN + T_OUT]
                                        for i, t in ss.tolist()])
+                    yp_ = None
+                    if args.sim_p_head:
+                        # With --sim-p-head the mapped arrays carry [u, v, p]; split p off
+                        # before the velocity normalizer, whose mean/std are length C = 2.
+                        yp_ = ys_[..., 2].to(dev, non_blocking=True)   # (B, T_OUT, H, W)
+                        xs_, ys_ = xs_[..., :C], ys_[..., :C]
                     xs_ = ((xs_.to(dev, non_blocking=True) - mean_v) / std_v)
                     ys_ = ((ys_.to(dev, non_blocking=True) - mean_v) / std_v)
-                    ps_ = from_ch(model(to_ch(xs_), detach_var=args.detach_var)[0])
+                    if yp_ is None:
+                        ps_ = from_ch(model(to_ch(xs_), detach_var=args.detach_var)[0])
+                    else:
+                        # ONE forward, three outputs: the pressure head reads the same trunk
+                        # features head_field does, so it costs a 1x1 conv, not a pass.
+                        raw_, _, pp_ = model(to_ch(xs_), detach_var=args.detach_var,
+                                             return_p=True)
+                        ps_ = from_ch(raw_)
                     if args.sim_loss == "full":
                         dd = ps_ - ys_
                         ddm = dd.mean(1, keepdim=True)
@@ -941,6 +995,20 @@ def main() -> None:
                             return f / f.pow(2).mean(1, keepdim=True).sqrt().clamp(min=1e-3)
                         l_sim = torch.mean((_shape(ps_) - _shape(ys_)) ** 2)
                     loss = loss + args.lam_sim * l_sim
+                    if yp_ is not None:
+                        # The sim term's own field loss, on p: the residual split into its
+                        # time-mean and fluctuation parts at --w-mean. No `cw` -- that
+                        # re-weights u against v and p is one channel. The target is
+                        # normalized by the POOLED sim p statistics printed at startup, which
+                        # is the only normalizer available: real has no pressure to fit one to.
+                        dp = pp_ - (yp_ - p_mean) / p_std
+                        dpm = dp.mean(1, keepdim=True)
+                        l_psim = (args.w_mean * torch.mean(dpm ** 2)
+                                  + torch.mean((dp - dpm) ** 2))
+                        # Added to the TOTAL loss with its own weight rather than folded into
+                        # l_sim, so `lam_p_sim` is on the same scale as `lam_sim` and the `sim`
+                        # column keeps meaning what it meant in Q3d / Q3f / Q3g.
+                        loss = loss + args.lam_p_sim * l_psim
 
                 l_aux = torch.zeros((), device=dev)
                 if aux_idx_t is not None and args.lam_aux > 0.0:
@@ -982,7 +1050,7 @@ def main() -> None:
                 # waiting. Calling them here instead would stall the pipeline before the
                 # backward is even launched.
                 return loss, [loss, l_field, l_var, l_tke, l_probe, l_div,
-                              l_spec, l_crps, l_svar, l_sim, l_tail, l_aux]
+                              l_spec, l_crps, l_svar, l_sim, l_tail, l_aux, l_psim]
 
             loss, terms = compute_loss()
             opt.zero_grad(set_to_none=True)
@@ -1021,19 +1089,32 @@ def main() -> None:
             # Existing field names and order are unchanged -- log scrapers depend on them; the
             # two FGN columns are appended and stay 0.00000 when --fgn is off. `tail` and `aux`
             # are appended for the same reason and stay 0.00000 when --lam-tail / --aux-fstride
-            # are off, so the existing columns keep both their names and their positions.
+            # are off, so the existing columns keep both their names and their positions;
+            # `psim` is the same story for --sim-p-head.
             print(f"  epoch {ep:3d}  loss {a[0]:.5f}  field {a[1]:.5f}  "
                   f"var {a[2]:.5f}  tke {a[3]:.5f}  probe {a[4]:.5f}  "
                   f"div {a[5]:.5f}  spec {a[6]:.5f}  crps {a[7]:.5f}  "
                   f"svar {a[8]:.5f}  sim {a[9]:.5f}  tail {a[10]:.5f}  "
-                  f"aux {a[11]:.5f}  "
+                  f"aux {a[11]:.5f}  psim {a[12]:.5f}  "
                   f"({time.time()-t0:.0f}s)", flush=True)
 
     if swa_state is not None:
         print(f"SWA: averaged the last {swa_n} epochs", flush=True)
         model.load_state_dict({k: v.to(dev) for k, v in swa_state.items()})
 
-    torch.save({"model_state_dict": model.state_dict(), "mode": "twohead",
+    sd_out = model.state_dict()
+    if args.sim_p_head:
+        # STRIP THE AUXILIARY HEAD. `_fno._fno_from_blob` builds its vendored FNO2d from the
+        # blob's flags and calls load_state_dict with strict=True, so one unexpected `head_p.*`
+        # key would fail EVERY loader in the project -- and only at scoring time, after the
+        # training was paid for (the failure mode `mean_head` already caused once). Stripping
+        # here keeps the shipped `_fno.py` untouched, and losing the head costs nothing: it is
+        # supervised on sim, its output is never scored, and no deployment path reads it.
+        n_before = len(sd_out)
+        sd_out = {k: v for k, v in sd_out.items() if not k.startswith("head_p.")}
+        print(f"save: stripped {n_before - len(sd_out)} head_p.* tensor(s) -- the blob is a "
+              f"plain FNO2d for _fno.load_any", flush=True)
+    torch.save({"model_state_dict": sd_out, "mode": "twohead",
                 "width": args.width, "var_head": args.var_head, "var_mlp": args.var_mlp, "lift_mlp": args.lift_mlp, "point_mlp": args.point_mlp,
                 "var_hidden": args.var_hidden, "var_deep": args.var_deep,
                 "var_in_std": args.var_in_std, "var_pred_std": args.var_pred_std,

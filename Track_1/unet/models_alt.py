@@ -88,7 +88,7 @@ class FNO2d(nn.Module):
                  var_pred_std: bool = False, fgn_dim: int = 0, dropout: float = 0.0,
                  mean_head: bool = False, osc_modes: int = 0,
                  osc_global: bool = False, osc_zeromean: bool = False,
-                 tbasis: int = 0, mode_drop: float = 0.0):
+                 tbasis: int = 0, mode_drop: float = 0.0, p_head: bool = False):
         super().__init__()
         # Channel dropout between spectral blocks -- the one classical regularizer the project
         # never tried, against a diagnosis that is the project's own: with 74 trajectories the
@@ -249,9 +249,33 @@ class FNO2d(nn.Module):
                                 indexing="ij")
         self.register_buffer("grid", torch.stack([xx, yy])[None])
 
+        # A TRAINING-ONLY auxiliary PRESSURE readout (round 17 Q3j). Sim has `p` and real does
+        # not -- it is zero-filled in every real file and never scored -- so this head can only
+        # ever be supervised on sim windows, and it is stripped from the checkpoint at save
+        # time (train2.py) so the shipped `_fno.py` loads the blob unchanged with strict=True.
+        #
+        # A single 1x1 conv, NOT head_field's MLP, and the cheapness is not the only reason.
+        # The point of an auxiliary task is to shape the TRUNK; a linear readout can only
+        # succeed if the trunk itself carries p linearly, so it pushes the work where it is
+        # wanted. (--var-mlp's lesson -- that a linear probe underperforms an MLP -- was about
+        # a head whose OUTPUT is deployed. This one's output is thrown away.) 1,940 parameters
+        # at width 96 against 14,848 for the MLP shape.
+        #
+        # CONSTRUCTED LAST, after every other submodule, so that at a fixed --seed a
+        # p_head=True model draws the SAME initialization for the trunk and both deployed
+        # heads as its p_head=False control: head_p only appends to the RNG stream instead
+        # of shifting it. Without this the variance head's init differs between an arm and
+        # its control, which is the one thing --seed exists to prevent.
+        self.head_p = nn.Conv2d(width, T_OUT, 1) if p_head else None
+
     def forward(self, prev: torch.Tensor, detach_var: bool = False,
-                z: torch.Tensor | None = None):
-        """`z` is the FGN noise vector, (B, fgn_dim). None (or fgn_dim = 0) is the plain FNO."""
+                z: torch.Tensor | None = None, return_p: bool = False):
+        """`z` is the FGN noise vector, (B, fgn_dim). None (or fgn_dim = 0) is the plain FNO.
+
+        `return_p` appends the auxiliary pressure prediction, (B, T_OUT, H, W), read off the
+        SAME trunk features `head_field` reads. Default False, so every existing caller gets
+        the same 2-tuple it always did and no other file needs to change.
+        """
         h = self.lift(torch.cat([prev, self.grid.expand(len(prev), -1, -1, -1)], 1))
         # One (scale, shift) pair per block, computed once outside the loop: it is a
         # (B, fgn_dim) x (fgn_dim, 2*width) matmul against a loop body that is spectral.
@@ -326,6 +350,8 @@ class FNO2d(nn.Module):
                 sp = field.detach().reshape(len(prev), T_OUT, C, *field.shape[-2:]).std(1)
                 zv = torch.cat([zv, sp], 1)
             logstd = self.head_logstd(zv)
+        if return_p:
+            return field, logstd, (self.head_p(h) if self.head_p is not None else None)
         return field, logstd
 
 
@@ -480,7 +506,8 @@ def build(arch: str, width: int, var_head: bool, extra_ch: int, modes_y: int = 1
           var_pred_std: bool = False, fgn_dim: int = 0, dropout: float = 0.0,
           mean_head: bool = False, osc_modes: int = 0,
           osc_global: bool = False,
-          osc_zeromean: bool = False, tbasis: int = 0, mode_drop: float = 0.0):
+          osc_zeromean: bool = False, tbasis: int = 0, mode_drop: float = 0.0,
+          p_head: bool = False):
     """Factory shared by train2.py and eval_wp.run so both build identical objects.
 
     `fgn_dim` defaults to 0, which builds no `film` module at all -- so a state_dict saved
@@ -512,7 +539,7 @@ def build(arch: str, width: int, var_head: bool, extra_ch: int, modes_y: int = 1
         return FNO2d(width, modes_y, modes_x, n_layers, var_head, extra_ch, var_mlp, lift_mlp,
                      point_mlp, var_hidden, var_deep, var_in_std,
                      var_pred_std, fgn_dim, dropout, mean_head, osc_modes, osc_global,
-                     osc_zeromean, tbasis, mode_drop)
+                     osc_zeromean, tbasis, mode_drop, p_head=p_head)
     if arch == "deeponet":
         return DeepONetCh(p, trunk_width=width * 2, branch_width=width,
                           var_head=var_head, extra_ch=extra_ch)
