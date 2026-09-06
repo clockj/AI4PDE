@@ -529,6 +529,19 @@ def main() -> None:
                          "term at --lam-p-sim, on sim windows only. The head is STRIPPED from "
                          "the saved checkpoint, so the shipped _fno.py loads the blob "
                          "unchanged. Requires --sim and --arch fno.")
+    ap.add_argument("--sim-p-norm", choices=["pooled", "traj"], default="pooled",
+                    help="how the auxiliary pressure TARGET is standardized. 'pooled' (the "
+                         "default, and what Q3j ran) uses one mean/std over every mapped sim "
+                         "trajectory -- but the speed match enters p as sc^2 ~ Re^2, so the "
+                         "mapped amplitude spans ~55x across the Reynolds range and the pooled "
+                         "variance is almost entirely BETWEEN conditions: Q3j's head reached "
+                         "psim 0.0087, i.e. it explained 99 %% of a quantity that is mostly "
+                         "'how fast is this condition', while the mid- and low-Re conditions "
+                         "contributed 1/50 - 1/2500 of the loss. 'traj' standardizes each "
+                         "trajectory by its OWN mean and std, so every condition contributes "
+                         "equally and what is left to learn is the pressure FIELD rather than "
+                         "its amplitude. Computed in memory from the cached array -- the 2.46 "
+                         "GB `_p` map is not rebuilt.")
     ap.add_argument("--lam-p-sim", type=float, default=0.3,
                     help="weight on the auxiliary pressure loss, on the same scale as "
                          "--lam-sim (it is added to the TOTAL loss, not nested inside the sim "
@@ -628,6 +641,7 @@ def main() -> None:
 
     sim_trajs_t = sim_idx_t = None
     p_mean = p_std = 0.0
+    p_mu_t = p_sd_t = None
     if args.sim:
         if self_norm_mode:
             raise SystemExit("--sim assumes the global real normalizer; --norm self would "
@@ -655,7 +669,23 @@ def main() -> None:
             p_mean = s1 / n_p
             p_std = max((s2 / n_p - p_mean ** 2) ** 0.5, 1e-8)
             print(f"sim p: pooled mean {p_mean:.9g} std {p_std:.9g} over {n_p} elements "
-                  f"(mapped physical units, lam_p_sim {args.lam_p_sim})", flush=True)
+                  f"(mapped physical units, lam_p_sim {args.lam_p_sim}, "
+                  f"norm '{args.sim_p_norm}')", flush=True)
+            if args.sim_p_norm == "traj":
+                # Per-trajectory standardization, computed from the SAME cached array -- the
+                # 2.46 GB `_p` map is read, not rebuilt. Indexed by the sim trajectory id that
+                # `window_index` already stores in column 0 of sim_idx, so a batch looks its
+                # constants up rather than carrying them.
+                mus = np.array([d[..., 2].mean(dtype=np.float64) for d in sim_trajs])
+                sds = np.array([max(float(d[..., 2].std(dtype=np.float64)), 1e-8)
+                                for d in sim_trajs])
+                p_mu_t = torch.from_numpy(mus.astype(np.float32)).to(dev)
+                p_sd_t = torch.from_numpy(sds.astype(np.float32)).to(dev)
+                print(f"sim p: per-trajectory norm over {len(mus)} trajectories -- "
+                      f"mean of means {mus.mean():.6g} (min {mus.min():.6g}, "
+                      f"max {mus.max():.6g}), mean of stds {sds.mean():.6g} "
+                      f"(min {sds.min():.6g}, max {sds.max():.6g}, "
+                      f"max/min {sds.max()/sds.min():.1f}x)", flush=True)
 
     aux_idx_t = None
     if args.aux_fstride >= 1:
@@ -1001,7 +1031,16 @@ def main() -> None:
                         # re-weights u against v and p is one channel. The target is
                         # normalized by the POOLED sim p statistics printed at startup, which
                         # is the only normalizer available: real has no pressure to fit one to.
-                        dp = pp_ - (yp_ - p_mean) / p_std
+                        if p_mu_t is None:
+                            yn_ = (yp_ - p_mean) / p_std
+                        else:
+                            # Column 0 of sim_idx is the trajectory id, so the batch's
+                            # constants are a gather. Every condition then contributes the
+                            # same variance to the loss, whatever its Reynolds number.
+                            ii = ss[:, 0].to(dev, non_blocking=True)
+                            yn_ = ((yp_ - p_mu_t[ii].view(-1, 1, 1, 1))
+                                   / p_sd_t[ii].view(-1, 1, 1, 1))
+                        dp = pp_ - yn_
                         dpm = dp.mean(1, keepdim=True)
                         l_psim = (args.w_mean * torch.mean(dpm ** 2)
                                   + torch.mean((dp - dpm) ** 2))
