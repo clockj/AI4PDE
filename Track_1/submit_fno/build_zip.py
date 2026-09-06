@@ -15,6 +15,10 @@ import os
 import shutil
 import zipfile
 
+# Must equal _fno._Q8_SUFFIX -- that is the only contract between the packer here and the
+# unpacker there, and the assert below is what keeps the two from drifting apart silently.
+Q8_SUFFIX = "._q8scale"
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 TRACK1 = os.path.dirname(HERE)
 STAGE_DEFAULT = os.path.join(HERE, "_package")
@@ -48,7 +52,26 @@ def main() -> None:
                          "Safe here because this FNO stores its spectral weights as REAL "
                          "tensors with a trailing (real, imag) axis; a genuinely complex "
                          "parameter would need pack_ckpt_fp16.py's split instead.")
+    ap.add_argument("--int8", action="store_true",
+                    help="store the LARGE floating tensors of the state_dict as int8 with an "
+                         "fp16 scale per (out, in) channel pair, and everything under 4096 "
+                         "elements as fp16. Halves the archive AGAIN on top of --fp16: a "
+                         "width-96 8-layer member goes 108.5 MB fp32 -> 54.3 fp16 -> 29.0 int8, "
+                         "so EIGHT of them are 232 MB against the 256 MB cap where eight fp16 "
+                         "would be 434. Measured cost over 96 val_unseen windows (quant8.py): "
+                         "rel-L2 of the field difference 8.3e-4 against fp16's 2.7e-4 and a "
+                         "model rel-L2 of 0.077, i.e. +6e-5 of the error in quadrature -- the "
+                         "same argument that made --fp16 free. Coarser scale granularities are "
+                         "20-40x worse and none is shippable. _fno.dequant8 undoes this at "
+                         "load time, and it is a no-op on any blob that does not carry the "
+                         "companion scale keys. Implies --fp16 for the tensors it leaves alone.")
     args = ap.parse_args()
+    if args.int8:
+        import importlib.util as _ilu
+        _sp = _ilu.spec_from_file_location("_fno_pack", os.path.join(HERE, "_fno.py"))
+        _m = _ilu.module_from_spec(_sp); _sp.loader.exec_module(_m)
+        assert _m._Q8_SUFFIX == Q8_SUFFIX, (
+            f"packer/unpacker suffix drift: {Q8_SUFFIX!r} here, {_m._Q8_SUFFIX!r} in _fno.py")
 
     names = ["fno.pth"] + [f"fno_{i}.pth" for i in range(2, len(args.ckpt) + 1)]
     files = [
@@ -69,11 +92,26 @@ def main() -> None:
         if not os.path.exists(src):
             raise SystemExit(f"missing required file: {src}\n"
                              f"(band.npz comes from: python submit_fno/fit_band.py --ckpt ...)")
-        if args.fp16 and name in ckpt_names:
+        if (args.fp16 or args.int8) and name in ckpt_names:
             import torch
             blob = torch.load(src, map_location="cpu")
-            blob["model_state_dict"] = {k: (v.half() if v.is_floating_point() else v)
-                                        for k, v in blob["model_state_dict"].items()}
+            sd = {}
+            for k, v in blob["model_state_dict"].items():
+                if not v.is_floating_point():
+                    sd[k] = v
+                elif args.int8 and v.numel() >= 4096 and v.dim() >= 2:
+                    # Symmetric int8 with a scale per (out, in) channel pair. The spectral
+                    # weights are (win, wout, my, mx, 2) real tensors and are ~97 % of the
+                    # archive; the scale then costs 2 bytes per 2*my*mx values, which is the
+                    # 0.6 MB/member difference between this and a per-tensor scale.
+                    red = tuple(range(2, v.dim()))
+                    sc_ = v.abs().amax(dim=red, keepdim=True).clamp(min=1e-12).div(127.0)
+                    sc_ = sc_.half()
+                    sd[k] = torch.clamp(torch.round(v / sc_.float()), -127, 127).to(torch.int8)
+                    sd[k + Q8_SUFFIX] = sc_
+                else:
+                    sd[k] = v.half()
+            blob["model_state_dict"] = sd
             torch.save(blob, os.path.join(STAGE, name))
         else:
             shutil.copy2(src, os.path.join(STAGE, name))

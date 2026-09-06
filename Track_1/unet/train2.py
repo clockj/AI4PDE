@@ -148,6 +148,12 @@ def aux_index(trajs: list[np.ndarray], k: int, stride: int) -> np.ndarray:
                        for t in range(0, len(d) - span + 1, stride)], dtype=np.int64)
 
 
+# SPS scores every element against ONE global half-width scale, frozen for the season
+# (scoring.py: sigma = 0.0563870259, physical units). --cov-c is quoted in units of it so
+# the saturation point of the coverage loss is stated in the currency the scorer uses.
+SPS_SIGMA = 0.0563870259
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default="/users/PAS1187/qwu/RealPDE/train_real/train_real")
@@ -450,6 +456,30 @@ def main() -> None:
                          "quantity to minimize is the error TAIL, not its rms. This is that "
                          "tail, written directly into the objective. --loss rel only averages "
                          "a per-sample norm and has no per-element term to take a tail of.")
+    ap.add_argument("--lam-cov", type=float, default=0.0,
+                    help="weight on a COVERAGE (redescending Welsch) field loss. SPS scores "
+                         "per-element containment, exp(-2h/sigma)*1[|E|<=h], so an element "
+                         "already far outside its interval is worth nothing and chasing it "
+                         "costs the elements that are nearly inside. The term is "
+                         "cn^2*(1-exp(-0.5*(E/cn)^2)) on the SAME cw-weighted normalized "
+                         "residual --loss mse averages, with cn the physical scale "
+                         "--cov-c*SPS_SIGMA expressed in those units. The cn^2 prefactor "
+                         "makes the small-error limit exactly 0.5*mean(en^2), so --lam-cov 2 "
+                         "is a CURVATURE-MATCHED swap for the MSE term and the only thing "
+                         "that changes is the tail. Round 16's --lam-tail (CVaR of the worst "
+                         "tenth) is the opposite weighting, and it lost.")
+    ap.add_argument("--cov-c", type=float, default=0.25,
+                    help="saturation scale of --lam-cov, in units of the scorer's frozen "
+                         "sigma = 0.0563870259. The model's typical physical |E| is ~0.2 "
+                         "sigma, so 0.25 puts the knee near the median error; larger is "
+                         "closer to plain MSE (cov-c -> inf IS 0.5*MSE, exactly).")
+    ap.add_argument("--mixup", type=float, default=0.0,
+                    help="Beta(a,a) convex combinations of two windows in the batch (Zhang "
+                         "et al., ICLR 2018). Non-physical by construction -- a mixture of "
+                         "two solutions is not a solution -- but SPS is a per-element "
+                         "CONTAINMENT score, i.e. a calibration metric, and mixup is the "
+                         "standard fix for over-confident interpolation between conditions. "
+                         "0 draws no random numbers, so the default RNG stream is untouched.")
     ap.add_argument("--sam-rho", type=float, default=0.0,
                     help="Sharpness-Aware Minimization (Foret et al., ICLR 2021). 0 disables "
                          "it and the training loop is byte-identical to before. Above 0 each "
@@ -596,6 +626,14 @@ def main() -> None:
     # (_fno.load_any refuses them). Refuse rather than mask an inconsistent input.
     if args.aug_mask > 0.0 and (args.hist or args.ctx != T_IN):
         raise SystemExit("--aug-mask is not implemented for --hist / --ctx != 20")
+    if args.lam_cov > 0.0 and args.loss != "mse":
+        raise NotImplementedError(
+            "--lam-cov needs the per-element field error the --loss mse branch forms; "
+            "--loss rel only produces a per-sample norm")
+    # Mixup rewrites x and y together. --hist and --ctx carry frames from OUTSIDE the window
+    # and would have to be mixed with the same lambda; neither is deployable anyway.
+    if args.mixup > 0.0 and (args.hist or args.ctx != T_IN):
+        raise SystemExit("--mixup is not implemented for --hist / --ctx != 20")
     if args.lam_tail > 0.0 and args.loss != "mse":
         raise NotImplementedError(
             "--lam-tail needs the per-element field error the --loss mse branch forms; "
@@ -776,7 +814,7 @@ def main() -> None:
         # steps over a differently-weighted pool rather than one pass over every window.
         perm = (torch.randperm(len(idx_t)) if w_samp is None else
                 torch.multinomial(w_samp, len(idx_t), replacement=True))
-        acc = np.zeros(13)
+        acc = np.zeros(14)
         n = 0
         for i in range(0, len(idx_t), args.batch):
             pos = perm[i:i + args.batch]
@@ -796,6 +834,16 @@ def main() -> None:
             if ctx is not None:
                 ctx = self_norm(ctx, s, mean_v, std_v)
 
+            if args.mixup > 0.0:
+                # FIRST, so --aug-scale / --aug-noise / --aug-mask act on the mixed window
+                # exactly as they would on a real one. lam is folded to [0.5, 1] so every
+                # sample keeps the identity of its first parent, which is what makes the
+                # mixed target the right regression target for the mixed input.
+                lam_mx = torch.distributions.Beta(args.mixup, args.mixup).sample((b,))
+                lam_mx = torch.maximum(lam_mx, 1.0 - lam_mx).to(dev).view(b, 1, 1, 1, 1)
+                jmx = torch.randperm(b, device=dev)
+                x = lam_mx * x + (1.0 - lam_mx) * x[jmx]
+                y = lam_mx * y + (1.0 - lam_mx) * y[jmx]
             if args.aug_scale > 0.0:
                 # Rescale the freestream. In physical units this is u -> a*u, which is a
                 # different Reynolds number to first order -- exactly the shift the hidden
@@ -890,6 +938,17 @@ def main() -> None:
                     kk = max(1, int(0.10 * e2.shape[1]))
                     l_tail = e2.topk(kk, dim=1).values.mean()
                     loss = loss + args.lam_tail * l_tail
+                l_cov = torch.zeros((), device=dev)
+                if args.lam_cov > 0.0:
+                    # Redescending (Welsch) M-estimator on the same residual l_field averages.
+                    # cn is --cov-c*SPS_SIGMA (PHYSICAL) mapped into cw-weighted normalized
+                    # units by cw/mul; the cn^2 prefactor makes lim_{cn->inf} = 0.5*mean(en^2),
+                    # so --lam-cov 2 leaves the small-error curvature of --loss mse unchanged
+                    # and only bends the tail. Unlike --lam-tail this needs no per-sample sort.
+                    en = d * cw
+                    cn = (args.cov_c * SPS_SIGMA) * cw / mul
+                    l_cov = torch.mean(cn ** 2 * (1.0 - torch.exp(-0.5 * (en / cn) ** 2)))
+                    loss = loss + args.lam_cov * l_cov
                 l_probe = torch.zeros((), device=dev)
                 if args.lam_p > 0.0:
                     # scoring.mvpe_rel_l2_per_sample, verbatim: probe_y = 8..24 step 2,
@@ -1089,7 +1148,8 @@ def main() -> None:
                 # waiting. Calling them here instead would stall the pipeline before the
                 # backward is even launched.
                 return loss, [loss, l_field, l_var, l_tke, l_probe, l_div,
-                              l_spec, l_crps, l_svar, l_sim, l_tail, l_aux, l_psim]
+                              l_spec, l_crps, l_svar, l_sim, l_tail, l_aux, l_psim,
+                              l_cov]
 
             loss, terms = compute_loss()
             opt.zero_grad(set_to_none=True)
@@ -1134,7 +1194,7 @@ def main() -> None:
                   f"var {a[2]:.5f}  tke {a[3]:.5f}  probe {a[4]:.5f}  "
                   f"div {a[5]:.5f}  spec {a[6]:.5f}  crps {a[7]:.5f}  "
                   f"svar {a[8]:.5f}  sim {a[9]:.5f}  tail {a[10]:.5f}  "
-                  f"aux {a[11]:.5f}  psim {a[12]:.5f}  "
+                  f"aux {a[11]:.5f}  psim {a[12]:.5f}  cov {a[13]:.5f}  "
                   f"({time.time()-t0:.0f}s)", flush=True)
 
     if swa_state is not None:

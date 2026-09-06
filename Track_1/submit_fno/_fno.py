@@ -771,6 +771,42 @@ def load(path: str, device: str):
     return load_any(path, device)
 
 
+_Q8_SUFFIX = "._q8scale"
+
+
+def dequant8(sd: dict) -> dict:
+    """Undo build_zip.py --int8 in place of the caller's state_dict, if it was applied.
+
+    THE PROBLEM IT SOLVES.  A width-96 8-layer member is 108.5 MB fp32 and 54.3 MB fp16, so
+    four fill 217 MB of the 256 MB extracted cap and eight need 434.  R18 / T2R6 measured the
+    board-latency slope directly (0.25 / -0.04 board ms per local ms, against the round-13
+    model's 0.803; the eleven one-invocation rounds refit to `3.274 + 0.336*local`), which cuts
+    the price of doubling the members from 0.09-0.10 `final` to ~0.037 on Track 1 and ~0 on
+    Track 2 -- so 8 members is worth about +0.05 / +0.09 and SIZE is the only thing in the way.
+
+    THE FORMAT.  Every quantized tensor `k` is stored as int8 with a companion fp16 tensor
+    `k + "._q8scale"` that broadcasts over it; this restores `k` exactly as the packer
+    dequantizes it and deletes the companion, so `load_state_dict(strict=True)` downstream sees
+    precisely the original key set and every branch of `load_any` is untouched.  A blob with no
+    companion keys is returned unchanged, which is what makes this safe to run unconditionally.
+
+    THE COST, measured on two all-data w96 L8 members over 96 val_unseen windows (`quant8.py`):
+    scales per (out, in) channel pair give rel-L2 8.3e-4 of the field at 29.0 MB/member against
+    fp16's 2.7e-4 at 56.9 MB.  Coarser granularities are 20-40x worse (per tensor 3.0e-2, per
+    out-channel 1.7e-2, per Fourier mode 3.0e-2) and none of them is shippable.  8.3e-4 against
+    a model rel-L2 of 0.077 adds in quadrature to +6e-5 of the error -- the same argument that
+    made fp16 free in round 15.
+    """
+    scales = [k for k in sd if k.endswith(_Q8_SUFFIX)]
+    if not scales:
+        return sd
+    for sk in scales:
+        k = sk[: -len(_Q8_SUFFIX)]
+        sd[k] = sd[k].float() * sd[sk].float()
+        del sd[sk]
+    return sd
+
+
 def load_any(path: str, device: str):
     """Load an FNO **or** a U-Net member, dispatching on the checkpoint's own `arch` field.
 
@@ -780,6 +816,8 @@ def load_any(path: str, device: str):
     handed the mixed list.
     """
     blob = torch.load(path, map_location=device)
+    # Unconditional and a no-op on every checkpoint written before --int8 existed.
+    blob["model_state_dict"] = dequant8(blob["model_state_dict"])
     arch = blob.get("arch", "fno")
     cfg0 = blob.get("config", {})
     if arch == "ufno":

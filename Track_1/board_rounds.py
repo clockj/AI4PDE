@@ -79,6 +79,7 @@ ROUNDS = [
     # frontier.  The prediction (81.188) over-read tke and sps, as the FNO-family proxy has
     # now done twice at this operating point.
     ("R17 L8do45x4/1inv a60", "2026-09-04", 915380, 94.745531, 78.635462, 93.974234, 92.988361, 41.324574, 81.169843),
+    ("R18 L8do45x4 hostw   ", "2026-09-06", 917177, 94.745531, 78.635462, 93.974234, 93.058602, 41.324574, 81.176572),
 ]
 
 UNSCORED = []   # every round on both tracks now has full subscores
@@ -148,6 +149,7 @@ ROUNDS_T2 = [
     # 81.019298; 81.019298 is the consistent value -- hold it out of the fit and the other 17
     # rounds predict 81.02032, which is 0.8 sigma from 81.019298 and 35 sigma from 80.97843.
     ("T2R5 L8do45x4/1inv a60", "2026-09-04", 915381, 94.727329, 78.357043, 93.692366, 92.427051, 41.191134, 81.019298),
+    ("T2R6 L8do45x4 bmm     ", "2026-09-06", 917178, 94.727329, 78.357043, 93.692366, 92.399134, 41.191137, 81.016621),
 ]
 
 # The fit pools both tracks -- see the module docstring.  ROUNDS first, then ROUNDS_T2, so the
@@ -158,10 +160,18 @@ FIT_ROUNDS = ROUNDS + ROUNDS_T2 if POOL_TRACKS else ROUNDS
 X = np.array([r[3:8] for r in FIT_ROUNDS], float)
 Y = np.array([r[8] for r in FIT_ROUNDS], float)
 
-# `w_time`, MEASURED DIRECTLY rather than fitted.  R13 and R14 differ in `time_score` alone
-# (the blend gate never fired, so the four error subscores are bit-identical):
-#   d time = 92.978725 - 93.115432 = -0.136707,   d final = 80.630755 - 80.643823 = -0.013068
-W_TIME_DIRECT = (80.630755 - 80.643823) / (92.978725 - 93.115432)   # = 0.0956
+# `w_time`, MEASURED DIRECTLY rather than fitted -- now THREE TIMES, by three single-subscore
+# A/Bs in which the four error subscores came back bit-identical and only `time` moved:
+#   R13   -> R14   the gated mean-blend fired on ZERO hidden windows
+#   R17   -> R18   HOST_WRITE="torch": the same bytes to the same place, threaded
+#   T2R5  -> T2R6  SPEC_PATH="bmm": the spectral product as one batched real matmul (2e-06)
+# They agree to 0.3 % of each other and put w_time BELOW the free fit's 0.0967 by ~1 %.
+W_TIME_AB = [
+    ("R13->R14 ", 92.978725 - 93.115432, 80.630755 - 80.643823),
+    ("R17->R18 ", 93.058602 - 92.988361, 81.176572 - 81.169843),
+    ("T2R5->T2R6", 92.399134 - 92.427051, 81.016621 - 81.019298),
+]
+W_TIME_DIRECT = float(np.mean([f / t for _, t, f in W_TIME_AB]))   # = 0.0958
 
 
 def fit(constrained: bool = False, nonneg: bool = True):
@@ -280,11 +290,12 @@ def main():
     print(f"  {'sum':<10s} {w.sum():>8.4f}"
           f"   -- NOT 1, and nothing forces it to be; see the module docstring")
 
-    print("\n  --- and one weight is MEASURED, not fitted ---")
-    print("  R13 and R14 differ in `time_score` alone: the gated mean-blend never fired on a")
-    print("  single hidden window, so all four error subscores came back bit-identical.")
-    print(f"    d time  {92.978725 - 93.115432:+.6f}")
-    print(f"    d final {80.630755 - 80.643823:+.6f}")
+    print("\n  --- and one weight is MEASURED, not fitted: THREE single-subscore A/Bs ---")
+    print("  Each pair shipped the SAME prediction array by a different route, so all four")
+    print("  error subscores came back identical and only `time` moved.")
+    print(f"    {'pair':<11s} {'d time':>10s} {'d final':>10s} {'w_time':>8s}")
+    for nm, dt, df in W_TIME_AB:
+        print(f"    {nm:<11s} {dt:>+10.6f} {df:>+10.6f} {df / dt:>8.5f}")
     print(f"    => w_time = {W_TIME_DIRECT:.4f}   (FREE fit {w[3]:.4f}, "
           f"admissible {bounds['time'][0]:.4f}-{bounds['time'][1]:.4f}; "
           f"sum=1 fit {wc[3]:.4f})")
@@ -357,7 +368,17 @@ def main():
              "R17": (1, 2.803),
              # T2R5: the same four members through the Track-2 streaming path, batch 1.
              # 2.904 ms/step measured (validate_t2, log slurm-7156902.out) x1.850 = 5.37.
-             "T2R5": (1, 5.37)}
+             "T2R5": (1, 5.37),
+             # R18 / T2R6: R17 / T2R5's IDENTICAL members and band, with only the shipped
+             # path's arithmetic changed -- HOST_WRITE="torch" on Track 1 (bit-identical) and
+             # SPEC_PATH="bmm" on Track 2 (2e-06 relative).  The four error subscores came back
+             # EXACTLY equal on Track 1 and equal to 3e-06 of sps on Track 2, which is the gate
+             # the pair was designed around, so each round is a single-subscore A/B on `time`.
+             # Both local figures are RATIO-scaled from a contended build job (x0.834 measured
+             # back to back in one process), not measured idle.  THE BOARD FALSIFIED BOTH
+             # PREDICTIONS: Track 1 predicted -0.283 board ms and returned -0.089 (31 %), and
+             # Track 2 predicted -0.81 and returned +0.039 (a small move the WRONG way).
+             "R18": (1, 2.451), "T2R6": (1, 4.480)}
     for r in FIT_ROUNDS:
         key = r[0].split()[0]
         t = 0.72896 * (100.0 / r[6] - 1.0) ** 2 * 1000.0
