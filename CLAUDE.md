@@ -2007,8 +2007,10 @@ and §1b (the sim pair, R19/T2R7, predicted **81.340 / 81.163** nominal).
   q3h: mixed sim + no-sim ensembles buy nothing (6 = 3 on the proxy; a no-sim member is a
   worse member, not a diverse one). **q3i: a structured perturbation built from REAL data
   (frame-stride 2 / 3 windows, `--aux-fstride`) is null alone and adds nothing to sim** —
-  sim's value is its CONTENT, not the perturbation. q3j (training-only pressure head on sim
-  windows, `--sim-p-head`, stripped at save) tests the last unused piece of that content.
+  sim's value is its CONTENT, not the perturbation.
+  q3j/q3k: a training-only pressure head on sim windows (`--sim-p-head`, stripped at save;
+  `--sim-p-norm traj` — pooled p is Re²-dominated and a weak test) is **sps-null with TKE
+  −0.5 %** (≈ +0.01 `final`). **The sim line is closed in every direction.**
 * **Method.** HDF5 advisory-lock race between co-scheduled jobs → `HDF5_USE_FILE_LOCKING=FALSE`
   in `jobs/common.sh`. **Running jobs re-import the working tree per arm** → edit shared
   modules in a copy, install with an atomic `mv` after `ast.parse`, keep the default path

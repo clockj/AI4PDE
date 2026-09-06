@@ -787,8 +787,15 @@ reading `Track_1/plan/plan_20260905.md` §7. Two packages staged, neither submit
   auxiliary term perturb training as much as sim (+3.1 % field) and buy nothing alone
   (43.97 = 43.97 proxy, −0.08 full; K = 3 loses) or on top of sim. **"Any structured
   perturbation" is falsified: sim's value is its CONTENT** — conditions and dynamics the real
-  grid lacks — delivered as a regularizer. q3j (a training-only pressure head on sim windows,
-  the last unused piece of sim content) is the follow-up.
+  grid lacks — delivered as a regularizer.
+  → **q3j / q3k (pressure, the last unused sim content)**: a training-only `head_p` on sim
+  windows, stripped at save. Pooled-normalized p is a WEAK test (the head explained 99.1 % of
+  a Re²-dominated variance; per-trajectory p std spans 4 382×) and reads null; per-trajectory
+  normalized p (λ 0.1, psim 0.138, field cost 1.4 %) is a clean test and reads **sps null
+  (44.29 / 50.57 vs 44.30 / 50.52) with TKE −0.6 % / −0.5 %** — content the trunk can use,
+  worth ≈ +0.01 `final`. **The sim line is closed in every direction.** TKE-only movers this
+  round, for a future round that needs TKE specifically: capacity-with-sim (−1.1 % per model,
+  priced out by members) and per-trajectory pressure (−0.5 %, sps-neutral).
 * **Method, earned this round.** (i) An HDF5 advisory-lock race between co-scheduled jobs on
   one node killed an arm; `HDF5_USE_FILE_LOCKING=FALSE` in `jobs/common.sh`, and Slurm
   snapshots scripts at submit. (ii) **Running jobs re-import the working tree per arm/fold/
