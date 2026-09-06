@@ -755,14 +755,34 @@ reading `Track_1/plan/plan_20260905.md` §7. Two packages staged, neither submit
   k-fold needs at this effect size. Honest bracket: rel and tke within ±0.5 %, mvpe slightly
   better, sps 0…+0.36, accuracy part 0…+0.14, centre ≈ +0.05. **Do not count the fast paths
   twice**: after R18/T2R6 the sim pair's `time` delta is ≈ 0.
-* **Overnight screens on the sim recipe, one seed each, bit-matched to `fno_r17_sim.pth`**
-  (q3d/e/f/g, ≈28 GPU-h): `lam_sim` 0.1 / 1.0 and sim + do30 (dose-response = mechanism);
-  sim + L12 and sim + w128 (does data re-open capacity?); `--sim-stride 2` and 600 epochs
-  (volume / steps); and a **per-pixel domain map** `--sim-map std|meanstd` (twin's per-pixel
-  σ field, optionally the twin's time-mean field, gain clamped to [g/3, 3g] with 21–33 % of
-  live pixels at the clamp — the guard against round 14's `--sim-loss shape` failure). Scalar
-  mode and its cache tag verified bit-identical to the pre-round-17 map. Any pass goes into
-  the NEXT k-fold, not this package.
+* **The sim recipe's knobs, screened overnight (q3d/e/f/g, one seed each, bit-matched to
+  `fno_r17_sim.pth`, ≈24 GPU-h) — ALL closed, and together they say what sim IS.**
+  → **Dose (q3d)**: `lam_sim` 0.1 / 0.3 / 1.0 → proxy sps 44.27 / 44.30 / 44.32, full 50.53 /
+  50.52 / 50.52, flat inside the sim trio's own spread; rel-L2 monotone in λ (−0.6 % across
+  the range), TKE anti-monotone and at λ 1.0 **worse than no sim**. λ 0.1 perturbs training
+  by 1.8 % and already buys the whole containment gain; λ 1.0 perturbs it 14 % and breaks
+  TKE. sim + do30 splits inside noise — sim does not substitute for dropout.
+  → **Volume / schedule (q3f)**: `--sim-stride 2` (2.5× the sim windows, sampler verified) is
+  a null **to four decimals** on every metric and on the training curve; 600 epochs splits
+  inside the floor with a 6.6 % better fit. Not window-limited, not step-limited.
+  → **Faithfulness (q3g)**: the per-pixel map LOSES, monotonically — scalar → std → meanstd is
+  proxy sps 44.30 → 44.26 → 44.17, rel-L2 0.1049 → 0.1054 → 0.1059; the per-pixel maps make
+  the sim windows 29 % easier to fit and pull the real objective back toward the no-sim
+  control. **The statistics sim gets wrong are most of what the term contributes.** Sim-side
+  preprocessing is closed in both directions (round 14's `--sim-loss shape` −0.7; this).
+  → **Capacity with sim (q3e)**: sim's gain GROWS with capacity (L12 +0.37 / +0.22, w128
+  +0.37 / +0.20 vs their no-sim twins, against +0.33 / +0.12 at L8; 11 of 12 error cells
+  better) — but against the sim L8 recipe `simL12` fails the proxy (−0.04) and `simw128`
+  only ties it (+0.03; +0.16 full), trading rel-L2 for the round's lowest single-model TKE
+  (−1.1 %). At 2–3 fp16 members and 1.5–1.8× the FLOPs a proxy tie cannot pay. **Capacity is
+  closed a second time, with data.** One door: if int8 packing ever makes w128 members free,
+  revisit `simw128` on TKE.
+  → **Mechanism**: value flat in weight over 10×, flat in window diversity, inverted in
+  faithfulness, growing with model size, TKE-null in the interior k-fold — **sim is a
+  STRUCTURED PERTURBATION** (extra supervised pairs with plausible dynamics and wrong
+  statistics), i.e. a regularizer, not data. Two follow-ups queued on that reading: q3h
+  (mixed sim + no-sim ensembles from existing twins, eval only) and q3i (the same perturbation
+  built from REAL data alone — real windows at frame stride 2 / 3, alone and on top of sim).
 * **Method, earned this round.** (i) An HDF5 advisory-lock race between co-scheduled jobs on
   one node killed an arm; `HDF5_USE_FILE_LOCKING=FALSE` in `jobs/common.sh`, and Slurm
   snapshots scripts at submit. (ii) **Running jobs re-import the working tree per arm/fold/

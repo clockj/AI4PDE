@@ -129,6 +129,25 @@ def _sam_restore(saved: list) -> None:
             p.copy_(w)
 
 
+def aux_index(trajs: list[np.ndarray], k: int, stride: int) -> np.ndarray:
+    """(traj, start) pairs for FRAME-STRIDE-k windows over the REAL trajectories.
+
+    A window is `d[start : start + (T_IN+T_OUT)*k : k]` -- the same flow, sampled every k-th
+    frame, so its input is 20 frames spanning 20*k real frames and its target the next 20 at
+    the same spacing. At k > 1 that is the real wake at k times its own shedding frequency:
+    physically plausible dynamics (every frame is a real PIV measurement, in the right order,
+    of the right flow) with statistics no real condition has (no Strouhal number in the data
+    matches). It is built from the SAME `trajs` list `window_index` uses, so `--exclude` is
+    respected by construction -- a held-out trajectory is not in the list and cannot enter.
+
+    k = 1 is the degenerate case and is a legitimate CONTROL rather than a no-op: identical
+    distribution to the real term, one extra batch per step. The perturbation arms are k >= 2.
+    """
+    span = (T_IN + T_OUT) * k
+    return np.asarray([(i, t) for i, d in enumerate(trajs)
+                       for t in range(0, len(d) - span + 1, stride)], dtype=np.int64)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default="/users/PAS1187/qwu/RealPDE/train_real/train_real")
@@ -497,6 +516,22 @@ def main() -> None:
                          "deployment situation -- the Track-2 example trajectory is Re 2968, "
                          "below sim's own range. Separates 'sim teaches this condition' from "
                          "'sim teaches the regime'.")
+    ap.add_argument("--aux-fstride", type=int, default=0,
+                    help="0 = OFF (nothing is built, nothing is drawn, the RNG is untouched). "
+                         "k >= 1 adds a SECOND loss term on real windows taken every k-th "
+                         "frame -- the same flow at k times its shedding frequency. Q3d/f/g "
+                         "measured sim's value to be flat in weight (10x), flat in window "
+                         "diversity (2.5x) and to DECREASE monotonically as the domain map "
+                         "makes sim more real-like, which reads as a structured PERTURBATION: "
+                         "extra supervised pairs with plausible dynamics and wrong statistics. "
+                         "This builds one from real data alone, so it separates that mechanism "
+                         "from sim's physics content (Re/AoA coverage, CFD dynamics). k = 1 is "
+                         "the control: same distribution, one extra batch per step.")
+    ap.add_argument("--lam-aux", type=float, default=0.3,
+                    help="weight on the aux term, on the scale of --lam-sim. Real still "
+                         "defines the epoch: one aux batch is drawn per real step.")
+    ap.add_argument("--aux-stride", type=int, default=0,
+                    help="window START stride for the aux index. 0 = same as --stride.")
     ap.add_argument("--all-data", action="store_true",
                     help="train on ALL trajectories including the held-out ones. Submission "
                          "checkpoints only -- it makes local evaluation meaningless.")
@@ -581,6 +616,15 @@ def main() -> None:
         print(f"sim: {len(sim_idx)} windows at stride {args.sim_stride}, "
               f"lam_sim {args.lam_sim} loss '{args.sim_loss}' map '{args.sim_map}'", flush=True)
 
+    aux_idx_t = None
+    if args.aux_fstride >= 1:
+        # `trajs` is the real training list AFTER --exclude, so the aux pool inherits the split.
+        a_stride = args.aux_stride or args.stride
+        aux_idx = aux_index(trajs, args.aux_fstride, a_stride)
+        aux_idx_t = torch.from_numpy(aux_idx)
+        print(f"aux: {len(aux_idx)} windows at frame stride {args.aux_fstride}, "
+              f"start stride {a_stride}, lam_aux {args.lam_aux}", flush=True)
+
     stats = NORM_STATS[args.norm]
     mean_v = torch.from_numpy(stats[0]).to(dev)
     std_v = torch.from_numpy(stats[1]).to(dev)
@@ -661,7 +705,7 @@ def main() -> None:
         # steps over a differently-weighted pool rather than one pass over every window.
         perm = (torch.randperm(len(idx_t)) if w_samp is None else
                 torch.multinomial(w_samp, len(idx_t), replacement=True))
-        acc = np.zeros(11)
+        acc = np.zeros(12)
         n = 0
         for i in range(0, len(idx_t), args.batch):
             pos = perm[i:i + args.batch]
@@ -897,12 +941,48 @@ def main() -> None:
                             return f / f.pow(2).mean(1, keepdim=True).sqrt().clamp(min=1e-3)
                         l_sim = torch.mean((_shape(ps_) - _shape(ys_)) ** 2)
                     loss = loss + args.lam_sim * l_sim
+
+                l_aux = torch.zeros((), device=dev)
+                if aux_idx_t is not None and args.lam_aux > 0.0:
+                    # THE PERTURBATION TEST (round 17 Q3i). Same shape as the sim term above --
+                    # one batch per real step, drawn with replacement, the same `--sim-loss
+                    # full` field loss (mean/fluctuation split at --w-mean, channel weights cw)
+                    # -- but the windows are REAL frames at stride k. It deliberately does NOT
+                    # follow --sim-loss: the `shape` variant is a closed negative (round 14).
+                    #
+                    # RNG ORDER. This draw is placed AFTER the sim draw on purpose, so within a
+                    # step the sim minibatch sees the generator where --aux-fstride 0 would have
+                    # left it, and the FIRST step's sim batch is unchanged. It does NOT hold
+                    # beyond that: both draws come from the default CPU generator and this one
+                    # consumes from it, so the next sim draw, the next epoch's torch.randperm
+                    # and (through the extra forward's dropout masks) the CUDA stream all
+                    # diverge. An aux run is a different run from its control, not a superset of
+                    # it -- only --seed's shared initialization is bit-matched, exactly as for
+                    # --sim-stride or --fgn. With --aux-fstride 0 none of this executes.
+                    k_a = args.aux_fstride
+                    aa = aux_idx_t[torch.randint(len(aux_idx_t), (args.batch,))]
+                    xa = torch.stack([trajs_t[i][t:t + T_IN * k_a:k_a] for i, t in aa.tolist()])
+                    ya = torch.stack([trajs_t[i][t + T_IN * k_a:t + (T_IN + T_OUT) * k_a:k_a]
+                                      for i, t in aa.tolist()])
+                    xa = xa.to(dev, non_blocking=True)
+                    ya = ya.to(dev, non_blocking=True)
+                    # Same normalizer as the real term: `trajs_t` is raw physical, and with
+                    # --norm real this is exactly (x - MEAN)/STD, the sim path's expression.
+                    s_a = window_scale(xa) if self_norm_mode else torch.ones(1, device=dev)
+                    xa = self_norm(xa, s_a, mean_v, std_v)
+                    ya = self_norm(ya, s_a, mean_v, std_v)
+                    pa = from_ch(model(to_ch(xa), detach_var=args.detach_var)[0])
+                    da = pa - ya
+                    dam = da.mean(1, keepdim=True)
+                    l_aux = (args.w_mean * torch.mean((dam * cw) ** 2)
+                             + torch.mean(((da - dam) * cw) ** 2))
+                    loss = loss + args.lam_aux * l_aux
                 # TENSORS, not floats: `.item()` is a device sync, and the inline block it
                 # replaces did all eleven of them AFTER opt.step(), where the CPU is already
                 # waiting. Calling them here instead would stall the pipeline before the
                 # backward is even launched.
                 return loss, [loss, l_field, l_var, l_tke, l_probe, l_div,
-                              l_spec, l_crps, l_svar, l_sim, l_tail]
+                              l_spec, l_crps, l_svar, l_sim, l_tail, l_aux]
 
             loss, terms = compute_loss()
             opt.zero_grad(set_to_none=True)
@@ -939,13 +1019,14 @@ def main() -> None:
         if ep % 5 == 0 or ep == args.epochs - 1:
             a = acc / n
             # Existing field names and order are unchanged -- log scrapers depend on them; the
-            # two FGN columns are appended and stay 0.00000 when --fgn is off. `tail` is
-            # appended for the same reason and stays 0.00000 when --lam-tail is off, so the
-            # existing columns keep both their names and their positions.
+            # two FGN columns are appended and stay 0.00000 when --fgn is off. `tail` and `aux`
+            # are appended for the same reason and stay 0.00000 when --lam-tail / --aux-fstride
+            # are off, so the existing columns keep both their names and their positions.
             print(f"  epoch {ep:3d}  loss {a[0]:.5f}  field {a[1]:.5f}  "
                   f"var {a[2]:.5f}  tke {a[3]:.5f}  probe {a[4]:.5f}  "
                   f"div {a[5]:.5f}  spec {a[6]:.5f}  crps {a[7]:.5f}  "
                   f"svar {a[8]:.5f}  sim {a[9]:.5f}  tail {a[10]:.5f}  "
+                  f"aux {a[11]:.5f}  "
                   f"({time.time()-t0:.0f}s)", flush=True)
 
     if swa_state is not None:

@@ -1992,11 +1992,20 @@ and §1b (the sim pair, R19/T2R7, predicted **81.340 / 81.163** nominal).
   +0.05**; after R18/T2R6 its `time` delta is ≈ 0 — do not count the fast paths twice.
   Members `unet/fno_all_w96L8do45sim_s1..4.pth` (weights, never evidence); twins
   `fno_r17_sim{,_s2,_s3}.pth`; band `band_r17_simx4.npz` shared by both arms.
-* **Overnight (q3d/e/f/g)**: `lam_sim` 0.1 / 1.0, sim + do30, sim + L12, sim + w128,
-  `--sim-stride 2`, 600 epochs, and **`--sim-map std|meanstd`** (per-pixel σ field and
-  optionally the time-mean field from the real twin, gain clamped to [g/3, 3g], 21–33 % of
-  live pixels at the clamp; scalar mode bit-identical to the old map, same cache tag). A pass
-  goes into the next k-fold, not this package.
+* **Overnight screens (q3d/e/f/g, ≈24 GPU-h) — every knob of the sim recipe is closed, and
+  together they say what sim is.** Dose: `lam_sim` 0.1 / 0.3 / 1.0 flat on sps (44.27 / 44.30 /
+  44.32 proxy), rel-L2 monotone, TKE anti-monotone and worse than no-sim at 1.0; λ 0.1 already
+  carries the whole gain. Volume: stride 2 (2.5× windows) null to four decimals; 600 ep split
+  inside the floor. Faithfulness: `--sim-map std|meanstd` (per-pixel σ, then the twin's mean
+  field; gain clamped to [g/3, 3g], 31 % of live pixels at the clamp) LOSES monotonically
+  (44.30 → 44.26 → 44.17) — a more real-like sim perturbs training less and generalizes
+  worse. Capacity: sim's gain grows with size (L12 / w128 +0.37 proxy vs their no-sim twins)
+  but `simL12` fails and `simw128` only ties the sim L8 recipe on the proxy, trading rel-L2
+  for the round's lowest TKE (−1.1 %); at 2–3 fp16 members it cannot pay. **Sim is a
+  STRUCTURED PERTURBATION — a regularizer, not data** — and the shipped recipe (λ 0.3, scalar
+  map, stride 5, 400 ep, do45, L8) sits on a plateau whose height is Q3a's +0.33 / +0.15 sps.
+  Follow-ups on that reading: q3h (mixed sim + no-sim ensembles, eval) and q3i (the same
+  perturbation from REAL windows at frame stride 2 / 3, `--aux-fstride`, alone and with sim).
 * **Method.** HDF5 advisory-lock race between co-scheduled jobs → `HDF5_USE_FILE_LOCKING=FALSE`
   in `jobs/common.sh`. **Running jobs re-import the working tree per arm** → edit shared
   modules in a copy, install with an atomic `mv` after `ast.parse`, keep the default path
