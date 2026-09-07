@@ -456,6 +456,21 @@ def main() -> None:
                          "quantity to minimize is the error TAIL, not its rms. This is that "
                          "tail, written directly into the objective. --loss rel only averages "
                          "a per-sample norm and has no per-element term to take a tail of.")
+    ap.add_argument("--subpix", type=float, default=0.0,
+                    help="weight on a TRAINING-ONLY SUB-PIXEL target: predict the output "
+                         "window at the THREE decimation phases the scored grid discards, "
+                         "from the phase-(0,0) input alone. model.load_trajectories reads the "
+                         "raw 64x128 frames and slices [py::2, px::2]; (0,0) is what is scored "
+                         "and the other three are the SAME PIV measurement sampled half a "
+                         "coarse cell over -- real flow at 4x the sample count, not synthetic "
+                         "perturbation. THIS IS NOT --phases 4, which is null twice: that "
+                         "makes four INDEPENDENT tasks (predict phase p from phase p) while "
+                         "this makes ONE task with a 4x denser target, i.e. a "
+                         "super-resolution constraint that forces the trunk to represent the "
+                         "field BETWEEN the observed grid points. The head is a 1x1 conv on "
+                         "the same features head_field reads and is STRIPPED at save, so the "
+                         "shipped blob is a plain FNO2d and inference is unchanged. Costs 4x "
+                         "the real-data RAM, exactly as --phases 4 does.")
     ap.add_argument("--lam-cov", type=float, default=0.0,
                     help="weight on a COVERAGE (redescending Welsch) field loss. SPS scores "
                          "per-element containment, exp(-2h/sigma)*1[|E|<=h], so an element "
@@ -626,6 +641,20 @@ def main() -> None:
     # (_fno.load_any refuses them). Refuse rather than mask an inconsistent input.
     if args.aug_mask > 0.0 and (args.hist or args.ctx != T_IN):
         raise SystemExit("--aug-mask is not implemented for --hist / --ctx != 20")
+    if args.subpix > 0.0:
+        if args.arch != "fno":
+            raise SystemExit(f"--subpix is implemented on --arch fno (got {args.arch})")
+        if args.loss != "mse":
+            raise NotImplementedError("--subpix uses the per-element form --loss mse builds")
+        if args.phases != 1:
+            raise SystemExit("--subpix consumes all four phases itself; leave --phases 1")
+        if args.hist or args.ctx != T_IN:
+            raise SystemExit("--subpix is not implemented for --hist / --ctx != 20")
+        if args.norm != "real":
+            # self_norm's per-window scale is (B,1,1,1,1) and the auxiliary target is
+            # (B,3,T,H,W,C); right-aligned broadcasting would silently line B up with the
+            # phase axis. --norm self is rejected anyway (round 13 section 26).
+            raise SystemExit("--subpix requires --norm real")
     if args.lam_cov > 0.0 and args.loss != "mse":
         raise NotImplementedError(
             "--lam-cov needs the per-element field error the --loss mse branch forms; "
@@ -649,8 +678,22 @@ def main() -> None:
     # recoverable before the global normalizer folds every condition onto one distribution.
     self_norm_mode = args.norm == "self"
     excl = [] if args.all_data else (args.exclude if args.exclude is not None else VAL_TRAJ)
-    trajs = load_trajectories(args.data, exclude=excl,
-                              normalize=False, phases=PHASES_ALL[:args.phases])
+    if args.subpix > 0.0:
+        # All four phases, then phase (0, 0) alone as `trajs` -- round 9 verified that slice is
+        # bit-identical to the old `[:, ::2, ::2]`, so the window index, the AoA table and every
+        # loss below are exactly what they would be at --phases 1. The other three become the
+        # auxiliary target, aligned by construction: load_trajectories appends the four phases
+        # of each file consecutively, so trajs_all[4*j + p] is trajectory j at phase p.
+        trajs_all = load_trajectories(args.data, exclude=excl, normalize=False,
+                                      phases=PHASES_ALL)
+        trajs, sub_np = trajs_all[0::4], [trajs_all[k::4] for k in (1, 2, 3)]
+        print(f"--subpix {args.subpix}: {len(trajs)} phase-(0,0) trajectories + "
+              f"{sum(len(g) for g in sub_np)} auxiliary phase targets", flush=True)
+        del trajs_all
+    else:
+        sub_np = None
+        trajs = load_trajectories(args.data, exclude=excl,
+                                  normalize=False, phases=PHASES_ALL[:args.phases])
     idx = window_index(trajs, args.stride)
     held = "NONE (all-data)" if args.all_data else f"{len(excl)} held out"
     print(f"train: {len(trajs)} trajectory-phases ({args.phases} phase(s)) -> "
@@ -675,6 +718,8 @@ def main() -> None:
     # Trajectories stay on the CPU (~1 GB); windows are sliced per batch. Materializing them
     # would need ~21 GB at stride 2.
     trajs_t = [torch.from_numpy(d) for d in trajs]
+    sub_t = ([[torch.from_numpy(d) for d in g] for g in sub_np]
+             if sub_np is not None else None)
     idx_t = torch.from_numpy(idx)
 
     sim_trajs_t = sim_idx_t = None
@@ -768,7 +813,8 @@ def main() -> None:
                   mean_head=args.mean_head, osc_modes=args.osc_modes,
                   osc_global=args.osc_global, osc_zeromean=args.osc_zeromean,
                   tbasis=args.tbasis, mode_drop=args.mode_drop,
-                  fgn_dim=args.fgn_dim, p_head=args.sim_p_head).to(dev)
+                  fgn_dim=args.fgn_dim, p_head=args.sim_p_head,
+                  sub_head=args.subpix > 0.0).to(dev)
     print(f"params: {sum(p.numel() for p in model.parameters())/1e6:.2f}M", flush=True)
 
     if args.init:
@@ -814,7 +860,7 @@ def main() -> None:
         # steps over a differently-weighted pool rather than one pass over every window.
         perm = (torch.randperm(len(idx_t)) if w_samp is None else
                 torch.multinomial(w_samp, len(idx_t), replacement=True))
-        acc = np.zeros(14)
+        acc = np.zeros(15)
         n = 0
         for i in range(0, len(idx_t), args.batch):
             pos = perm[i:i + args.batch]
@@ -829,6 +875,14 @@ def main() -> None:
             s = window_scale(x) if self_norm_mode else torch.ones(1, device=dev)
             x, y = self_norm(x, s, mean_v, std_v), self_norm(y, s, mean_v, std_v)
             mul, off = std_v * s, mean_v * s
+            y_sub = None
+            if sub_t is not None:
+                # (B, 3, T_OUT, H, W, C), the same (trajectory, t) windows as `y`, normalized
+                # by the same affine -- so it has to sit AFTER `s` is formed, not beside fetch.
+                y_sub = torch.stack([torch.stack(
+                    [g[i][t + T_IN:t + T_IN + T_OUT] for i, t in sel.tolist()])
+                    for g in sub_t], 1).to(dev, non_blocking=True)
+                y_sub = self_norm(y_sub, s, mean_v, std_v)
             if hist is not None:
                 hist = norm_history(hist, s, mean_v, std_v)
             if ctx is not None:
@@ -887,7 +941,15 @@ def main() -> None:
                 # Hoisted out of the model call so the FGN sample passes below feed the network the
                 # identical tensor rather than rebuilding it K times.
                 inp = torch.cat(parts, 1) if len(parts) > 1 else parts[0]
-                raw, logstd = model(inp, detach_var=args.detach_var)
+                if args.subpix > 0.0:
+                    # One forward, not two: the auxiliary head reads the same trunk
+                    # features head_field does, so asking for it here costs a 1x1 conv
+                    # rather than a second pass through eight spectral blocks.
+                    raw, logstd, sub = model(inp, detach_var=args.detach_var,
+                                             return_sub=True)
+                else:
+                    raw, logstd = model(inp, detach_var=args.detach_var)
+                    sub = None
                 raw = from_ch(raw)
 
                 if args.var_head:
@@ -949,6 +1011,14 @@ def main() -> None:
                     cn = (args.cov_c * SPS_SIGMA) * cw / mul
                     l_cov = torch.mean(cn ** 2 * (1.0 - torch.exp(-0.5 * (en / cn) ** 2)))
                     loss = loss + args.lam_cov * l_cov
+                l_sub = torch.zeros((), device=dev)
+                if args.subpix > 0.0:
+                    # head_sub emits (B, 3*T_OUT*C, H, W) in the same time-major layout
+                    # to_ch/from_ch use, so the reshape is the from_ch one with a leading
+                    # phase axis.
+                    sp = sub.reshape(b, 3, T_OUT, C, H, W).permute(0, 1, 2, 4, 5, 3)
+                    l_sub = torch.mean(((sp - y_sub) * cw) ** 2)
+                    loss = loss + args.subpix * l_sub
                 l_probe = torch.zeros((), device=dev)
                 if args.lam_p > 0.0:
                     # scoring.mvpe_rel_l2_per_sample, verbatim: probe_y = 8..24 step 2,
@@ -1149,7 +1219,7 @@ def main() -> None:
                 # backward is even launched.
                 return loss, [loss, l_field, l_var, l_tke, l_probe, l_div,
                               l_spec, l_crps, l_svar, l_sim, l_tail, l_aux, l_psim,
-                              l_cov]
+                              l_cov, l_sub]
 
             loss, terms = compute_loss()
             opt.zero_grad(set_to_none=True)
@@ -1195,6 +1265,7 @@ def main() -> None:
                   f"div {a[5]:.5f}  spec {a[6]:.5f}  crps {a[7]:.5f}  "
                   f"svar {a[8]:.5f}  sim {a[9]:.5f}  tail {a[10]:.5f}  "
                   f"aux {a[11]:.5f}  psim {a[12]:.5f}  cov {a[13]:.5f}  "
+                  f"sub {a[14]:.5f}  "
                   f"({time.time()-t0:.0f}s)", flush=True)
 
     if swa_state is not None:
@@ -1202,6 +1273,14 @@ def main() -> None:
         model.load_state_dict({k: v.to(dev) for k, v in swa_state.items()})
 
     sd_out = model.state_dict()
+    if args.subpix > 0.0:
+        # STRIP THE SUB-PIXEL HEAD, for the reason spelled out under --sim-p-head below: the
+        # shipped `_fno.py` builds a plain FNO2d from the blob's flags and loads it strict, so
+        # one unexpected `head_sub.*` key would fail every loader in the project, at scoring
+        # time, after the training was paid for.
+        n0 = len(sd_out)
+        sd_out = {k: v for k, v in sd_out.items() if not k.startswith("head_sub.")}
+        print(f"save: stripped {n0 - len(sd_out)} head_sub.* tensor(s)", flush=True)
     if args.sim_p_head:
         # STRIP THE AUXILIARY HEAD. `_fno._fno_from_blob` builds its vendored FNO2d from the
         # blob's flags and calls load_state_dict with strict=True, so one unexpected `head_p.*`

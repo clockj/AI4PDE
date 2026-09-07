@@ -88,7 +88,8 @@ class FNO2d(nn.Module):
                  var_pred_std: bool = False, fgn_dim: int = 0, dropout: float = 0.0,
                  mean_head: bool = False, osc_modes: int = 0,
                  osc_global: bool = False, osc_zeromean: bool = False,
-                 tbasis: int = 0, mode_drop: float = 0.0, p_head: bool = False):
+                 tbasis: int = 0, mode_drop: float = 0.0, p_head: bool = False,
+                 sub_head: bool = False):
         super().__init__()
         # Channel dropout between spectral blocks -- the one classical regularizer the project
         # never tried, against a diagnosis that is the project's own: with 74 trajectories the
@@ -268,8 +269,27 @@ class FNO2d(nn.Module):
         # its control, which is the one thing --seed exists to prevent.
         self.head_p = nn.Conv2d(width, T_OUT, 1) if p_head else None
 
+        # --subpix: a TRAINING-ONLY head that predicts the target at the THREE decimation
+        # phases the scored grid throws away. model.load_trajectories reads the raw 64x128
+        # frames and slices [py::2, px::2]; phase (0, 0) is what is scored and (0,1)/(1,0)/(1,1)
+        # are the SAME PIV measurement sampled half a coarse cell over -- real flow, not
+        # synthetic perturbation.
+        #
+        # WHY THIS IS NOT --phases 4, which is null twice (round 17 Q2b at 400 epochs and at
+        # matched optimizer steps). --phases 4 makes four INDEPENDENT tasks: predict phase p
+        # from phase p. This makes ONE task with a 4x denser target: predict all four phases
+        # from phase 0. That is a super-resolution constraint -- the trunk has to represent the
+        # field BETWEEN the observed grid points -- and no data-side arm has ever imposed it.
+        #
+        # Stripped from the state_dict at save (train2.py), like head_p, so the shipped blob
+        # is a plain FNO2d and inference is bit-identical to a --subpix 0 member. CONSTRUCTED
+        # LAST for the same reason head_p is: at a fixed --seed an arm and its control must
+        # draw the same initialization for the trunk and the two deployed heads.
+        self.head_sub = nn.Conv2d(width, 3 * T_OUT * C, 1) if sub_head else None
+
     def forward(self, prev: torch.Tensor, detach_var: bool = False,
-                z: torch.Tensor | None = None, return_p: bool = False):
+                z: torch.Tensor | None = None, return_p: bool = False,
+                return_sub: bool = False):
         """`z` is the FGN noise vector, (B, fgn_dim). None (or fgn_dim = 0) is the plain FNO.
 
         `return_p` appends the auxiliary pressure prediction, (B, T_OUT, H, W), read off the
@@ -350,6 +370,8 @@ class FNO2d(nn.Module):
                 sp = field.detach().reshape(len(prev), T_OUT, C, *field.shape[-2:]).std(1)
                 zv = torch.cat([zv, sp], 1)
             logstd = self.head_logstd(zv)
+        if return_sub:
+            return field, logstd, (self.head_sub(h) if self.head_sub is not None else None)
         if return_p:
             return field, logstd, (self.head_p(h) if self.head_p is not None else None)
         return field, logstd
@@ -507,7 +529,7 @@ def build(arch: str, width: int, var_head: bool, extra_ch: int, modes_y: int = 1
           mean_head: bool = False, osc_modes: int = 0,
           osc_global: bool = False,
           osc_zeromean: bool = False, tbasis: int = 0, mode_drop: float = 0.0,
-          p_head: bool = False):
+          p_head: bool = False, sub_head: bool = False):
     """Factory shared by train2.py and eval_wp.run so both build identical objects.
 
     `fgn_dim` defaults to 0, which builds no `film` module at all -- so a state_dict saved
@@ -539,7 +561,8 @@ def build(arch: str, width: int, var_head: bool, extra_ch: int, modes_y: int = 1
         return FNO2d(width, modes_y, modes_x, n_layers, var_head, extra_ch, var_mlp, lift_mlp,
                      point_mlp, var_hidden, var_deep, var_in_std,
                      var_pred_std, fgn_dim, dropout, mean_head, osc_modes, osc_global,
-                     osc_zeromean, tbasis, mode_drop, p_head=p_head)
+                     osc_zeromean, tbasis, mode_drop, p_head=p_head,
+                     sub_head=sub_head)
     if arch == "deeponet":
         return DeepONetCh(p, trunk_width=width * 2, branch_width=width,
                           var_head=var_head, extra_ch=extra_ch)
