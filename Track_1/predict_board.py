@@ -19,9 +19,12 @@ The three instruments
    per-element stretch f_hat = 1.360 and, at that stretch, reproduced the board's 39.626 to
    0.05. So: stretch the proxy error field by 1.360, take the accuracy factors from the
    PREDICTED board metrics, score the package's actual band.
-3. **Board time.** `board ms = 2.616 + 0.435*invocations + 0.803*local ms` -- the SEVEN-round
-   refit (round 13), rms 0.690 ms, which replaced the four-round `4.447 + 0.324*inv + 0.431*ms`
-   after it missed R11 by -1.86 ms and R12 by -0.90. At ~4 board ms, 1 board ms = -0.070 final.
+3. **Board time.** `board ms = 3.274 + 0.336*invocations... ` -- see LAT_LOC below. The
+   0.803 slope this file used through round 17 was FALSIFIED by R18 and T2R6, two rounds that
+   shipped a bit-identical prediction array through a faster path and returned -0.089 and
+   +0.039 board ms for local cuts of -0.352 and -0.890. At ~4 board ms, 1 board ms = -0.070
+   final, so the practical consequence is that latency work is finished and EXTRA MEMBERS ARE
+   NEARLY FREE -- the binding constraint on the member count is the 256 MB cap.
 
 ANCHOR-RELATIVE MODE (`--anchor`), added round 15 and now the default way to use this file
 -----------------------------------------------------------------------------------------
@@ -83,10 +86,18 @@ RATIO = dict(rel=1.078, tke=1.150, mvpe=1.511)
 R10 = dict(rel_l2=94.576394, tke=79.152828, mvpe=93.681162, time=91.120851, sps=39.626333,
            final=80.512025)
 
-# Seven-round refit (round 13). The four-round model this file shipped with missed R11 by
-# -1.86 ms and R12 by -0.90; its residuals were ORDERED BY DATE, i.e. the eval machine drifts,
-# so the intercept is not a constant and no fit predicts `time_score` better than ~+-1 point.
-LAT_C, LAT_INV, LAT_LOC = 2.616, 0.435, 0.803
+# ROUND 18: THE LOCAL-MS SLOPE IS 0.336, NOT 0.803, AND IT WAS MEASURED RATHER THAN FITTED.
+# R18 and T2R6 each shipped the SAME prediction array as its anchor through a faster path, so
+# all four error subscores came back identical and `time` was the only thing that moved:
+#   R17  -> R18    local -0.352 4060-eq ms   board -0.089 ms   slope +0.25
+#   T2R5 -> T2R6   local -0.890              board +0.039      slope -0.04
+#   T2R3 -> T2R5   local +2.353 (8xL4 -> 4xL8, the batch-1 step nearly doubled)  +0.114  +0.05
+# Refitting the ELEVEN one-invocation rounds -- all of the modern era -- gives
+# `board = 3.274 + 0.336*local` at rms 0.337 ms, where the seven-round model below missed every
+# one of them by 1.3-2.5 ms. The invocation coefficient cannot be re-measured from a set that
+# is all one invocation, so it is left where round 13 put it. NOTE that in --anchor mode (the
+# only mode anyone should use) LAT_C cancels in the difference and ONLY THE SLOPES matter.
+LAT_C, LAT_INV, LAT_LOC = 3.274, 0.435, 0.336
 
 # Recorded board rounds usable as anchors: the five actual subscores, and `final`.
 ANCHORS = {
@@ -125,6 +136,15 @@ ANCHORS = {
                  sps=40.148056, final=80.852826),
     "t1r14": dict(rel_l2=94.679785, tke=77.983720, mvpe=93.613336, time=92.978725,
                   sps=39.689258, final=80.630755),
+    # 2026-09-06 18:17. R17's and T2R5's packages again, with only the shipped path's
+    # arithmetic changed (HOST_WRITE="torch" / SPEC_PATH="bmm"). The four error subscores came
+    # back bit-identical on Track 1 and equal to 3e-06 of sps on Track 2, so these anchors carry
+    # the SAME accuracy level as r17L8 / t2r16L8 and differ only in `time`. Anchor here when the
+    # candidate is built on top of the fast paths, which everything from round 18 on is.
+    "r18": dict(rel_l2=94.745531, tke=78.635462, mvpe=93.974234, time=93.058602,
+                sps=41.324574, final=81.176572),
+    "t2r6": dict(rel_l2=94.727329, tke=78.357043, mvpe=93.692366, time=92.399134,
+                 sps=41.191137, final=81.016621),
     "r10": R10,
 }
 
