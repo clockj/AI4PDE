@@ -80,6 +80,13 @@ ROUNDS = [
     # now done twice at this operating point.
     ("R17 L8do45x4/1inv a60", "2026-09-04", 915380, 94.745531, 78.635462, 93.974234, 92.988361, 41.324574, 81.169843),
     ("R18 L8do45x4 hostw   ", "2026-09-06", 917177, 94.745531, 78.635462, 93.974234, 93.058602, 41.324574, 81.176572),
+    # R19 = the SIM members: four all-data w96 L8 do45 FNOs CO-TRAINED on mapped sim
+    # (--lam-sim 0.3 --sim-loss full), R18's exact shape so `time` is a pure draw.  It reads
+    # sim's ACCURACY, and the answer is: real, half the size the proxy said, and TKE goes the
+    # WRONG WAY.  rel_l2 -0.63 % of error (proxy said -1.19 %), mvpe -1.02 % (proxy -0.99 %,
+    # nearly exact), tke **+0.61 % WORSE** where both the proxy (-1.04 %) and the interior
+    # k-fold (+0.03 %, null) said otherwise, and `sps` +0.008 against a predicted +0.361.
+    ("R19 simx4/1inv a60 fp16", "2026-09-08", 918587, 94.776881, 78.532564, 94.031877, 93.030936, 41.332982, 81.186041),
 ]
 
 UNSCORED = []   # every round on both tracks now has full subscores
@@ -150,6 +157,12 @@ ROUNDS_T2 = [
     # rounds predict 81.02032, which is 0.8 sigma from 81.019298 and 35 sigma from 80.97843.
     ("T2R5 L8do45x4/1inv a60", "2026-09-04", 915381, 94.727329, 78.357043, 93.692366, 92.427051, 41.191134, 81.019298),
     ("T2R6 L8do45x4 bmm     ", "2026-09-06", 917178, 94.727329, 78.357043, 93.692366, 92.399134, 41.191137, 81.016621),
+    # T2R7 = R19's IDENTICAL members and band on the other board -- the SIXTH cross-track
+    # identity check, and the second reading of sim.  Every error subscore moves in the same
+    # direction as R19's and by a similar amount (rel -0.71 % vs -0.63 %, tke +0.83 % WORSE vs
+    # +0.61 %, mvpe -2.61 % vs -1.02 %, sps +0.020 vs +0.008), so the sim reading is not a
+    # single-board accident.  Its larger `final` is a `time` draw (+0.497 score), not accuracy.
+    ("T2R7 simx4/1inv a60 fp16", "2026-09-08", 918588, 94.762818, 78.220131, 93.843944, 92.896212, 41.210644, 81.086639),
 ]
 
 # The fit pools both tracks -- see the module docstring.  ROUNDS first, then ROUNDS_T2, so the
@@ -378,7 +391,9 @@ def main():
              # back to back in one process), not measured idle.  THE BOARD FALSIFIED BOTH
              # PREDICTIONS: Track 1 predicted -0.283 board ms and returned -0.089 (31 %), and
              # Track 2 predicted -0.81 and returned +0.039 (a small move the WRONG way).
-             "R18": (1, 2.451), "T2R6": (1, 4.480)}
+             "R18": (1, 2.451), "T2R6": (1, 4.480),
+             # R19 / T2R7: R18 / T2R6's shape with different weights.
+             "R19": (1, 2.451), "T2R7": (1, 4.480)}
     for r in FIT_ROUNDS:
         key = r[0].split()[0]
         t = 0.72896 * (100.0 / r[6] - 1.0) ** 2 * 1000.0

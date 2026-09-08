@@ -52,6 +52,8 @@ def load_with_dropout(path: str, device: str, force_train: bool):
     through `load_any` has no Dropout2d to switch on. `models_alt.build` constructs the real
     one. The two produce the same field to float32 noise, which is what makes the deterministic
     row here comparable to every other instrument in the repo."""
+    import inspect
+
     import torch
     import _fno
 
@@ -59,21 +61,29 @@ def load_with_dropout(path: str, device: str, force_train: bool):
                       map_location=device)
     blob["model_state_dict"] = _fno.dequant8(blob["model_state_dict"])
     cfg = blob.get("config", {})
-    p = float(cfg.get("dropout", 0.0))
-    m = importlib.import_module("models_alt").build(
-        blob.get("arch", "fno"), blob.get("width", cfg.get("width", 96)),
-        blob.get("var_head", True), 0, blob.get("modes_y", 8), blob.get("modes_x", 12),
-        blob.get("n_layers", 4), dropout=p).to(device)
+    build = importlib.import_module("models_alt").build
+    # train2.py writes every architectural flag at the TOP level of the blob and the whole
+    # argparse namespace under "config"; `build`'s signature is the authority on which of them
+    # are constructor arguments. Reading them by name rather than positionally is what makes
+    # this work for --lift-mlp and --var-mlp, which turn `lift` and `head_logstd` into
+    # Sequentials -- passing only (arch, width, var_head, ...) builds the 1x1 versions and the
+    # state_dict then fails on lift.0.weight vs lift.weight.
+    kw = {k: blob[k] if k in blob else cfg[k]
+          for k in inspect.signature(build).parameters
+          if k in blob or k in cfg}
+    kw.update(arch=blob.get("arch", "fno"), extra_ch=0, p_head=False, sub_head=False)
+    p_drop = float(kw.get("dropout", 0.0))
+    m = build(**kw).to(device)
     m.load_state_dict(blob["model_state_dict"])
     m.eval()
     if force_train:
-        if p <= 0.0:
+        if p_drop <= 0.0:
             raise SystemExit(f"{path}: dropout 0 in its config -- MC dropout is a no-op on it")
         for mod in m.modules():
             if isinstance(mod, torch.nn.Dropout2d):
                 mod.train()
     m.self_norm = bool(cfg.get("norm", "real") == "self")
-    return m, p
+    return m, p_drop
 
 
 def main() -> None:
