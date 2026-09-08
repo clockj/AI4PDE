@@ -315,6 +315,31 @@ def main():
           "date\n  (the eval machine drifts) and it does not predict better than ~+-1 point, "
           "i.e. +-0.07 final.")
 
+    # `sps` IS THE OTHER SOFT NUMBER, and unlike `time` it has no stable correction. Three
+    # arms have now been read against a local sps delta and the transfer ratio is not even the
+    # same SIGN of error:
+    #     R15  capacity x dropout   local +0.49  ->  board +1.013   (UNDER-read 2.1x)
+    #     R17  depth L4 -> L8       k-fold +0.31 ->  board +0.066 / +0.031   (over 5-10x)
+    #     R19  sim co-training      k-fold +0.10 ->  board +0.008 / +0.020   (over 5-12x)
+    # The pattern that fits all three: board `sps` responds to the far ERROR TAIL, local `sps`
+    # responds to the bulk. R15 made rel_l2 0.64 % WORSE and sps +1.013 better; R19 made
+    # rel_l2 0.63 % better and sps +0.008. An arm that cuts the rms moves local containment
+    # (local errors sit near the band edge) and not board containment (board errors sit far
+    # outside it, the tail being 1.35x an rms-matched stretch -- round 13's calib_band13).
+    # So the conservative number below DROPS the sps row entirely. Quote both: the full number
+    # is the optimistic end and the ex-sps number is the floor, and say which is which.
+    isps = order.index("sps")
+    b2 = [base[k] for k in order]
+    s2 = [subs[k] if k != "sps" else base["sps"] for k in order]
+    mid2, lo2, hi2 = final_v9.delta(b2, s2)
+    print(f"\n  WITHOUT the sps row (the conservative floor): {base['final']:.3f} "
+          f"{mid2:+.3f} = **{base['final'] + mid2:.3f}**")
+    print(f"  the sps row alone is worth {mid - mid2:+.3f}, i.e. "
+          f"{100 * (mid - mid2) / mid:.0f} % of the predicted move." if abs(mid) > 1e-9 else
+          f"  the sps row alone is worth {mid - mid2:+.3f}.")
+    print("  Local sps has over-read the board by 5-12x on the two arms that cut the rms and\n"
+          "  UNDER-read it 2.1x on the one arm that cut the tail. It is a sign, not a size.")
+
 
 if __name__ == "__main__":
     main()
