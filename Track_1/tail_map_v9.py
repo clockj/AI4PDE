@@ -116,6 +116,17 @@ def main() -> None:
     for thr in (1.1, 1.25, 1.5, 2.0, 3.0, 5.0):
         print(f"   within {thr:4.2f}x h: {100 * float((r <= thr).mean()):5.1f} % of misses"
               f"   (= {100 * float((r <= thr).mean()) * (1 - cw):4.1f} % of all scored)")
+    # THE ROUND-20 SCREEN, in one line so arms can be compared without reading the table.
+    # R15 -- the only change that ever moved board `sps` -- made rel_l2 WORSE while moving
+    # `sps` +1.013, so what to look for is the FAR TAIL falling, not the rms. These are
+    # a_i-weighted fractions of all scored elements, the same weighting `sps` itself uses.
+    R = np.zeros_like(E)
+    np.divide(E, np.maximum(H, 1e-12), out=R)
+    den = float((w * scored).sum())
+    t2 = float((w * (scored & (R > 2.0))).sum()) / den
+    t3 = float((w * (scored & (R > 3.0))).sum()) / den
+    print(f"   TAIL SUMMARY (the round-20 screen)   miss {100 * (1 - cw):5.2f} %"
+          f"   |E|>2h {100 * t2:5.2f} %   |E|>3h {100 * t3:5.2f} %")
 
     # ---- 2. WHERE --------------------------------------------------------------------------
     def by(axes, labels, name):
