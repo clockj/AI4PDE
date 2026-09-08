@@ -145,6 +145,15 @@ ANCHORS = {
                 sps=41.324574, final=81.176572),
     "t2r6": dict(rel_l2=94.727329, tke=78.357043, mvpe=93.692366, time=92.399134,
                  sps=41.191137, final=81.016621),
+    # 2026-09-08 03:44. Sim co-training on top of the R18 fast paths: 4 all-data w96 L8 do45
+    # `--sim --lam-sim 0.3 --sim-loss full` members, one fused invocation, fp16, ALPHA 0.60
+    # (918587 / 918588). THE DEFAULT ANCHOR for anything built on the sim recipe, which is
+    # every candidate from round 19 on. Against R18: rel -0.63 %, mvpe -1.02 %, tke +0.61 %
+    # (worse), sps +0.008 -- the round that showed a local sps delta does not transfer.
+    "r19": dict(rel_l2=94.776881, tke=78.532564, mvpe=94.031877, time=93.030936,
+                sps=41.332982, final=81.186041),
+    "t2r7": dict(rel_l2=94.762818, tke=78.220131, mvpe=93.843944, time=92.896212,
+                 sps=41.210644, final=81.086639),
     "r10": R10,
 }
 
@@ -159,7 +168,62 @@ def score_time(ms):
     return 100.0 / (1.0 + np.sqrt((ms / 1000.0) / 0.72896))
 
 
+def sps_selftest() -> None:
+    """Every consecutive board step, priced by the PER-SAMPLE FACTOR alone.
+
+    `sps = 100 * mean_i(a_i) * (weighted containment)` with `a_i = 0.5g(rel)+0.3g(tke)+0.2g(mvpe)`
+    and `g(m) = 0.5/(0.5+m)`, so a step can be priced from published subscores alone:
+
+        sps_pred(B) = sps(A) * a(B's board errors) / a(A's board errors)
+
+    There is no free parameter, so the RESIDUAL IS THE CONTAINMENT TERM -- exactly the part of
+    `sps` that a better band or a better model has to buy. Sorted by |residual|, the eighteen
+    consecutive pairs on the two boards give the complete list of what has ever moved it: the
+    BAND, regularized CAPACITY, MEMBER COUNT, and the architecture FAMILY. Everything rounds
+    16-19 tried -- sim co-training, depth at equal FLOPs, the coverage and temporal-gradient
+    losses, `lam_v`, both latency rebuilds, the gated blend -- lands inside +-0.05.
+
+    Read it that way and not as a goodness-of-fit: the model is exact from R13 on because the
+    band, the member count and the family have been frozen since R13, not because it is right
+    about everything.
+    """
+    import board_rounds as br
+
+    def a_of(r):
+        er = lambda v: 2.0 * (100.0 / v - 1.0)  # noqa: E731
+        return float(sps9.weights_from_metrics(np.float64(er(r[3])), np.float64(er(r[4])),
+                                               np.float64(er(r[5]))))
+
+    out = []
+    for rows in (br.ROUNDS, br.ROUNDS_T2):
+        rs = sorted([r for r in rows if not r[0].strip().startswith("X")], key=lambda r: r[1])
+        for x, y in zip(rs, rs[1:]):
+            q = x[7] * a_of(y) / a_of(x)
+            out.append((y[7] - q, x[0].strip(), y[0].strip(), q, y[7], y[7] - x[7]))
+
+    print(f"{'step':>46s} {'pred':>7s} {'actual':>7s} {'d sps':>7s} {'RESID':>7s}")
+    for d, a, b, q, act, ds in sorted(out, key=lambda t: -abs(t[0])):
+        print(f"{a[:21]:>22s} -> {b[:21]:<22s} {q:7.3f} {act:7.3f} {ds:+7.3f} {d:+7.3f}")
+    r = np.array([abs(t[0]) for t in out])
+    print(f"\n  {len(r)} pairs: median |resid| {np.median(r):.3f}   rms {np.sqrt((r ** 2).mean()):.3f}"
+          f"   inside 0.1: {int((r < 0.1).sum())}/{len(r)}")
+    print("  From R13 on (band, members and family frozen): median 0.026, i.e. +-0.007 `final`.")
+    print("  THE RESIDUAL IS CONTAINMENT. Everything that has ever moved it:")
+    print("    +1.410  the band refit (R9->R10, p 0.45 / blur k 3)")
+    print("    +0.992 / +0.961  width 24 -> 96, replicated on both boards")
+    print("    +0.668  members 3 -> 8 at w24")
+    print("    +0.464 / -0.440  U-FNO x3 in, and back out again -- a FAMILY effect")
+    print("    +0.262 / +0.253  dropout 0.05/0.15 -> 0.30/0.45, replicated on both boards")
+    print("  Nothing else clears 0.15. Round 16 filed U-FNO as a -0.45 miss and closed the")
+    print("  family; that was true of the PACKAGE (time -0.207 at batch 1, rel_l2 +1.9 %) and")
+    print("  false of the MEMBER, whose +0.44 sps was read as noise and was containment.")
+
+
 def main():
+    if "--sps-selftest" in sys.argv:
+        return sps_selftest()
+    if "--sps-selftest" in sys.argv:
+        return sps_selftest()
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt", nargs="+", required=True, help="shipped all-data members (sigma)")
     ap.add_argument("--err-ckpt", nargs="+", required=True, help="held-out counterparts")
@@ -240,6 +304,7 @@ def main():
 
     board_ms = LAT_C + LAT_INV * args.invocations + LAT_LOC * args.local_ms
 
+    anc = anc_board = None
     if args.anchor:
         # --- anchor-relative: what is extrapolated is the RATIO OF TWO PROXIES -------------
         anc = ANCHORS[args.anchor]
@@ -328,15 +393,43 @@ def main():
     # outside it, the tail being 1.35x an rms-matched stretch -- round 13's calib_band13).
     # So the conservative number below DROPS the sps row entirely. Quote both: the full number
     # is the optimistic end and the ex-sps number is the floor, and say which is which.
-    isps = order.index("sps")
     b2 = [base[k] for k in order]
     s2 = [subs[k] if k != "sps" else base["sps"] for k in order]
-    mid2, lo2, hi2 = final_v9.delta(b2, s2)
-    print(f"\n  WITHOUT the sps row (the conservative floor): {base['final']:.3f} "
-          f"{mid2:+.3f} = **{base['final'] + mid2:.3f}**")
-    print(f"  the sps row alone is worth {mid - mid2:+.3f}, i.e. "
-          f"{100 * (mid - mid2) / mid:.0f} % of the predicted move." if abs(mid) > 1e-9 else
-          f"  the sps row alone is worth {mid - mid2:+.3f}.")
+    mid2, _, _ = final_v9.delta(b2, s2)
+
+    # THE MECHANISTIC MIDDLE ESTIMATE, and R19 is what forced it. sps factorizes exactly as
+    #     sps = 100 * (weighted mean over samples of a_i) * (weighted containment term)
+    # with a_i = 0.5g(rel) + 0.3g(tke) + 0.2g(mvpe), g(m) = 0.5/(0.5+m) -- and the two factors
+    # move for different reasons. R19 decomposed cleanly: rel contributed +0.000468 to a, mvpe
+    # +0.000330, tke -0.000459, net +0.00034, worth about +0.020 sps -- and the board returned
+    # +0.008/+0.020. THE ENTIRE BOARD MOVE WAS THE PER-SAMPLE FACTOR; containment contributed
+    # nothing. So the honest central estimate holds containment FIXED and prices only what the
+    # other three subscores imply, which needs no local sps at all:
+    #     sps_pred = sps_anchor * a(predicted errors) / a(anchor's board errors)
+    # This is not a scaled local delta and cannot inherit local sps's 5-12x over-read. It is
+    # also not a floor: R15 moved containment (rel_l2 0.64 % WORSE, sps +1.013), so an arm that
+    # genuinely cuts the far tail will beat it. Quote the middle number and name the bracket.
+    if anc is not None:
+        aa = float(sps9.weights_from_metrics(np.float64(anc_board["rel"]),
+                                             np.float64(anc_board["tke"]),
+                                             np.float64(anc_board["mvpe"])))
+        ac = float(sps9.weights_from_metrics(np.float64(pred["rel"]), np.float64(pred["tke"]),
+                                             np.float64(pred["mvpe"])))
+        sps_da = anc["sps"] * ac / aa
+        s3 = [subs[k] if k != "sps" else sps_da for k in order]
+        mid3, _, _ = final_v9.delta(b2, s3)
+        print(f"\n  THREE sps ASSUMPTIONS, and the middle one is the estimate to quote:")
+        print(f"    local sps transferred 1:1   sps {subs['sps']:7.3f}   "
+              f"final {base['final'] + mid:.3f}   (optimistic; over-read 5-12x on R17/R19)")
+        print(f"    per-sample factor ONLY      sps {sps_da:7.3f}   "
+              f"final {base['final'] + mid3:.3f}   <-- containment held fixed, R19's mechanism")
+        print(f"    sps unchanged               sps {base['sps']:7.3f}   "
+              f"final {base['final'] + mid2:.3f}   (floor)")
+        print(f"    a_i moves {aa:.5f} -> {ac:.5f}; the sps row is worth {mid - mid2:+.3f} at "
+              f"the top of that bracket and {mid3 - mid2:+.3f} in the middle.")
+    else:
+        print(f"\n  WITHOUT the sps row (the conservative floor): {base['final']:.3f} "
+              f"{mid2:+.3f} = **{base['final'] + mid2:.3f}**")
     print("  Local sps has over-read the board by 5-12x on the two arms that cut the rms and\n"
           "  UNDER-read it 2.1x on the one arm that cut the tail. It is a sign, not a size.")
 

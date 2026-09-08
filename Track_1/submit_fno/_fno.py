@@ -666,6 +666,145 @@ class UFNO2d(nn.Module):
         return self.head_field(h), logstd
 
 
+class AFNO2d(nn.Module):
+    """Copy of `Track_1/unet/models_alt.py:AFNO2d` -- Adaptive FNO (Guibas et al., ICLR 2022).
+
+    Vendored for the same reason as UFNO2d: `models_alt.py` is not in the archive and
+    `load_any`'s repo-import branch raises inside the evaluation container by design. The
+    parameter NAMES and shapes are the contract; `verify/diff_arch.py` loads one checkpoint
+    into both definitions and requires the fields to agree to float32 noise.
+
+    FNO's spectral block is a LINEAR map per retained mode. AFNO replaces it with a two-layer
+    complex MLP whose weights are SHARED across modes and block-diagonal across channels, then
+    soft-thresholds the magnitude, so the operator's spectral support is learned per input.
+    At w96/blocks 4 that is ~0.3M parameters against the w96 FNO's ~14M.
+
+    `dropout` is accepted and ignored -- eval() only, and Dropout2d holds no parameters, so a
+    --dropout checkpoint loads unchanged.
+    """
+
+    def __init__(self, width: int = 96, modes_y: int = 8, modes_x: int = 12,
+                 n_layers: int = 4, var_head: bool = True, extra_ch: int = 0,
+                 blocks: int = 4, mlp_ratio: float = 4.0, lam: float = 0.01,
+                 dropout: float = 0.0):
+        super().__init__()
+        assert width % blocks == 0, f"width {width} must divide into {blocks} blocks"
+        self.my, self.mx, self.blocks, self.lam = modes_y, modes_x, blocks, lam
+        d = width // blocks
+        hid = max(1, int(d * mlp_ratio))
+        self.lift = nn.Sequential(nn.Conv2d(CH + extra_ch + 2, 128, 1), nn.GELU(),
+                                  nn.Conv2d(128, width, 1))
+        s = 1.0 / d
+        self.w1 = nn.Parameter(s * torch.randn(n_layers, blocks, d, hid, 2))
+        self.b1 = nn.Parameter(torch.zeros(n_layers, blocks, hid, 2))
+        self.w2 = nn.Parameter(s * torch.randn(n_layers, blocks, hid, d, 2))
+        self.b2 = nn.Parameter(torch.zeros(n_layers, blocks, d, 2))
+        self.point = nn.ModuleList([nn.Conv2d(width, width, 1) for _ in range(n_layers)])
+        self.norm = nn.ModuleList([nn.GroupNorm(8, width) for _ in range(n_layers)])
+        self.drop = nn.Identity()
+        self.head_field = nn.Sequential(nn.Conv2d(width, 128, 1), nn.GELU(),
+                                        nn.Conv2d(128, CH, 1))
+        self.head_logstd = None
+        if var_head:
+            self.head_logstd = nn.Sequential(nn.Conv2d(width, 128, 1), nn.GELU(),
+                                             nn.Conv2d(128, C, 1))
+        yy, xx = torch.meshgrid(torch.linspace(-1, 1, H), torch.linspace(-1, 1, W),
+                                indexing="ij")
+        self.register_buffer("grid", torch.stack([xx, yy])[None])
+
+    def _spectral(self, x: torch.Tensor, i: int) -> torch.Tensor:
+        b, cw, h, w = x.shape
+        ft = torch.fft.rfft2(x)
+        out = torch.zeros_like(ft)
+        my, mx = min(self.my, h // 2), min(self.mx, w // 2 + 1)
+        w1, b1 = torch.view_as_complex(self.w1[i]), torch.view_as_complex(self.b1[i])
+        w2, b2 = torch.view_as_complex(self.w2[i]), torch.view_as_complex(self.b2[i])
+        for sl in (slice(0, my), slice(h - my, h)):
+            z = ft[:, :, sl, :mx].reshape(b, self.blocks, -1, my, mx)
+            z = torch.einsum("bkdyx,kdh->bkhyx", z, w1) + b1[None, :, :, None, None]
+            z = torch.complex(torch.nn.functional.gelu(z.real),
+                              torch.nn.functional.gelu(z.imag))
+            z = torch.einsum("bkhyx,khd->bkdyx", z, w2) + b2[None, :, :, None, None]
+            mag = z.abs()
+            z = z * (torch.clamp(mag - self.lam, min=0.0) / (mag + 1e-9))
+            out[:, :, sl, :mx] = z.reshape(b, cw, my, mx)
+        return torch.fft.irfft2(out, s=(h, w))
+
+    def forward(self, prev: torch.Tensor, detach_var: bool = False):
+        h = self.lift(torch.cat([prev, self.grid.expand(len(prev), -1, -1, -1)], 1))
+        for i, (p, n) in enumerate(zip(self.point, self.norm)):
+            h = h + self.drop(torch.nn.functional.gelu(n(self._spectral(h, i) + p(h))))
+        logstd = None
+        if self.head_logstd is not None:
+            logstd = self.head_logstd(h.detach() if detach_var else h)
+        return self.head_field(h), logstd
+
+
+class ViT2d(nn.Module):
+    """Copy of `Track_1/unet/models_alt.py:ViT2d` -- a space-time ViT over 4x4 patches.
+
+    128 tokens of the 32x64 grid; time is already folded into channels, so one token is a
+    4x4x20-frame block and attention mixes every block with every other in ONE layer. It is the
+    only family here whose spatial mixing is INPUT-DEPENDENT, which is why it is in the probe:
+    U-FNO's board miss is hypothesized to come from its local translation-equivariant conv
+    branch, and this family has no such structure to be wrong in the same way.
+
+    Drop-path and dropout are training-time only and both are identity in eval(), so they are
+    omitted here rather than reproduced; nothing they touch holds a parameter. The module names
+    (`embed`, `pos`, `blocks.<i>.{n1,attn,n2,mlp}`, `norm_out`, `proj`, the two heads) are the
+    contract with the training definition and `verify/diff_arch.py` enforces it.
+    """
+
+    def __init__(self, dim: int = 384, depth: int = 8, var_head: bool = True,
+                 extra_ch: int = 0, patch: int = 4, heads: int = 6, mlp_ratio: float = 4.0,
+                 dropout: float = 0.0, drop_path: float = 0.1):
+        super().__init__()
+        self.patch = patch
+        gh, gw = H // patch, W // patch
+        self.gh, self.gw = gh, gw
+        self.embed = nn.Conv2d(CH + extra_ch + 2, dim, patch, stride=patch)
+        self.pos = nn.Parameter(torch.zeros(1, gh * gw, dim))
+        self.blocks = nn.ModuleList()
+        for _ in range(depth):
+            self.blocks.append(nn.ModuleDict({
+                "n1": nn.LayerNorm(dim),
+                "attn": nn.MultiheadAttention(dim, heads, dropout=0.0, batch_first=True),
+                "n2": nn.LayerNorm(dim),
+                "mlp": nn.Sequential(nn.Linear(dim, int(dim * mlp_ratio)), nn.GELU(),
+                                     nn.Dropout(0.0),
+                                     nn.Linear(int(dim * mlp_ratio), dim), nn.Dropout(0.0)),
+            }))
+        self.norm_out = nn.LayerNorm(dim)
+        self.wid = max(dim // (patch * patch), 8)
+        self.proj = nn.Linear(dim, self.wid * patch * patch)
+        self.head_field = nn.Sequential(nn.Conv2d(self.wid, 128, 1), nn.GELU(),
+                                        nn.Conv2d(128, CH, 1))
+        self.head_logstd = None
+        if var_head:
+            self.head_logstd = nn.Sequential(nn.Conv2d(self.wid, 128, 1), nn.GELU(),
+                                             nn.Conv2d(128, C, 1))
+        yy, xx = torch.meshgrid(torch.linspace(-1, 1, H), torch.linspace(-1, 1, W),
+                                indexing="ij")
+        self.register_buffer("grid", torch.stack([xx, yy])[None])
+
+    def forward(self, prev: torch.Tensor, detach_var: bool = False):
+        b = len(prev)
+        x = torch.cat([prev, self.grid.expand(b, -1, -1, -1)], 1)
+        t = self.embed(x).flatten(2).transpose(1, 2) + self.pos
+        for blk in self.blocks:
+            q = blk["n1"](t)
+            t = t + blk["attn"](q, q, q, need_weights=False)[0]
+            t = t + blk["mlp"](blk["n2"](t))
+        t = self.proj(self.norm_out(t))
+        pp = self.patch
+        h = (t.reshape(b, self.gh, self.gw, self.wid, pp, pp)
+              .permute(0, 3, 1, 4, 2, 5).reshape(b, self.wid, H, W))
+        logstd = None
+        if self.head_logstd is not None:
+            logstd = self.head_logstd(h.detach() if detach_var else h)
+        return self.head_field(h), logstd
+
+
 def fuse(models):
     """Group `models` by architecture and fuse each FNO group. Order-preserving by first sight.
 
@@ -853,10 +992,19 @@ def load_any(path: str, device: str):
     blob["model_state_dict"] = dequant8(blob["model_state_dict"])
     arch = blob.get("arch", "fno")
     cfg0 = blob.get("config", {})
-    if arch == "ufno":
-        m = UFNO2d(blob.get("width", cfg0.get("width", 96)),
-                   blob.get("modes_y", 8), blob.get("modes_x", 12),
-                   blob.get("n_layers", 4), blob.get("var_head", True)).to(device)
+    if arch in ("ufno", "afno", "vit"):
+        # The three VENDORED non-FNO families. Each is a byte-compatible copy of its
+        # models_alt.py definition, so a member of any of them ships without the repo.
+        w = blob.get("width", cfg0.get("width", 96))
+        nl = blob.get("n_layers", 4)
+        vh = blob.get("var_head", True)
+        if arch == "vit":
+            # build() passes `width` as the ViT's `dim` and `n_layers` as its depth, and sets
+            # heads = max(width // 64, 1). Reproduce that mapping exactly.
+            m = ViT2d(w, nl, vh, 0, heads=max(w // 64, 1)).to(device)
+        else:
+            cls = UFNO2d if arch == "ufno" else AFNO2d
+            m = cls(w, blob.get("modes_y", 8), blob.get("modes_x", 12), nl, vh).to(device)
         m.load_state_dict(blob["model_state_dict"])
         m.eval()
         m.self_norm = _self_norm_of(blob)
