@@ -88,7 +88,7 @@ torch.backends.cudnn.allow_tf32 = _TF32
 # There is NO host-write constant here and there should not be: Track 2 never does a numpy
 # strided write.  `ttt_step` copies the graph's output buffers into PINNED torch tensors, so
 # Track 1's `HOST_WRITE` has no counterpart on this path.
-SPEC_PATH = ""
+SPEC_PATH = "bmm"
 _fno._SPEC = SPEC_PATH
 
 # `_body` below runs the members itself rather than going through `_fno.predict_fno`, so the

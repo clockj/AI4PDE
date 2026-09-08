@@ -107,8 +107,8 @@ torch.backends.cudnn.allow_tf32 = _TF32
 #   27.6 % of a Track-2 step, and is worth -16.6 % there -- while on Track 1's batched path it
 #   is +1.6 % SLOWER, because the copy it removes is O(1) in batch and the `cat` it adds is
 #   O(batch). One switch, opposite signs on the two tracks; set it per track, never globally.
-HOST_WRITE = ""
-SPEC_PATH = ""
+HOST_WRITE = "torch"
+SPEC_PATH = "bmm"
 _fno._HOSTW = HOST_WRITE
 _fno._SPEC = SPEC_PATH
 

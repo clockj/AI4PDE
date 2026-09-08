@@ -8,6 +8,7 @@ call predict() on real val_unseen windows.  It checks the output contract, not t
 """
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import os
 import shutil
@@ -21,7 +22,18 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # The archive to gate. Overridable, because a round often has more than one candidate staged
 # at once (round 13 builds an 8-member and a 10-member package side by side) and gating the
 # wrong one is exactly the mistake this script exists to prevent.
-ZIP = os.environ.get("RPDE_ZIP") or os.path.join(HERE, os.pardir, "submit_fno", "submission.zip")
+# --zip wins over RPDE_ZIP, which wins over the default. It is a REAL argument and not a
+# silently-ignored one: jobs 7174852 and 7188065 both passed `--zip <the int8 archive>` to a
+# script that had no argparse at all, so the flag was dropped on the floor and the gate ran on
+# a stale 4-member submission.zip -- it printed "76.4 MB" for a 213.9 MB archive and PASSED. A
+# gate that cannot fail on the wrong input is worse than no gate, which is the whole reason
+# this file exists; an unknown argument now aborts instead of being ignored.
+def _zip_arg() -> str:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--zip", default=None, help="archive to gate (overrides $RPDE_ZIP)")
+    a = ap.parse_args()
+    return a.zip or os.environ.get("RPDE_ZIP") or os.path.join(
+        HERE, os.pardir, "submit_fno", "submission.zip")
 MISSING_IN_EVAL_IMAGE = {"scipy", "h5py", "matplotlib", "pandas"}
 
 
@@ -39,12 +51,14 @@ class _BlockedTopLevel:
 
 
 def main() -> int:
+    zip_path = _zip_arg()
     sys.meta_path.insert(0, _BlockedTopLevel(MISSING_IN_EVAL_IMAGE))
     tmp = tempfile.mkdtemp(prefix="rpde_smoke_")
     try:
-        with zipfile.ZipFile(ZIP) as z:
+        with zipfile.ZipFile(zip_path) as z:
             z.extractall(tmp)
-        print(f"extracted {os.path.getsize(ZIP)/1e6:.1f} MB zip -> {tmp}")
+        print(f"extracted {os.path.getsize(zip_path)/1e6:.1f} MB zip -> {tmp}")
+        print(f"  archive: {zip_path}")
         total = sum(os.path.getsize(os.path.join(r, f))
                     for r, _, fs in os.walk(tmp) for f in fs)
         print(f"extracted size {total/1e6:.2f} MB   (cap 256 MB)  "
