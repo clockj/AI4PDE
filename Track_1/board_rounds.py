@@ -87,6 +87,14 @@ ROUNDS = [
     # nearly exact), tke **+0.61 % WORSE** where both the proxy (-1.04 %) and the interior
     # k-fold (+0.03 %, null) said otherwise, and `sps` +0.008 against a predicted +0.361.
     ("R19 simx4/1inv a60 fp16", "2026-09-08", 918587, 94.776881, 78.532564, 94.031877, 93.030936, 41.332982, 81.186041),
+    # R20 = cmb3sim: R19's recipe plus round 18's three wave-1 winners (--lam-tgrad 0.3,
+    # --lam-v 0.15, --lam-cov 2.0/--cov-c 0.25).  Same shape, member count, invocation count and
+    # fast paths, so it is a single-variable A/B and the latency is R19's by construction.
+    # THE ACCOUNT'S BEST SCORE ON EITHER BOARD.  Recorded prediction 81.195 (per-sample factor)
+    # / 81.226 (local sps transferred 1:1); actual 81.240, i.e. above the optimistic end -- but
+    # +0.023 of that is a favourable `time` draw (93.031 predicted, 93.270 delivered).  At
+    # constant latency the accuracy part is +0.031 on this board and +0.049 on Track 2.
+    ("R20 cmb3simx4/1inv a60", "2026-09-09", 920369, 94.794521, 78.518609, 94.081696, 93.270089, 41.410372, 81.239831),
 ]
 
 UNSCORED = []   # every round on both tracks now has full subscores
@@ -163,6 +171,13 @@ ROUNDS_T2 = [
     # +0.61 %, mvpe -2.61 % vs -1.02 %, sps +0.020 vs +0.008), so the sim reading is not a
     # single-board accident.  Its larger `final` is a `time` draw (+0.497 score), not accuracy.
     ("T2R7 simx4/1inv a60 fp16", "2026-09-08", 918588, 94.762818, 78.220131, 93.843944, 92.896212, 41.210644, 81.086639),
+    # T2R8 = R20's IDENTICAL members and band -- the SEVENTH cross-track identity check, and the
+    # second reading of cmb3sim.  Every error subscore moves in the same direction as R20's and
+    # by a similar amount (rel -0.39 % vs -0.36 %, tke -0.34 % vs +0.08 %, mvpe -1.54 % vs
+    # -0.89 %, sps +0.100 vs +0.077), so cmb3sim is not a single-board accident.  Its SMALLER
+    # `final` gain is a `time` draw (-0.299 score against R20's +0.239): at constant latency
+    # this board's accuracy gain is the LARGER of the two, +0.049 against +0.031.
+    ("T2R8 cmb3simx4/1inv a60", "2026-09-09", 920370, 94.782311, 78.278425, 93.933159, 92.597588, 41.310588, 81.106430),
 ]
 
 # The fit pools both tracks -- see the module docstring.  ROUNDS first, then ROUNDS_T2, so the
@@ -393,7 +408,9 @@ def main():
              # Track 2 predicted -0.81 and returned +0.039 (a small move the WRONG way).
              "R18": (1, 2.451), "T2R6": (1, 4.480),
              # R19 / T2R7: R18 / T2R6's shape with different weights.
-             "R19": (1, 2.451), "T2R7": (1, 4.480)}
+             "R19": (1, 2.451), "T2R7": (1, 4.480),
+             # R20 / T2R8: cmb3sim, the same shape again.
+             "R20": (1, 2.450), "T2R8": (1, 4.480)}
     for r in FIT_ROUNDS:
         key = r[0].split()[0]
         t = 0.72896 * (100.0 / r[6] - 1.0) ** 2 * 1000.0

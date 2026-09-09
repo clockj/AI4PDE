@@ -154,6 +154,17 @@ ANCHORS = {
                 sps=41.332982, final=81.186041),
     "t2r7": dict(rel_l2=94.762818, tke=78.220131, mvpe=93.843944, time=92.896212,
                  sps=41.210644, final=81.086639),
+    # 2026-09-09 12:42. cmb3sim = R19's recipe plus round 18's three wave-1 winners
+    # (--lam-tgrad 0.3, --lam-v 0.15, --lam-cov 2.0 / --cov-c 0.25), four all-data members, one
+    # fused invocation, fp16, ALPHA 0.60 (920369 / 920370). R20 IS THE ACCOUNT'S BEST SCORE ON
+    # EITHER BOARD and the DEFAULT anchor for anything built on cmb3sim. Recorded prediction
+    # 81.195 middle / 81.226 optimistic; actual 81.240, of which +0.023 was a favourable `time`
+    # draw -- at constant latency the accuracy part is +0.031 (T1) and +0.049 (T2), and the
+    # containment residual is +0.049 / +0.039, the first nonzero one outside capacity and band.
+    "r20": dict(rel_l2=94.794521, tke=78.518609, mvpe=94.081696, time=93.270089,
+                sps=41.410372, final=81.239831),
+    "t2r8": dict(rel_l2=94.782311, tke=78.278425, mvpe=93.933159, time=92.597588,
+                 sps=41.310588, final=81.106430),
     "r10": R10,
 }
 

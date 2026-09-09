@@ -624,47 +624,8 @@ def html(B, Rn, w, path):
 
     o.append('<div class="thesis"><span class="eyebrow">'
              + t("read this first", "先读这里") + "</span>"
-             + t(f"<b>The plateau broke.</b> From 2026-08-08 to round 14 the board was flat at "
-                 f"constant latency: R12&ndash;R14 sit within <b>0.013</b> points of each "
-                 f"other, and the whole <b>{span:.3f}</b> span of Track&nbsp;1&rsquo;s last "
-                 f"four rounds is round&nbsp;15 alone. Two changes moved it: <b>dropout</b> "
-                 f"(+0.200, T2R2) and then <b>capacity at width&nbsp;96 regularized harder</b> "
-                 f"(+0.166, T2R3 &rarr; <b>{max(norm2):.3f}</b> normalised, the account&rsquo;s "
-                 f"best on either board). Both are regularization, not architecture. And "
-                 f"T2R3&rsquo;s gain arrived entirely through <code>sps</code> (+1.01) and "
-                 f"<code>tke</code>, while <code>rel_l2</code> got <i>worse</i> &mdash; it "
-                 f"removes per-element <b>tail</b>, not rms, which is what SPS&rsquo;s "
-                 f"containment scoring pays for. Section&nbsp;3 is why every reading here is "
-                 f"hedged: the proxy predicts the board&rsquo;s <i>level</i> to "
-                 f"&plusmn;2&ndash;8%, but explains almost none of its <i>movement</i> "
-                 f"({rms:.1f}% residual rms), and both winning arms had a local signal smaller "
-                 f"than that.",
-                 f"<b>平台期被打破了。</b>从 2026-08-08 "
-                 f"到第 14 轮，恒定延迟下的 board "
-                 f"一直是平的：R12&ndash;R14 彼此相差"
-                 f"不到 <b>0.013</b> 分，而 Track&nbsp;1 "
-                 f"最近四轮 <b>{span:.3f}</b> 的全部跨度"
-                 f"都来自第 15 轮一轮。"
-                 f"两处改动推动了它：<b>dropout</b>"
-                 f"（+0.200，T2R2），以及随后"
-                 f"<b>把容量提到 width&nbsp;96 并加重"
-                 f"正则</b>（+0.166，T2R3 归一化后为 "
-                 f"<b>{max(norm2):.3f}</b>，本账号在两个 "
-                 f"board 上的最好成绩）。两者都是"
-                 f"正则化，而不是架构。而且 T2R3 "
-                 f"的收益完全来自 <code>sps</code>"
-                 f"（+1.01）和 <code>tke</code>，"
-                 f"<code>rel_l2</code> 反而<i>变差</i>"
-                 f"——它削掉的是逐元素的<b>尾部</b>"
-                 f"，不是 rms，而这正是 SPS 的"
-                 f"区间覆盖评分所支付的东西。"
-                 f"第 3 节说明为什么这里每个"
-                 f"读数都要打折：proxy 能把 board "
-                 f"的<i>水平</i>预测到 "
-                 f"&plusmn;2&ndash;8%，却几乎解释不了它"
-                 f"的<i>变化</i>（残差 rms {rms:.1f}%），"
-                 f"而两个成功的实验在本地的"
-                 f"信号都小于这个值。")
+             + t(f"<b>`sps` factorizes, and the residual names every lever.</b> The scoring rule is <code>sps = 100 &middot; mean(a_i) &middot; containment</code> with <code>a_i = 0.5g(rel)+0.3g(tke)+0.2g(mvpe)</code>, so any round can be priced from its published subscores alone &mdash; no free parameter, no local measurement. THE RESIDUAL IS THEN THE CONTAINMENT TERM, and across all eighteen consecutive board steps it is nonzero for exactly four kinds of change: the <b>band</b> (+1.410, R9&#8594;R10), regularized <b>capacity</b> (+0.992 / +0.961, width 24&#8594;96 on both boards), <b>member count</b> (+0.668, 3&#8594;8), and the architecture <b>family</b> (+0.464 / &minus;0.440, U-FNO in and back out). Everything rounds 16&ndash;20 tried &mdash; sim co-training, depth at equal FLOPs, the coverage and temporal-gradient losses, <code>lam_v</code>, both latency rebuilds, the gated blend &mdash; lands inside &plusmn;0.05. It also re-prices the exchange rate, because <code>a_i</code> is computed from the other three subscores: per 10% of error removed, <code>rel_l2</code> is worth <b>+0.346</b>, <code>tke</code> <b>+0.290</b> and <code>mvpe</code> <b>+0.100</b>, so <code>tke</code> is 84% of <code>rel_l2</code>, not 74%. Two corrections it forced: round 16 closed every non-FNO family on U-FNO&rsquo;s &minus;0.45 miss, which was true of the <i>package</i> (batch-1 latency, worse <code>rel_l2</code>) and false of the <i>member</i>, whose +0.44 <code>sps</code> was filed as noise and was the third-largest containment move on record; and &ldquo;<code>sps</code> is unreachable&rdquo; was a statement about rms, not about <code>sps</code>. Section&nbsp;3 remains the reason every local reading is hedged: the proxy predicts the board&rsquo;s <i>level</i> to &plusmn;2&ndash;8% and almost none of its <i>movement</i> ({rms:.1f}% residual rms).",
+                 f"<b>`sps` 可以分解，而残差把每一个杠杆都点了名。</b>评分规则是 <code>sps = 100 &middot; mean(a_i) &middot; 含盖率</code>，其中 <code>a_i = 0.5g(rel)+0.3g(tke)+0.2g(mvpe)</code>，所以任何一轮都可以只用它已公布的子分数来定价——没有自由参数，也不需要任何本地测量。于是残差就是含盖率项：在全部十八对连续 board 步骤上，它只对四类改动非零——<b>band</b>（+1.410，R9&#8594;R10）、带正则的<b>容量</b>（+0.992 / +0.961，宽度 24&#8594;96，两块板都复现）、<b>成员数</b>（+0.668，3&#8594;8），以及架构<b>家族</b>（+0.464 / &minus;0.440，U-FNO 进再出）。第 16&ndash;20 轮试过的一切——sim 联合训练、等 FLOPs 的深度、coverage 与 temporal-gradient 损失、<code>lam_v</code>、两次延迟重构、门控混合——全在 &plusmn;0.05 之内。它同时重新给兑换率定了价，因为 <code>a_i</code> 由另外三个子分数算出：每削减 10% 误差，<code>rel_l2</code> 值 <b>+0.346</b>，<code>tke</code> 值 <b>+0.290</b>，<code>mvpe</code> 值 <b>+0.100</b>——<code>tke</code> 是 <code>rel_l2</code> 的 84%，不是 74%。它逼出两处更正：第 16 轮用 U-FNO 的 &minus;0.45 封了所有非 FNO 家族，那对<i>包</i>成立（batch 1 的延迟、更差的 <code>rel_l2</code>），对<i>成员</i>不成立——它那 +0.44 的 <code>sps</code> 被当噪声记下，实际是有记录以来第三大的含盖率移动；而「<code>sps</code> 拿不到」说的是 rms，不是 <code>sps</code>。第 3 节仍然是这里每个本地读数都要打折的理由：proxy 能把 board 的<i>水平</i>预测到 &plusmn;2&ndash;8%，却几乎解释不了它的<i>变化</i>（残差 rms {rms:.1f}%）。")
              + "</div></div>")
 
     # 1 -----------------------------------------------------------------------------------

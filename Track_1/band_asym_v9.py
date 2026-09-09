@@ -136,14 +136,15 @@ def main() -> None:
     traj = np.array([i.split(":")[0] for i in ids])[keep]
 
     def infer(models, want_sigma=False):
+        # predict_fno returns the MEASURED channels only, (N,20,32,64,2); the scorer wants the
+        # zero-filled p channel back. tail_map_v9 does the same concatenate -- copying the call
+        # without it is what crashed r20g.
         s = np.empty((len(X), 1, 32, 64, 2), np.float32) if want_sigma else None
-        out = np.empty_like(Y)
-        for i in range(0, len(X), 64):
-            j = min(i + 64, len(X))
-            r = _fno.predict_fno(models, X[i:j], alpha=args.alpha, device=dev,
-                                 sigma_out=s[i:j] if want_sigma else None)
-            out[i:j] = r
-        return (out, s) if want_sigma else out
+        uv = _fno.predict_fno(models, X, dev, alpha=args.alpha, sigma_out=s)
+        P = np.concatenate([uv, np.zeros_like(uv[..., :1])], -1).astype(np.float32)
+        if not want_sigma:
+            return P
+        return P, np.concatenate([s, np.zeros_like(s[..., :1])], -1).astype(np.float32)
 
     with torch.no_grad():
         _, sig = infer(m, want_sigma=True)
