@@ -1,6 +1,15 @@
 **/__pycache__/
 **/*.pth
 **/*.npz
+# ...EXCEPT the fitted SPS bands of rounds that actually scored. A band is the one part of a
+# package that is NOT reproducible from the checkpoints: `base` is 81 920 per-element
+# half-widths fitted by sps9.optimal_band on the held-out twins' error field, and refitting
+# with a different twin set or window order gives a different table. They are 0.5 MB each and
+# there are seven distinct ones across sixteen scored rounds, so version control is the right
+# home; the blanket rule above exists for the 1 GB of derived val_*.npz caches, which rebuild
+# from the h5 in minutes. Round 18 shipped a pricing run against a STALE band because nothing
+# recorded which file a build had produced -- `git log Track_1/bands/` is that record now.
+!Track_1/bands/*.npz
 **/*.pt
 **/*.zip
 **/*.log

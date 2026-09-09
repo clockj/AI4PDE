@@ -133,3 +133,7 @@ cp Track_2/submission_t2.zip          "$SUB/track2_$TAG.zip"
 ls -la "$SUB"
 echo
 echo "NEXT: record the predicted board subscores in $SUB/README.md BEFORE uploading."
+echo "      then, AFTER it scores, promote the band into version control:"
+echo "        cp Track_2/submit/band8.npz Track_1/bands/<round>_<tag>.npz"
+echo "      and add a row to Track_1/bands/MANIFEST.md. The band is the ONLY part of a"
+echo "      package that cannot be rebuilt from the checkpoints -- see that file."
