@@ -43,6 +43,12 @@ M = ["rel", "tke", "mvpe"]
 SUB = ["rel", "tke", "mvpe", "time", "sps"]
 
 
+# Read from Codabench 2026-09-10. The two tracks now have DIFFERENT leaders -- T2's moved
+# +0.235 in the same window in which we moved +0.049, so the T2 board is the faster-moving one.
+LEADER_T1 = 81.82371
+LEADER_T2 = 81.99648
+
+
 def load(name):
     with open(os.path.join(HERE, name)) as f:
         return [json.loads(l) for l in f if l.strip()]
@@ -496,10 +502,10 @@ def _progress_svg(T, norm, ref):
         o.append(f'<line x1="{L}" y1="{y(gv):.1f}" x2="{W-Rp}" y2="{y(gv):.1f}" '
                  f'stroke="var(--line)" stroke-width="1"/>'
                  f'<text x="{L-8}" y="{y(gv)+3.5:.1f}" text-anchor="end">{gv:.1f}</text>')
-    o.append(f'<line x1="{L}" y1="{y(81.76136):.1f}" x2="{W-Rp}" y2="{y(81.76136):.1f}" '
+    o.append(f'<line x1="{L}" y1="{y(LEADER_T1):.1f}" x2="{W-Rp}" y2="{y(LEADER_T1):.1f}" '
              f'stroke="var(--warm)" stroke-width="1.2" stroke-dasharray="5 4"/>')
-    o.append(tsvg(f"{W-Rp+8}", f"{y(81.76136)+3.5:.1f}", "leader 81.761",
-                  "领先者 81.761", 'fill="var(--warm)"'))
+    o.append(tsvg(f"{W-Rp+8}", f"{y(LEADER_T1)+3.5:.1f}", f"leader {LEADER_T1:.3f}",
+                  f"领先者 {LEADER_T1:.3f}", 'fill="var(--warm)"'))
     # the flat span
     i0 = len(T) - 4
     o.append(f'<rect x="{x(i0)-11:.1f}" y="{Tp}" width="{x(len(T)-1)-x(i0)+22:.1f}" '
@@ -577,7 +583,7 @@ def html(B, Rn, w, path):
     best_any = max(scored, key=lambda r: r["actual"]["final"])
     T2 = [r for r in scored if r["track"] == 2]
     norm2 = [r["actual"]["final"] + (ref - r["actual"]["time"]) * w[3] for r in T2]
-    gap = 81.76136 - best_any["actual"]["final"]
+    gap = LEADER_T1 - best_any["actual"]["final"]
     # Exchange rate, re-priced with the FREE eighteen-round weights (round 17): 10 % of error
     # removed is worth ~0.95 `final` (Track_1/exchange_v9.py, round 9's instrument).  The
     # total barely moved when the constraint came off; its SPLIT across subscores did.
@@ -603,7 +609,7 @@ def html(B, Rn, w, path):
              f"round {best['round']}", f"轮次 {best['round']}"),
             ("best, track 2", "最佳，track 2", f"{best2['actual']['final']:.3f}",
              f"round {best2['round']}", f"轮次 {best2['round']}"),
-            ("leader", "领先者", "81.761",
+            ("leader", "领先者", f"{LEADER_T1:.3f}",
              "np-user &middot; 08-25", "np-user &middot; 08-25"),
             ("gap", "差距", f"{gap:.3f}",
              f"&asymp;&thinsp;{gap_pct:.1f}% of error",

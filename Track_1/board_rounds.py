@@ -95,6 +95,7 @@ ROUNDS = [
     # +0.023 of that is a favourable `time` draw (93.031 predicted, 93.270 delivered).  At
     # constant latency the accuracy part is +0.031 on this board and +0.049 on Track 2.
     ("R20 cmb3simx4/1inv a60", "2026-09-09", 920369, 94.794521, 78.518609, 94.081696, 93.270089, 41.410372, 81.239831),
+    ("R21 xfam5 cmb3x4+ViT/2inv", "2026-09-10", 921000, 94.847008, 78.684381, 94.298686, 92.676031, 41.755710, 81.330636),
 ]
 
 UNSCORED = []   # every round on both tracks now has full subscores
@@ -178,6 +179,7 @@ ROUNDS_T2 = [
     # `final` gain is a `time` draw (-0.299 score against R20's +0.239): at constant latency
     # this board's accuracy gain is the LARGER of the two, +0.049 against +0.031.
     ("T2R8 cmb3simx4/1inv a60", "2026-09-09", 920370, 94.782311, 78.278425, 93.933159, 92.597588, 41.310588, 81.106430),
+    ("T2R9 xfam5 cmb3x4+ViT/2inv", "2026-09-10", 921001, 94.841673, 78.469938, 94.157190, 91.521812, 41.649497, 81.155762),
 ]
 
 # The fit pools both tracks -- see the module docstring.  ROUNDS first, then ROUNDS_T2, so the
