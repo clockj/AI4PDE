@@ -91,6 +91,13 @@ def main() -> None:
     ap.add_argument("--f", type=float, default=F_BOARD)
     ap.add_argument("--time-score", type=float, default=93.2701)
     ap.add_argument("--folds", type=int, default=4)
+    ap.add_argument("--spread-groups", default="",
+                    help="comma-separated group SIZES over --ckpt, e.g. 4,1 for four fused FNO "
+                         "members plus a ViT. Spread is then the std over GROUP MEANS, which is "
+                         "what the package can actually compute: StackedFNO averages the members "
+                         "it fuses before predict_fno ever sees them, so per-member spread inside "
+                         "a fused group does not exist at inference. Empty = std over all "
+                         "members, which measures a quantity no package can deploy.")
     args = ap.parse_args()
 
     import torch
@@ -149,8 +156,13 @@ def main() -> None:
         np.concatenate([compose(F[j], S[j], args.alpha),
                         np.zeros_like(F[j][..., :1])], -1), Y, 2))) for j in range(K)]
 
-    fold_of = {t: i % args.folds for i, t in enumerate(ut)}
+    # A fold with no trajectory in it makes sps_score reshape an empty array; with 3 held-out
+    # trajectories at AoA 15-20 the default 4 folds does exactly that.
+    nf = min(args.folds, len(ut))
+    fold_of = {t: i % nf for i, t in enumerate(ut)}
     fid = np.array([fold_of[t] for t in traj])
+    if nf != args.folds:
+        print(f"  (folds {args.folds} -> {nf}: only {len(ut)} trajectories here)")
 
     # Fitted on ALL windows, only to display the weights; every number that decides anything
     # comes from the grouped CV below.
@@ -164,7 +176,7 @@ def main() -> None:
     # Grouped CV: weights fitted on the other folds only, applied to this fold, then pooled.
     Pu = np.empty_like(F[0])
     Pw = np.empty_like(F[0])
-    for k_ in range(args.folds):
+    for k_ in range(nf):
         tr, te = fid != k_, fid == k_
         wf = simplex_lsq(F[:, tr].reshape(K, -1).T, Yuv[tr].reshape(-1))
         ws = simplex_lsq(S[:, tr].reshape(K, -1).T, Ystd[tr].reshape(-1))
@@ -181,7 +193,17 @@ def main() -> None:
     # =========================================================================================
     print("\n################ P2  BAND FROM CROSS-FAMILY SPREAD ################")
     sig = S.mean(0)                                     # what the package deploys
-    spread = F.std(0).mean(1, keepdims=True)            # per-element, time-averaged
+    if args.spread_groups:
+        sz = [int(v) for v in args.spread_groups.split(",")]
+        assert sum(sz) == K, f"group sizes {sz} do not sum to {K} members"
+        o, gm = 0, []
+        for n_ in sz:
+            gm.append(F[o:o + n_].mean(0))
+            o += n_
+        spread = np.stack(gm).std(0).mean(1, keepdims=True)
+        print(f"  spread over GROUP means, sizes {sz} (what the package can compute)")
+    else:
+        spread = F.std(0).mean(1, keepdims=True)        # per-element, time-averaged
     P = np.concatenate([compose(F.mean(0), sig, args.alpha),
                         np.zeros_like(F[0][..., :1])], -1).astype(np.float32)
     A, _, scored, n = prep(P, Y)
@@ -204,7 +226,9 @@ def main() -> None:
             r = r * np.clip(sig[..., :2] / np.median(sig[..., :2]), 0.3, 3.0) ** p
         if q:
             r = r * np.clip(spread[..., :2] / np.median(spread[..., :2]), 0.3, 3.0) ** q
-        return np.concatenate([r, np.ones_like(r[..., :1])], -1).astype(np.float32)
+        # `prep` returns |E| over the MEASURED channels only, so the ratio field is 2-channel
+        # too -- the p channel never reaches the band.
+        return r.astype(np.float32)
 
     grid = [(p, q) for p in (0.45,) for q in (0.0, 0.15, 0.3, 0.45)] + [(0.3, 0.3), (0.0, 0.45)]
     print(f"\n  grouped-trajectory CV, {args.folds} folds "
@@ -217,7 +241,7 @@ def main() -> None:
         # sps is 100 * (weighted hits) / n_scored, so folds pool by their scored counts, not
         # by a plain mean over folds -- the folds differ in size by up to 2x.
         num = den = 0.0
-        for k_ in range(args.folds):
+        for k_ in range(nf):
             tr, te = fid != k_, fid == k_
             b = optimal_band(Ed[tr], a_b[tr], scored[tr])
             nk = int(scored[te].sum())
