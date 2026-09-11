@@ -160,7 +160,11 @@ def score_schemes(args, blobs, X, du, dev, schemes) -> None:
     base, ref, pw = z["base"][..., :2], z["sigma_ref"][..., :2], float(z["p"])
 
     def scored(ms):
-        P, sig = _fno.predict_fno(ms, X, dev, alpha=args.alpha, sigma_out=True)
+        # `sigma_out` is an OUT parameter, not a flag: predict_fno writes into it and returns
+        # only the u,v field, which then needs the zero pressure channel the scorer expects.
+        sig = np.empty((len(X), 1, 32, 64, 2), dtype=np.float32)
+        uv = _fno.predict_fno(ms, X, dev, alpha=args.alpha, sigma_out=sig)
+        P = np.concatenate([uv, np.zeros_like(uv[..., :1])], -1).astype(np.float32)
         r = float(np.mean(sc.rel_l2_per_sample(P, Y, 2)))
         k = float(np.mean(sc.tke_rel_l2_per_sample(P, Y, 2)))
         mv = float(sc.mvpe_rel_l2(P, Y))

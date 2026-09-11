@@ -805,14 +805,181 @@ class ViT2d(nn.Module):
         return self.head_field(h), logstd
 
 
+class StackedViT(nn.Module):
+    """K identically-shaped ViT2d members evaluated in ONE invocation.
+
+    Round 23 measured what this is worth.  Shipping round 20's own four FNO members UNFUSED --
+    same checkpoints, same packing, same band bytes -- moved board latency 3.795 -> 7.249 ms on
+    Track 1 and 4.659 -> 7.255 on Track 2 while every error subscore came back identical to six
+    decimals.  That is **1.151 / 0.866 ms per invocation**, against a fitted 0.435, and it says
+    the board is LAUNCH-bound rather than FLOP-bound: four sequential forwards do the same
+    arithmetic as one grouped forward, so the entire +3.45 ms is dispatch.  A member added
+    INSIDE a fused group therefore costs almost nothing, and one that needs its own invocation
+    costs -0.085 `final` before it has earned anything.
+
+    The ViT is the member that makes this worth building.  On `r21b`'s marginal table over
+    cmb3sim x3 it is the best cross-family addition by a wide margin (+0.39 full-split sps
+    against DilRes +0.30, U-FNO +0.30, AFNO +0.10), the board paid the first one +0.148 (T1) /
+    +0.152 (T2) of accuracy, and at 14.7M parameters it is 17 MB int8 against a width-96 L8
+    FNO's 27.7 -- so it is simultaneously the most valuable and the smallest member available.
+    Without fusion a second one is a third invocation and loses; with it, it is free.
+
+    HOW THE MEMBER AXIS FOLDS.  Nothing here is an approximation; each op is the same
+    arithmetic with a leading `k`:
+
+      * `embed` is a patch conv on the SAME input for every member, so K of them become ONE
+        Conv2d(cin, K*dim, patch, stride=patch) -- the `shared()` trick from StackedFNO, not a
+        grouped conv over a repeated input;
+      * LayerNorm has no cross-token mixing, so it is `F.layer_norm(t, (dim,))` once, followed
+        by a per-member affine of shape (K,1,1,dim);
+      * every Linear becomes `einsum("kbnd,kod->kbno")` against a stacked (K, out, in) weight;
+      * attention folds K into the batch axis of `scaled_dot_product_attention`, which is
+        exactly what `nn.MultiheadAttention` does internally for its own batch;
+      * the two readout convs become grouped 1x1 convs over MEMBER-MAJOR channels.
+
+    `forward` returns the member MEAN of the field and log(mean(exp(logstd))) in the second
+    slot, the same contract `StackedFNO` obeys, so `predict_fno` needs no special case.
+
+    Dropout and drop-path are training-time only and are identity in `eval()`, which is why
+    `ViT2d` above does not reproduce them and neither does this.
+    """
+
+    def __init__(self, members):
+        super().__init__()
+        first = members[0]
+        self.n_members = k = len(members)
+        keys = first.state_dict().keys()
+        for m in members[1:]:
+            assert m.state_dict().keys() == keys, "shape mismatch"
+            for key, v in m.state_dict().items():
+                assert v.shape == first.state_dict()[key].shape, f"{key} shape mismatch"
+
+        self.patch, self.gh, self.gw = first.patch, first.gh, first.gw
+        self.wid = first.wid
+        self.dim = dim = first.pos.shape[-1]
+        self.heads = first.blocks[0]["attn"].num_heads
+        self.depth = d = len(first.blocks)
+        self.register_buffer("grid", first.grid.clone())
+
+        # `embed` is a patch conv on the SAME input for every member, so K of them collapse to
+        # ONE conv with K*dim output channels -- not a grouped conv over a repeated input,
+        # which is the mistake round 11 fixed in StackedFNO's lift.
+        e0 = first.embed
+        emb = nn.Conv2d(e0.in_channels, k * dim, e0.kernel_size, stride=e0.stride)
+        emb.weight.data.copy_(torch.cat([m.embed.weight.data for m in members], 0))
+        emb.bias.data.copy_(torch.cat([m.embed.bias.data for m in members], 0))
+        self.embed = emb
+        self.register_buffer("pos", torch.stack([m.pos.data[0] for m in members])[:, None])
+
+        # Everything per-block is stacked over BOTH depth and member, giving (L, K, ...) --
+        # the same shape StackedFNO gives its spectral weights, so the forward loop indexes
+        # one tensor per quantity instead of walking a ParameterList. These are constants at
+        # inference; buffers, not parameters, and non-persistent because a fused module is
+        # never saved (`load_any` always rebuilds it from the member checkpoints).
+        def bt(name, per_block, extra_dims: int = 0):
+            t = torch.stack([torch.stack([per_block(m.blocks[i]) for m in members])
+                             for i in range(d)])
+            for _ in range(extra_dims):
+                t = t.unsqueeze(2)
+            self.register_buffer(name, t.contiguous(), persistent=False)
+
+        # LayerNorm and bias terms broadcast against (k, b, N, ...), so they carry two dummy
+        # axes; weight matrices are contracted by einsum and carry none.
+        bt("n1_w", lambda blk: blk["n1"].weight.data, 2)
+        bt("n1_b", lambda blk: blk["n1"].bias.data, 2)
+        bt("n2_w", lambda blk: blk["n2"].weight.data, 2)
+        bt("n2_b", lambda blk: blk["n2"].bias.data, 2)
+        bt("qkv_w", lambda blk: blk["attn"].in_proj_weight.data)
+        bt("qkv_b", lambda blk: blk["attn"].in_proj_bias.data, 2)
+        bt("op_w", lambda blk: blk["attn"].out_proj.weight.data)
+        bt("op_b", lambda blk: blk["attn"].out_proj.bias.data, 2)
+        bt("f1_w", lambda blk: blk["mlp"][0].weight.data)
+        bt("f1_b", lambda blk: blk["mlp"][0].bias.data, 2)
+        bt("f2_w", lambda blk: blk["mlp"][3].weight.data)
+        bt("f2_b", lambda blk: blk["mlp"][3].bias.data, 2)
+
+        def st(name, get, extra_dims: int = 0):
+            t = torch.stack([get(m) for m in members])
+            for _ in range(extra_dims):
+                t = t.unsqueeze(1)
+            self.register_buffer(name, t.contiguous(), persistent=False)
+
+        st("no_w", lambda m: m.norm_out.weight.data, 2)
+        st("no_b", lambda m: m.norm_out.bias.data, 2)
+        st("pj_w", lambda m: m.proj.weight.data)
+        st("pj_b", lambda m: m.proj.bias.data, 2)
+
+        def grouped(convs):
+            """K same-shape 1x1 convs -> one grouped 1x1 conv over member-major channels."""
+            cin, cout = convs[0].in_channels, convs[0].out_channels
+            g = nn.Conv2d(k * cin, k * cout, 1, groups=k)
+            g.weight.data.copy_(torch.cat([c.weight.data for c in convs], 0))
+            g.bias.data.copy_(torch.cat([c.bias.data for c in convs], 0))
+            return g
+
+        self.head_field = nn.Sequential(grouped([m.head_field[0] for m in members]), nn.GELU(),
+                                        grouped([m.head_field[2] for m in members]))
+        self.head_logstd = None
+        if first.head_logstd is not None:
+            self.head_logstd = nn.Sequential(
+                grouped([m.head_logstd[0] for m in members]), nn.GELU(),
+                grouped([m.head_logstd[2] for m in members]))
+
+    @staticmethod
+    def _lin(t, w, b):
+        """(K,B,N,in) against a stacked (K,out,in) weight, plus a (K,1,1,out) bias."""
+        return torch.einsum("kbnd,kod->kbno", t, w) + b
+
+    def forward(self, prev, detach_var: bool = False):
+        b, k, dim = len(prev), self.n_members, self.dim
+        x = torch.cat([prev, self.grid.expand(b, -1, -1, -1)], 1)
+        t = self.embed(x).reshape(b, k, dim, self.gh * self.gw).permute(1, 0, 3, 2)
+        t = (t + self.pos).contiguous()                             # (k, b, N, dim)
+        n, hd = t.shape[2], dim // self.heads
+        lnorm = torch.nn.functional.layer_norm
+        for i in range(self.depth):
+            q = lnorm(t, (dim,)) * self.n1_w[i] + self.n1_b[i]
+            qkv = self._lin(q, self.qkv_w[i], self.qkv_b[i])        # (k, b, N, 3*dim)
+            # k and b are both pure batch axes to attention -- nothing mixes across either --
+            # so folding them into one is exact, and it is the layout SDPA wants.
+            qkv = qkv.reshape(k * b, n, 3, self.heads, hd).permute(2, 0, 3, 1, 4)
+            a = torch.nn.functional.scaled_dot_product_attention(qkv[0], qkv[1], qkv[2])
+            a = a.transpose(1, 2).reshape(k, b, n, dim)
+            t = t + self._lin(a, self.op_w[i], self.op_b[i])
+            h = lnorm(t, (dim,)) * self.n2_w[i] + self.n2_b[i]
+            h = torch.nn.functional.gelu(self._lin(h, self.f1_w[i], self.f1_b[i]))
+            t = t + self._lin(h, self.f2_w[i], self.f2_b[i])
+        t = lnorm(t, (dim,)) * self.no_w + self.no_b
+        t = self._lin(t, self.pj_w, self.pj_b)                      # (k, b, N, wid*p*p)
+        pp, wid = self.patch, self.wid
+        # (k,b,gh,gw,wid,p,p) -> (b, k, wid, gh, p, gw, p). Member-major channels, which is
+        # what the grouped readout convs expect; ViT2d's own permute is this one without k.
+        h = (t.reshape(k, b, self.gh, self.gw, wid, pp, pp)
+              .permute(1, 0, 4, 2, 5, 3, 6).reshape(b, k * wid, H, W))
+        field = self.head_field(h).reshape(b, k, CH, H, W).mean(1)
+        logstd = None
+        if self.head_logstd is not None:
+            ls = self.head_logstd(h.detach() if detach_var else h).reshape(b, k, C, H, W)
+            # Mean of the members' SIGMAS returned as a log, matching StackedFNO exactly, so
+            # predict_fno needs no special case and the clamp it applies is a no-op.
+            logstd = ls.clamp(-8.0, 2.0).exp().mean(1).log()
+        return field, logstd
+
+
 def fuse(models):
     """Group `models` by architecture and fuse each FNO group. Order-preserving by first sight.
 
     A package of 5x width-24 + w48 + m1220 + w64 goes from 8 invocations to 4, and the round-12
-    mixed package (8 FNO + 1 U-Net) from 9 to 4. Only FNO2d members are ever folded: StackedFNO
-    knows how to turn a member axis into `groups` for spectral blocks and 1x1 convs, and nothing
-    else. A U-Net's state_dict keys differ from every FNO's, so it lands in its own group and is
-    handed back untouched -- `predict_fno` then calls it as one more (field, logstd) module.
+    mixed package (8 FNO + 1 U-Net) from 9 to 4. FNO2d members fold through StackedFNO and
+    ViT2d members through StackedViT; every other family lands in its own group and is handed
+    back untouched -- `predict_fno` then calls each as one more (field, logstd) module. A
+    U-Net's state_dict keys differ from every FNO's, which is what puts it in its own group.
+
+    Round 23 priced what this buys: shipping round 20's four members UNFUSED cost 1.151 board
+    ms per invocation on Track 1 and 0.866 on Track 2, i.e. **-0.085 / -0.058 `final` for the
+    first extra one**, with every error subscore bit-identical. Fusion is not a micro-
+    optimization; it is the difference between a member being free and a member being an
+    accuracy arm's worth of latency.
     """
     groups = {}
     for m in models:
@@ -851,8 +1018,14 @@ def fuse(models):
         # `head_osc` used to be in this list for the same reason and no longer is -- it is
         # implemented above, and `verify/fuse_osc.py` checks the fused path against the
         # sequential one.
-        if (len(g) == 1 or not isinstance(g[0], FNO2d) or g[0].head_mean is not None):
+        if len(g) == 1:
             out.extend(g)     # `extend`, not `append`: two U-Nets are two invocations, not one
+        elif isinstance(g[0], ViT2d):
+            # Round 23: the board is launch-bound, so a second ViT is free fused and -0.085
+            # `final` unfused. StackedViT folds the member axis the same way StackedFNO does.
+            out.append(StackedViT(g).to(g[0].grid.device).eval())
+        elif not isinstance(g[0], FNO2d) or g[0].head_mean is not None:
+            out.extend(g)
         else:
             st = StackedFNO(g).to(g[0].grid.device).eval()
             st.self_norm = bool(getattr(g[0], "self_norm", False))
