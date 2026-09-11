@@ -19,7 +19,8 @@ The three instruments
    per-element stretch f_hat = 1.360 and, at that stretch, reproduced the board's 39.626 to
    0.05. So: stretch the proxy error field by 1.360, take the accuracy factors from the
    PREDICTED board metrics, score the package's actual band.
-3. **Board time.** `board ms = 3.274 + 0.336*invocations... ` -- see LAT_LOC below. The
+3. **Board time.** `board ms = 3.274 + 1.151*invocations (0.866 on Track 2) + 0.336*local`.
+   Both slopes are MEASURED, not fitted -- see the LAT_LOC / LAT_INV block below. The
    0.803 slope this file used through round 17 was FALSIFIED by R18 and T2R6, two rounds that
    shipped a bit-identical prediction array through a faster path and returned -0.089 and
    +0.039 board ms for local cuts of -0.352 and -0.890. At ~4 board ms, 1 board ms = -0.070
@@ -94,10 +95,31 @@ R10 = dict(rel_l2=94.576394, tke=79.152828, mvpe=93.681162, time=91.120851, sps=
 #   T2R3 -> T2R5   local +2.353 (8xL4 -> 4xL8, the batch-1 step nearly doubled)  +0.114  +0.05
 # Refitting the ELEVEN one-invocation rounds -- all of the modern era -- gives
 # `board = 3.274 + 0.336*local` at rms 0.337 ms, where the seven-round model below missed every
-# one of them by 1.3-2.5 ms. The invocation coefficient cannot be re-measured from a set that
-# is all one invocation, so it is left where round 13 put it. NOTE that in --anchor mode (the
-# only mode anyone should use) LAT_C cancels in the difference and ONLY THE SLOPES matter.
-LAT_C, LAT_INV, LAT_LOC = 3.274, 0.435, 0.336
+# one of them by 1.3-2.5 ms.
+#
+# ROUND 23: THE INVOCATION COEFFICIENT IS 1.151 (T1) / 0.866 (T2), NOT 0.435 -- AND IT IS NOW
+# MEASURED THE SAME WAY. `track{1,2}_r23_nofuse4fp16_a060.zip` were round 20's own checkpoints,
+# round 20's own fp16 packing and round 20's own band byte for byte, with `FUSE = False` the
+# only difference: 1 fused invocation became 4 sequential ones. rel_l2/tke/mvpe came back
+# IDENTICAL TO SIX DECIMALS on both boards and sps moved 2e-05, so `time` is the whole delta.
+#   R20  -> R23     3.795 -> 7.249 board ms over +3 invocations = 1.151 each  (x2.65 the fit)
+#   T2R8 -> T2R10   4.659 -> 7.255                              = 0.866 each  (x1.99)
+# Track 2 is CHEAPER per invocation, not dearer: its +0.86 ms handicap at one invocation is a
+# fixed per-step cost of the streaming path, and at four invocations the two boards meet
+# (7.249 vs 7.255). Round 22's "the invocation tax is 2.4x heavier on Track 2" is withdrawn --
+# that was R21's ViT forward, which is heavy at batch 1, not the invocation.
+# Priced through w_time at round 20's operating point, the FIRST extra invocation is
+# **-0.085 `final` on Track 1 and -0.058 on Track 2**: the size of a good accuracy arm.
+# NOTE that in --anchor mode (the only mode anyone should use) LAT_C cancels in the difference
+# and ONLY THE SLOPES matter. The per-track split is why `--track` now reaches this constant.
+LAT_C, LAT_LOC = 3.274, 0.336
+LAT_INV_T1, LAT_INV_T2 = 1.151, 0.866
+LAT_INV = LAT_INV_T1                 # back-compat default; pass track=2 to lat_ms() instead
+
+
+def lat_inv_of(track: int = 1) -> float:
+    """Board ms per extra SEQUENTIAL model forward, measured in round 23. See above."""
+    return LAT_INV_T1 if int(track) == 1 else LAT_INV_T2
 
 # Recorded board rounds usable as anchors: the five actual subscores, and `final`.
 ANCHORS = {
@@ -171,11 +193,24 @@ ANCHORS = {
     # Its sps splits +0.162 forced / +0.184 CONTAINMENT on T1 and +0.176 / +0.163 on T2, the
     # largest containment move since dropout and replicated across boards. Its latency is the
     # warning: board ms went 3.795 -> 4.553 (T1) and 4.659 -> 6.255 (T2) for the SAME change,
-    # against +0.653 predicted -- the invocation term is ~1.2x on Track 1 and ~2.4x at batch 1.
+    # against +0.653 predicted.
+    #   ROUND 23 RE-READS THIS. An invocation costs 1.151 (T1) / 0.866 (T2) ms, so R21's ViT
+    #   group came in BELOW one FNO invocation on Track 1 (+0.758) and at nearly TWICE one on
+    #   Track 2 (+1.596). An "invocation" is really one model's kernel launches, and a ViT's
+    #   are few and large: cheap when a batch of 64 amortises them, dear at batch 1. R21 also
+    #   moved fp16 -> int8, which this cannot separate.
     "r21": dict(rel_l2=94.847008, tke=78.684381, mvpe=94.298686, time=92.676031,
                 sps=41.755710, final=81.330636),
     "t2r9": dict(rel_l2=94.841673, tke=78.469938, mvpe=94.157190, time=91.521812,
                  sps=41.649497, final=81.155762),
+    # ROUND 23 / T2R10, 2026-09-11 -- R20 / T2R8 UNFUSED, 4 invocations. NOT an accuracy anchor
+    # (its error subscores ARE R20's, by construction); it is here so the invocation
+    # coefficient can be re-derived from the table, and as the anchor for any future 4-group
+    # package. See the LAT_INV block above.
+    "r23": dict(rel_l2=94.794522, tke=78.518609, mvpe=94.081696, time=90.932390,
+                sps=41.410354, final=81.015201),
+    "t2r10": dict(rel_l2=94.782311, tke=78.278425, mvpe=93.933159, time=90.928559,
+                  sps=41.310591, final=80.945935),
     "r10": R10,
 }
 
@@ -324,7 +359,13 @@ def main():
                                          np.float64(pred["mvpe"])))
     sps = sps_score(np.float32(F_TAIL) * A, np.full(len(A), a0), scored, n, half)
 
-    board_ms = LAT_C + LAT_INV * args.invocations + LAT_LOC * args.local_ms
+    # Which board's invocation coefficient applies. Track 2 is CHEAPER per invocation (0.866
+    # vs 1.151, round 23) but pays a fixed per-step overhead on top, which the anchor's own
+    # measured latency already carries. Anchors named t2* are Track 2; without an anchor there
+    # is no level anyway, so Track 1's is the harmless default.
+    track = 2 if (args.anchor or "").startswith("t2") else 1
+    lat_inv = lat_inv_of(track)
+    board_ms = LAT_C + lat_inv * args.invocations + LAT_LOC * args.local_ms
 
     anc = anc_board = None
     if args.anchor:
@@ -359,12 +400,12 @@ def main():
         # anchor's measured latency for the level cancels the drift, and makes an unchanged
         # package predict its own time_score exactly.
         anc_ms_actual = 728.96 * (100.0 / anc["time"] - 1.0) ** 2
-        anc_ms_model = (LAT_C + LAT_INV * (args.anchor_invocations or args.invocations)
+        anc_ms_model = (LAT_C + lat_inv * (args.anchor_invocations or args.invocations)
                         + LAT_LOC * (args.anchor_local_ms
                                      if args.anchor_local_ms is not None else args.local_ms))
         board_ms = anc_ms_actual + (board_ms - anc_ms_model)
         print(f"  board ms: anchor measured {anc_ms_actual:.3f}, model {anc_ms_model:.3f}; "
-              f"candidate model {LAT_C + LAT_INV*args.invocations + LAT_LOC*args.local_ms:.3f}"
+              f"candidate model {LAT_C + lat_inv*args.invocations + LAT_LOC*args.local_ms:.3f}"
               f" -> anchored {board_ms:.3f}")
         print(f"anchor {args.anchor}: proxy rel {a_prox['rel']:.5f} tke {a_prox['tke']:.5f} "
               f"mvpe {a_prox['mvpe']:.5f}  -> board rel {anc_board['rel']:.5f} "
@@ -380,8 +421,8 @@ def main():
           f"rel {prox['rel']:.5f}  tke {prox['tke']:.5f}  mvpe {prox['mvpe']:.5f}")
     print(f"predicted board errors:  rel {pred['rel']:.5f}  tke {pred['tke']:.5f}  "
           f"mvpe {pred['mvpe']:.5f}   (a = {a0:.4f})")
-    print(f"board ms = {LAT_C} + {LAT_INV}*{args.invocations} + "
-          f"{LAT_LOC}*{args.local_ms:.3f} = {board_ms:.3f}\n")
+    print(f"board ms = {LAT_C} + {lat_inv}*{args.invocations} (track {track}, MEASURED "
+          f"round 23) + {LAT_LOC}*{args.local_ms:.3f} = {board_ms:.3f}\n")
     base = ANCHORS[args.anchor] if args.anchor else R10
     label = args.anchor if args.anchor else "round 10"
     print(f"{'subscore':>10s} {label:>10s} {'predicted':>10s} {'delta':>8s}")

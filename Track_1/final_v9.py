@@ -69,8 +69,8 @@ import numpy as np
 
 # rel_l2, tke, mvpe, time, sps, final -- every scored round from the shared account on BOTH
 # tracks, read off Codabench (2026-08-31 for R6..T2R1, 2026-09-02 for R14/T2R2, 2026-09-03 for
-# R15/T2R3, 2026-09-04 for R16/T2R4/R17/T2R5).  Kept in sync with Track_1/board_rounds.py:
-# rows are ROUNDS then ROUNDS_T2, in that order.
+# R15/T2R3, 2026-09-04 for R16/T2R4/R17/T2R5).  Listed here in SUBMISSION-DATE order and in
+# Track_1/board_rounds.py by track; `_check_sync` below holds the two to the same multiset.
 BOARD = np.array([
     [94.4342,   78.1660,   93.7922,   91.6973,   36.9374,   79.733],      # R6   U-Net
     [94.5754,   78.5278,   93.9100,   91.7264,   37.4680,   79.984883],   # R7   FNO x3
@@ -96,8 +96,40 @@ BOARD = np.array([
     [94.762818, 78.220131, 93.843944, 92.896212, 41.210644, 81.086639],   # T2R7 = R19's members
     [94.794521, 78.518609, 94.081696, 93.270089, 41.410372, 81.239831],   # R20  cmb3sim, best
     [94.782311, 78.278425, 93.933159, 92.597588, 41.310588, 81.106430],   # T2R8 = R20's members
+    [94.847008, 78.684381, 94.298686, 92.676031, 41.755710, 81.330636],   # R21  xfam5, 2 inv
+    [94.841673, 78.469938, 94.157190, 91.521812, 41.649497, 81.155762],   # T2R9 = R21's members
+    [94.794522, 78.518609, 94.081696, 90.932390, 41.410354, 81.015201],   # R23  = R20 UNFUSED
+    [94.782311, 78.278425, 93.933159, 90.928559, 41.310591, 80.945935],   # T2R10 = T2R8 UNFUSED
 ])
 _X, _Y = BOARD[:, :5], BOARD[:, 5]
+
+
+def _check_sync() -> None:
+    """BOARD must hold the same ROUNDS as board_rounds.py -- as a SET, not in order.
+
+    This table is a hand-maintained copy so the module stays dependency-free for the submission
+    container, and a hand-maintained copy is exactly the thing that silently goes stale.  The
+    two files list the rounds in different orders (this one by submission date, `board_rounds`
+    by track) and that is harmless -- least squares does not see row order -- so the check is
+    on the multiset.  Silent on ImportError by design: nothing shipped imports `board_rounds`.
+    """
+    try:
+        from board_rounds import ROUNDS, ROUNDS_T2          # noqa: PLC0415
+    except Exception:
+        try:
+            from Track_1.board_rounds import ROUNDS, ROUNDS_T2   # noqa: PLC0415
+        except Exception:
+            return
+    want = np.array([r[3:9] for r in list(ROUNDS) + list(ROUNDS_T2)], float)
+    key = lambda a: sorted(map(tuple, np.round(a, 6)))
+    if want.shape != BOARD.shape or key(want) != key(BOARD):
+        raise AssertionError(
+            f"final_v9.BOARD is out of sync with board_rounds.py "
+            f"({BOARD.shape[0]} rows here, {want.shape[0]} there).  Fix the copy before "
+            f"pricing anything -- a stale fit is worse than no fit.")
+
+
+_check_sync()
 NAMES = ["rel_l2", "tke", "mvpe", "time", "sps"]
 
 # The subscore matrix is atrociously conditioned -- every column sits in [36, 95] and moves by

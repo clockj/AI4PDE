@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import pathlib
 import os
 import sys
 
@@ -467,7 +468,16 @@ NAV_SCRIPT = """<script>
 
 
 def _sidebar(B, Rn):
-    n_scored = len([r for r in B if r.get("actual")])
+    # The fit pools this account's rounds AND the two collaborator rounds (X1, X2), which are
+    # in board_rounds.py but not in board.jsonl -- they have subscores and no thesis of ours.
+    # Count what the fit actually uses, not what this page can narrate.
+    try:
+        import sys as _sys
+        _sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "Track_1"))
+        from board_rounds import ROUNDS as _R1, ROUNDS_T2 as _R2
+        n_scored = len(_R1) + len(_R2)
+    except Exception:
+        n_scored = len([r for r in B if r.get("actual")])
     o = ['<aside class="side">',
          '<div class="brand"><span class="nm">RealPDE Calibration Log</span>'
          '<span class="zhnm">RealPDE 校准日志</span></div>',

@@ -807,6 +807,70 @@ reading `Track_1/plan/plan_20260905.md` §7. Two packages staged, neither submit
   path after a `cd`; both were re-run on CPU and the numbers stand, and `q3build` fixes the
   paths.
 
+### 1.24 Rounds 18–23: `sps` factorizes, one ViT is worth an invocation, and the invocation is 1.15 ms
+
+The round-by-round record for 18–23 is in `CLAUDE.md` (section "Rounds 18–23"), the live data
+in `Track_1/board_rounds.py`, the published log in `leaderboard/`. Two of it are *rules*, and
+this is where rules live.
+
+**(a) `sps` FACTORIZES, SO EVERY BOARD ROUND SPLITS INTO A FORCED PART AND A CONTAINMENT PART
+— with no free parameter and no local measurement.** The scoring rule is
+`sps = 100 · mean_i(a_i) · containment` with `a_i = 0.5g(rel) + 0.3g(tke) + 0.2g(mvpe)` and
+`g(m) = 0.5/(0.5+m)`, so `sps_pred(B) = sps(A) · a(B)/a(A)` is computable from two rounds'
+**published subscores alone**. What is left over is the containment term, and across every
+consecutive board step it is nonzero for exactly four kinds of change:
+
+| change | containment `sps` |
+|---|---|
+| the **band** (R9 → R10) | **+1.410** |
+| regularized **capacity**, w24 → w96 (both boards) | **+0.992 / +0.961** |
+| **member count**, 3 → 8 | **+0.668** |
+| architecture **family** — U-FNO in, then out | **+0.464 / −0.440** |
+| architecture **family** — one ViT inside an FNO package (R21 / T2R9) | **+0.184 / +0.163** |
+| everything else: sim, depth at equal FLOPs, `--lam-cov`, `--lam-tgrad`, `lam_v`, both latency rebuilds, the gated blend | inside ±0.05 |
+
+It also re-prices the exchange rate, because `a_i` is built from the other three subscores: per
+10 % of error removed, `rel_l2` **+0.346**, `tke` **+0.290**, `mvpe` **+0.100** — `tke` is
+84 % of `rel_l2`, not 74 %, and no error subscore is negligible.
+
+→ **§1.20's closure of non-FNO families was true of the PACKAGE and false of the MEMBER.**
+U-FNO ×3 missed by −0.45 on latency and `rel_l2` and its `sps` +0.44 was filed as noise; it was
+the third-largest containment move on record. One ViT inside an otherwise-FNO package is worth
+**+0.148 (T1) / +0.152 (T2) of accuracy**, replicated across boards.
+
+**(b) AN INVOCATION COSTS 1.151 BOARD MS ON TRACK 1 AND 0.866 ON TRACK 2 — measured, after
+thirteen rounds of being fitted.** `board ms = a + b·invocations + c·local` had `b` fitted since
+§1.6 and never tested. Round 23 shipped round 20's own checkpoints, own fp16 packing and own
+band **byte for byte** with `FUSE = False`, so one fused invocation became four sequential
+forwards and nothing else moved. The gate held perfectly — `rel_l2`, `tke` and `mvpe` came back
+**identical to six decimals** on both boards, `sps` moved 2e-05 — so `time` is the whole delta.
+Against the fitted 0.435 the model was **2.65× / 1.99× light**; priced through `w_time` the
+first extra invocation is **−0.085 / −0.058 `final`**, the size of a good accuracy arm.
+
+→ **THE BOARD IS LAUNCH-BOUND, NOT FLOP-BOUND.** Four sequential forwards do the same
+arithmetic as one grouped forward, so the entire +3.45 ms is dispatch. **Members added inside a
+fused group are cheap; architecture families, which cannot fuse, are dear** — which is exactly
+why `_fno.fuse()` exists and why a third family (AFNO: +0.03 marginal `sps` for a whole
+invocation) is out of the question.
+
+→ **Track 2's handicap is a FIXED per-step cost, not a per-invocation one.** At 1 invocation it
+costs +0.864 ms more than Track 1; at 4 the two boards meet (7.249 vs 7.255) and Track 1 pays
+MORE per invocation. "The invocation tax is 2.4× heavier on Track 2" (round 22) is **withdrawn**
+— that was R21's ViT forward, which is heavy at batch 1, not the invocation.
+
+→ **`w_time` = 0.09609 / 0.09616** off this one pair, a fourth and fifth direct single-subscore
+reading. The free 28-round fit says 0.0965; the `Σw = 1` fit said 0.085 and is excluded by 15 %.
+
+→ **Never predict a board LEVEL from the latency model.** Its residuals reach −2.5 ms and are
+ordered by date — the eval machine drifts. Anchor on a recent round of the same shape and move
+in deltas: `board_rounds.INV_MS_T1/T2`, `board_ms()`, `time_score()`, `invocation_cost()`.
+
+**(c) The method rule this round adds (now rule 10 in Part 4).** A submission slot spent on a
+package that CANNOT WIN is worth more than one spent on +0.02, when the package is built so
+that only one subscore can move. Rounds 14 and 23 both did this deliberately and both returned
+a number no amount of local work could have produced. The Decision phase (to 2026-10-25) is
+what selects the final package; Main Development slots are for learning.
+
 ## Part 2 — Closed. Do not re-propose without new evidence.
 
 Everything here was closed by measurement, with the file that measured it. The list exists so a
@@ -1155,7 +1219,8 @@ implement self-normalization but measured it on a split blind to what it is for;
 | what | where |
 |---|---|
 | Per-round detail, contracts, measured baselines | `CLAUDE.md` |
-| All eight board rounds + weight fit + latency inversion | `Track_1/board_rounds.py` |
+| **Every board round** (28, both tracks) + the free weight fit + the measured invocation cost | `Track_1/board_rounds.py`, `Track_1/final_v9.py` |
+| Published calibration log (bilingual, regenerate + republish after every board result) | `leaderboard/lb.py --html` |
 | Round-12 report and raw campaign rows | `Track_1/report/report_20260829_round12.md`, `Track_1/plan/campaign_20260829.md` |
 | Shipped Track-1 package (11 memb / 4 inv) | `Track_1/submit_fno/` (`README.md` documents the build) |
 | Scorer: official kits + reconstruction diff | `~/RealPDE/official/{t1_v9,t2_v6}/`, `Track_1/verify/diff_scoring_{official,real}.py` |
@@ -1204,6 +1269,19 @@ anything while training runs, and do not judge liveness by `nvidia-smi` (it read
 8. **Replicates belong in the FIRST job, not the follow-up.** §1.11b: four single-run 2–3σ
    results regressed on replication in one round. Out of distribution the seed σ is 0.71
    `wfinal`, 58× the interior control's, so a one-run OOD number is unreadable by construction.
-9. **A held-out list is DERIVED, never typed.** The (Re, AoA) grid is incomplete — there is no
+9. **A build job that bakes constants into the working tree must RESTORE the tree itself.**
+   Round 23: a `git checkout` while a build sat at step 3/5 put `FUSE = True` into the Track-1
+   zip while Track 2, built at 4/5, was correct. Only the job's own read-back-from-zip check
+   caught it. Related, same round: a wait sentinel must be the **last line** of the script, or
+   the background wait returns while the job is still running; and `verify/pkg_identity.py`
+   must be handed the archive **actually uploaded** (`sub_candidates/submitted/`) — its first
+   run failed at 5.7e-03 not because `fuse()` was wrong but because the rebuild used int8
+   where the uploaded package was fp16.
+10. **A slot spent on a package that cannot win can be worth more than one spent on +0.02** —
+   if it is built so that only ONE subscore can move. §1.18 (the gated blend fired on zero
+   hidden windows) and §1.24b (the unfused package) each returned a number no amount of local
+   work could produce. The Decision phase selects the package; Main Development slots are for
+   learning.
+11. **A held-out list is DERIVED, never typed.** The (Re, AoA) grid is incomplete — there is no
    `3750_15`, and `5025` has all five angles — so a hand-written `--exclude` silently trains on
    a held-out trajectory. Call `re_split.excluded()` / `kfold.py --folds` and assert the count.

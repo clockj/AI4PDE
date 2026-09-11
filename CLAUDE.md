@@ -4,21 +4,41 @@ Solution code for the **RealPDE** competition (real-world PDE / sim-to-real flui
 Site: https://realpdecompetition.github.io/ · Data: https://huggingface.co/datasets/AI4Science-WestlakeU/RealPDEBench
 Track 1 (Sim2Real): https://www.codabench.org/competitions/17363/ · Track 2 (LTTTA): https://www.codabench.org/competitions/17385/
 
-> **START HERE: [`ROADMAP.md`](ROADMAP.md).** It carries the full **eighteen-round** board
-> record across both tracks, the refitted subscore weights and the current recommendation.
-> This file is the reference manual; the roadmap is the plan. Best score: **81.170** (Track 1
-> round 17 — 4 all-data width-96 **8-layer** dropout-0.45 FNOs, one fused invocation; the same
-> members score 81.019 as Track 2 round 5). Current plan:
-> [`Track_1/plan/plan_20260905.md`](Track_1/plan/plan_20260905.md).
+> **START HERE: [`ROADMAP.md`](ROADMAP.md).** This file is the reference manual; the roadmap
+> is the plan. The live board record is **`Track_1/board_rounds.py`** (28 pooled rounds across
+> both tracks) and the published calibration log in **`leaderboard/`**
+> (`python leaderboard/lb.py --html`) — prefer either to any table written into these two
+> documents, which lag. Best score: **81.331** (Track 1 round 21, 2026-09-10 — four all-data
+> width-96 L8 dropout-0.45 `cmb3sim` FNOs fused into one invocation plus **one ViT** as a
+> second, int8, ALPHA 0.60; the same members score 81.156 as Track 2 round 9). Leader, read
+> 2026-09-11: **T1 81.82371 / T2 81.99648**. Current plan:
+> [`Track_1/plan/plan_20260909.md`](Track_1/plan/plan_20260909.md).
 >
 > **THE WEIGHTS CHANGED IN ROUND 17, AND EVERY EARLIER WEIGHT TABLE IN THIS FILE IS THE OLD
 > ONE.** Every fit from round 9 to round 16 imposed `Σw = 1`, which was never tested. Dropped,
-> the eighteen-round pooled fit is **rel_l2 0.4754 · tke 0.1017 · mvpe 0.0936 · time 0.0967 ·
-> sps 0.2503** (Σw 1.018) at a max residual of **0.0023** against the constrained fit's 0.049
-> — twenty times tighter, and it agrees with the one weight ever measured directly
-> (`w_time` = 0.0956 from the R13/R14 A/B). **`mvpe` is worth 2.4× and `tke` 1.5× what this
-> file says below**; "mvpe is worth nothing", "tke is the cheapest subscore" and "ALPHA 0.60 is
+> the twenty-eight-round pooled fit is **rel_l2 0.4772 · tke 0.1014 · mvpe 0.0923 ·
+> time 0.0965 · sps 0.2501** (Σw 1.018) at a max residual of **0.0025** against the
+> constrained fit's 0.049 — twenty times tighter, and it agrees with the weights measured
+> WITHOUT a fit: five single-subscore A/Bs put `w_time` at **0.0956–0.0962**, the free fit at
+> 0.0965, the constrained fit at 0.085. **`mvpe` is worth 2.4× and `tke` 1.5× what this file
+> says below**; "mvpe is worth nothing", "tke is the cheapest subscore" and "ALPHA 0.60 is
 > settled" are all withdrawn. `Track_1/final_v9.py` is the authority.
+>
+> **Two rules from rounds 18–23 that change what is worth building** — the sections for those
+> rounds are at the END of this file, and the four subscore-weight tables between here and
+> there are the superseded constrained ones:
+> 1. **`sps` factorizes, so every board round can be split into a forced part and a
+>    CONTAINMENT part from its published subscores alone** (`sps = 100·mean(a_i)·containment`,
+>    `a_i = 0.5g(rel)+0.3g(tke)+0.2g(mvpe)`, `g(m) = 0.5/(0.5+m)`). Across every consecutive
+>    board step the containment residual is nonzero for exactly four kinds of change: the
+>    **band**, regularized **capacity**, **member count**, and architecture **family**.
+>    Everything else — sim co-training, depth at equal FLOPs, every auxiliary loss, both
+>    latency rebuilds — lands inside ±0.05.
+> 2. **An invocation costs 1.151 board ms on Track 1 and 0.866 on Track 2** (round 23,
+>    measured by shipping one package unfused), i.e. **−0.085 / −0.058 `final`** for the first
+>    extra one. Four sequential forwards do the same arithmetic as one grouped forward, so the
+>    board is **launch-bound, not FLOP-bound**: members added inside a fused group are cheap,
+>    a second architecture family is dear, and a third is out of the question.
 
 This repo (`~/RealPDE/AI4PDE`, remote `github.com/clockj/AI4PDE`) holds **our** code.
 Datasets, starting kits and official checkpoints live one level up in `~/RealPDE/` and are **not**
@@ -2017,3 +2037,87 @@ and §1b (the sim pair, R19/T2R7, predicted **81.340 / 81.163** nominal).
   bit-identical. Timing inside a job that shares a node with training is CONTENDED (gate
   1.412 A100 ms ±3 %); record ratios only. `fold`-wise domain maps are rebuilt per k-fold
   fold so each is blind to its own held-out set (fall-back count = 18 + held-out count).
+
+### Rounds 18–23 (2026-09-06 → 09-11) — T1 81.331, and two instruments that changed the plan
+
+The board record is `Track_1/board_rounds.py` and the published log is `leaderboard/`; this is
+the compressed reading. Six board rounds per track, every one predicted before upload.
+
+| | package | T1 | T2 |
+|---|---|---|---|
+| R18 / T2R6 | R17's members through a faster host path — a **pure-latency A/B** | 81.177 | 81.017 |
+| R19 / T2R7 | `--sim --lam-sim 0.3 --sim-loss full` ×4, 1 inv | 81.186 | 81.087 |
+| R20 / T2R8 | **cmb3sim** = sim + `--lam-tgrad 0.3` + `--lam-v 0.15` + `--lam-cov 2.0 --cov-c 0.25` | 81.240 | 81.106 |
+| R21 / T2R9 | **xfam5** = cmb3sim ×4 (1 group) + **one ViT** (a 2nd), int8 | **81.331** | **81.156** |
+| R23 / T2R10 | R20's own package **UNFUSED** — an instrument, expected to lose | 81.015 | 80.946 |
+
+* **`sps` FACTORIZES, AND THE RESIDUAL NAMES EVERY LEVER.** `sps = 100·mean(a_i)·containment`
+  with `a_i = 0.5g(rel)+0.3g(tke)+0.2g(mvpe)`, `g(m) = 0.5/(0.5+m)`, so a round's `sps` can be
+  predicted from its other three published subscores with **no free parameter and no local
+  measurement**: `sps_pred(B) = sps(A)·a(B)/a(A)`. What is left over is the containment term.
+  Over every consecutive board step it is nonzero for exactly four kinds of change — the
+  **band** (+1.410, R9→R10), regularized **capacity** (+0.992 / +0.961, w24→w96 on both
+  boards), **member count** (+0.668, 3→8), and architecture **family** (+0.464 / −0.440 for
+  U-FNO in and back out; **+0.184 / +0.163 for one ViT**). Sim co-training, depth at equal
+  FLOPs, `--lam-cov`, `--lam-tgrad`, `lam_v`, both latency rebuilds and the gated blend all
+  land inside ±0.05. It also re-prices the exchange rate, since `a_i` is built from the other
+  three subscores: per 10 % of error removed, `rel_l2` **+0.346**, `tke` **+0.290**, `mvpe`
+  **+0.100**, all three together **+0.736**.
+* **ROUND 16'S CLOSURE OF NON-FNO FAMILIES WAS TRUE OF THE PACKAGE AND FALSE OF THE MEMBER.**
+  U-FNO ×3 missed by −0.45 on latency and `rel_l2`; its `sps` +0.44 was filed as noise and was
+  the third-largest containment move on record. One ViT **inside** an otherwise-FNO package
+  (R21) is worth **+0.148 (T1) / +0.152 (T2) of accuracy**, replicated, and clears its
+  invocation. A third family does not: AFNO's marginal is +0.03 sps for a whole invocation.
+* **THE INVOCATION, MEASURED (round 23).** `board ms = a + b·invocations + c·local` had `b`
+  fitted since round 10 and never tested. R23/T2R10 shipped round 20's own checkpoints, own
+  fp16 packing and own band **byte for byte** with `FUSE = False` — 1 fused invocation became
+  4 sequential forwards. `rel_l2`, `tke` and `mvpe` came back **identical to six decimals** on
+  both boards and `sps` moved 2e-05, so `time` is the entire delta:
+  **1.151 ms/invocation on Track 1, 0.866 on Track 2**, against a fitted 0.435 — the model was
+  **2.65× / 1.99× light**. Priced through `w_time`: **−0.085 / −0.058 `final`** for the first
+  extra invocation.
+  → **The board is LAUNCH-bound, not FLOP-bound.** Four sequential forwards do the same
+  arithmetic as one grouped forward, so the whole +3.45 ms is dispatch. Members added inside a
+  fused group are cheap; architecture families, which cannot fuse, are dear.
+  → **Track 2's handicap is a FIXED per-step cost, not a per-invocation one.** At 1 invocation
+  it costs +0.864 ms more than Track 1; at 4 the boards meet (7.249 vs 7.255), and Track 1 pays
+  MORE per invocation. Round 22's "the invocation tax is 2.4× heavier on Track 2" is withdrawn
+  — that was R21's ViT forward, which is heavy at batch 1.
+  → **`w_time` = 0.09609 / 0.09616** off this pair alone, a fourth and fifth direct
+  single-subscore reading and by far the largest `time` move ever submitted.
+  → **Never predict a board LEVEL from the latency model.** Its residuals reach −2.5 ms and are
+  ordered by date; the eval machine drifts. Anchor on a recent round of the same shape and move
+  in deltas. `board_rounds.INV_MS_T1/T2`, `board_ms()`, `invocation_cost()`.
+* **SIM IS REAL AND SMALL, AND IT IS NOT WHAT THE PROXY SAID.** R19 delivered `rel_l2` −0.63 %
+  of error where the proxy said −1.19 %, `mvpe` −1.02 % (proxy −0.99 %, nearly exact) and
+  **`tke` +0.61 % WORSE** where the proxy (−1.04 %) and the interior k-fold (+0.03 %) both said
+  otherwise. Replicated on T2R7. Stacking round 18's three wave-1 winners on top (cmb3sim)
+  added +0.031 (T1) / +0.049 (T2) of accuracy at constant latency.
+* **THE BAND IS CLOSED FOR THE SEVENTH AND EIGHTH TIME.** *Asymmetric intervals*: in-sample
+  they cannot lose (+0.57 / +1.00) and out-of-sample they give **−0.294**, every fold negative
+  — the per-element median signed error is 0.093 of a half-width, so there is no bias to
+  exploit. *Cross-family ensemble spread*: at seven individual members across four families it
+  beats `sigma_head` (corr 0.571 vs 0.537, CV +0.203), but **a shipped package cannot compute
+  it** — at the 2 fused groups that actually exist the correlation falls to 0.481, below
+  `sigma_head`, and the fit picks `q = 0` exactly. *Member weights over the simplex* (`P1`,
+  `Track_1/ens_stack_v9.py`): 45.76 against uniform's 45.75, fitted field weights 0.140–0.150
+  against 1/7 = 0.1429. **Uniform averaging is optimal even for non-exchangeable members.**
+* **DINOv3 IS NOT WORTH A LICENCE REQUEST, AND THE REASON IS MEASURED.** DINOv3 is gated under
+  a Meta licence that fights the competition's open-source requirement; DINOv2-S/14 is
+  Apache-2.0 and structurally identical to our `ViT2d` (dim 384 / depth 12 / 6 heads), which
+  makes transplanting its trunk a **pure initialization A/B at identical inference cost**.
+  `Track_1/unet/dinov2_init.py` does it — q/k/v concatenated into `in_proj_weight`, LayerScale
+  folded into each residual branch's output projection, position embeddings bicubic-resampled
+  37×37 → 8×16, self-verified against a from-scratch reference block at **8.2e-6 (L8) /
+  2.1e-5 (L12)** before writing. Result: **it fits better and generalizes the same** — the
+  lowest training field loss of any arm at both depths (L8 0.03794 vs 0.04079) for full-split
+  `sps` **+0.28 at L8 and −0.12 at L12**, a sign that does not survive a depth change against a
+  0.07 seed floor. Pretrained-vision-backbone initialization is closed.
+* **Method, earned the hard way.** A build job that bakes constants into the working tree must
+  **restore the tree itself** at the end (`r23g` does) — a `git checkout` while a build was at
+  step 3/5 put `FUSE = True` into the Track-1 zip and only the job's own read-back-from-zip
+  check caught it. A wait sentinel must be the **last line** of a script, or the background
+  wait returns while the job is still running. And `verify/pkg_identity.py` must be given the
+  archive **actually uploaded** (they live in `sub_candidates/submitted/`): its first run
+  failed at 5.7e-03 not because `fuse()` was wrong but because the rebuild used int8 where the
+  uploaded package was fp16.

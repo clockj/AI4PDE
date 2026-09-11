@@ -62,7 +62,13 @@ def main() -> None:
     ap.add_argument("--ckpt", nargs="+", required=True)
     ap.add_argument("--alpha", type=float, default=0.60)
     ap.add_argument("--n", type=int, default=96, help="val_unseen windows for the perturbation")
+    ap.add_argument("--score", metavar="BAND.npz", default=None,
+                    help="also SCORE every scheme through the official scorer with this band "
+                         "held FIXED -- the band the package would actually ship. Forces "
+                         "--n to the whole split.")
     args = ap.parse_args()
+    if args.score:
+        args.n = 10 ** 9
 
     import torch
     dev = "cuda" if torch.cuda.is_available() else "cpu"
@@ -116,10 +122,89 @@ def main() -> None:
               f"{float(np.abs(P - P0).max()):>10.3e}")
         del ms
 
+    if args.score:
+        score_schemes(args, blobs, X, du, dev, schemes)
+
     print("\nreference: the model's own rel-L2 on val_unseen is ~0.077, and errors add in")
     print("quadrature -- a perturbation of 1e-3 costs 0.0008 % of the error, 1e-2 costs 0.8 %.")
     print("The 256 MB cap is on the EXTRACTED archive: members + submission.py + _fno.py + band")
     print("(the band is 20*32*64*3 fp32 = 0.5 MB, the code ~0.2 MB).")
+
+
+def score_schemes(args, blobs, X, du, dev, schemes) -> None:
+    """What each packing scheme costs the SCORE, with the shipped band held fixed.
+
+    The rest of this file measures the field perturbation, which is the right quantity for
+    deciding whether a scheme is admissible -- but it is NOT the quantity the board pays in.
+    `sps` scores per-element interval CONTAINMENT, and a containment score is a TAIL statistic:
+    a perturbation that adds 0.0008 % of the error in quadrature can still push elements that
+    were sitting just inside their interval out of it, and every one of those forfeits its
+    whole contribution.  Round 21 shipped int8 for the first time (4 fp16 FNOs + an fp16 ViT is
+    257 MB against a 256 MB cap) bundled with two other changes, so its cost has never been
+    separated, and every package bigger than four members needs int8 to exist at all.
+
+    The band is held FIXED and is the one the package ships, because that is the deployed
+    situation: `fit_band.py` runs on fp32 checkpoints and the archive is quantized afterwards.
+    A refit column would answer a different and less useful question.
+
+    Sigma comes from the SAME packed models as the field -- quantization moves the variance
+    head too, and the band's per-window scaling reads it.
+    """
+    import numpy as np
+    import sps9
+    from sps9 import prep, sc, sps_score
+    import final_v9
+
+    Y = du["y"]
+    z = np.load(args.score)
+    base, ref, pw = z["base"][..., :2], z["sigma_ref"][..., :2], float(z["p"])
+
+    def scored(ms):
+        P, sig = _fno.predict_fno(ms, X, dev, alpha=args.alpha, sigma_out=True)
+        r = float(np.mean(sc.rel_l2_per_sample(P, Y, 2)))
+        k = float(np.mean(sc.tke_rel_l2_per_sample(P, Y, 2)))
+        mv = float(sc.mvpe_rel_l2(P, Y))
+        half = (base * np.clip(sig / ref, 0.3, 3.0) ** np.float32(pw)).astype(np.float32)
+        A, _, sc_, n = prep(P, Y)
+        dm, tk, mvv = sps9.sample_metrics(P, Y)
+        a = sps9.weights_from_metrics(dm, tk, mvv)
+        s = float(sps_score(A, a, sc_, n, half))
+        w = final_v9.predict([sc.score_error(r), sc.score_error(k), sc.score_error(mv),
+                              95.92, s])[0]
+        return r, k, mv, s, w
+
+    print(f"\nSCORED, band {os.path.basename(args.score)} held FIXED, "
+          f"{len(X)} val_unseen windows, ALPHA {args.alpha}")
+    hdr = (f"{'scheme':<26s} {'relL2':>8s} {'TKE':>8s} {'MVPE':>8s} {'sps':>7s} {'wfinal':>8s} "
+           f"{'d sps':>7s}")
+    print(hdr); print("-" * len(hdr))
+
+    def build_local(fn):
+        import torch
+        ms = []
+        for c, b in zip(args.ckpt, blobs):
+            sd = {k: fn(v)[0] for k, v in b["model_state_dict"].items()}
+            tmp = dict(b); tmp["model_state_dict"] = sd
+            path = os.path.join("/tmp", f"_q8s_{os.path.basename(c)}")
+            torch.save(tmp, path)
+            ms.append(_fno.load_any(path, dev))
+            os.remove(path)
+        return ms
+
+    ref_ms = build_local(lambda v: (v.clone(), 0))
+    r0 = scored(ref_ms)
+    print(f"{'fp32 (reference)':<26s} {r0[0]:>8.4f} {r0[1]:>8.4f} {r0[2]:>8.4f} "
+          f"{r0[3]:>7.3f} {r0[4]:>8.3f} {'--':>7s}")
+    del ref_ms
+    for name, fn in schemes:
+        ms = build_local(fn)
+        rr = scored(ms)
+        print(f"{name:<26s} {rr[0]:>8.4f} {rr[1]:>8.4f} {rr[2]:>8.4f} "
+              f"{rr[3]:>7.3f} {rr[4]:>8.3f} {rr[3]-r0[3]:>+7.3f}")
+        del ms
+    print("\nDECISION RULE: the seed floor at w96 L8 is ~0.05 full-split sps. A scheme inside")
+    print("it is free and can be shipped; a scheme outside it has to be subtracted from")
+    print("whatever the extra members it buys are worth.")
 
 
 if __name__ == "__main__":

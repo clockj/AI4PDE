@@ -96,6 +96,14 @@ ROUNDS = [
     # constant latency the accuracy part is +0.031 on this board and +0.049 on Track 2.
     ("R20 cmb3simx4/1inv a60", "2026-09-09", 920369, 94.794521, 78.518609, 94.081696, 93.270089, 41.410372, 81.239831),
     ("R21 xfam5 cmb3x4+ViT/2inv", "2026-09-10", 921000, 94.847008, 78.684381, 94.298686, 92.676031, 41.755710, 81.330636),
+    # R23 = R20's FOUR MEMBERS, UNFUSED.  The same checkpoints, the same fp16 packing, R20's own
+    # band byte for byte (md5 2eed9e6b...), `FUSE = False` the only difference -- 1 invocation
+    # becomes 4.  Deliberately NOT a score attempt: it is the only way to measure the invocation
+    # term, which had been FITTED since round 10 and never tested.
+    #   THE DESIGN HELD.  rel/tke/mvpe came back bit-identical to six decimals and `sps` moved
+    #   1.8e-05, so every point of the -0.225 is `time`.  3.795 -> 7.249 board ms for +3
+    #   invocations = **1.151 ms each**, against the fitted 0.435: the model was 2.65x LIGHT.
+    ("R23 cmb3simx4 UNFUSED/4inv", "2026-09-11", 921706, 94.794522, 78.518609, 94.081696, 90.932390, 41.410354, 81.015201),
 ]
 
 UNSCORED = []   # every round on both tracks now has full subscores
@@ -180,28 +188,104 @@ ROUNDS_T2 = [
     # this board's accuracy gain is the LARGER of the two, +0.049 against +0.031.
     ("T2R8 cmb3simx4/1inv a60", "2026-09-09", 920370, 94.782311, 78.278425, 93.933159, 92.597588, 41.310588, 81.106430),
     ("T2R9 xfam5 cmb3x4+ViT/2inv", "2026-09-10", 921001, 94.841673, 78.469938, 94.157190, 91.521812, 41.649497, 81.155762),
+    # T2R10 = the same unfused experiment on the streaming board, run the same day.  Identity
+    # held here too (rel/tke/mvpe to six decimals, sps 3e-06).  4.659 -> 7.255 board ms =
+    # **0.866 ms per invocation**, 1.99x the fitted 0.435.
+    #   AND THE TWO TRACKS MEET.  At 1 invocation T2 costs +0.864 ms more than T1; at 4 they are
+    #   7.249 vs 7.255.  So Track 2's streaming penalty is a FIXED per-step overhead, not a
+    #   per-invocation one, and Track 1 actually pays MORE per invocation (1.151 vs 0.866).
+    #   Round 22's reading -- "the invocation tax is 2.4x heavier on Track 2" -- is withdrawn:
+    #   what was heavier on Track 2 that round was the ViT member, not the invocation.
+    ("T2R10 cmb3simx4 UNFUSED/4inv", "2026-09-11", 921707, 94.782311, 78.278425, 93.933159, 90.928559, 41.310591, 80.945935),
 ]
 
-# The fit pools both tracks -- see the module docstring.  ROUNDS first, then ROUNDS_T2, so the
-# row order matches Track_1/final_v9.py:BOARD exactly.
+# The fit pools both tracks -- see the module docstring.  ROUNDS first, then ROUNDS_T2;
+# `final_v9.BOARD` lists the same rounds by submission date instead, which is harmless (least
+# squares does not see row order) and is checked as a multiset by `final_v9._check_sync`.
 POOL_TRACKS = True
 
 FIT_ROUNDS = ROUNDS + ROUNDS_T2 if POOL_TRACKS else ROUNDS
 X = np.array([r[3:8] for r in FIT_ROUNDS], float)
 Y = np.array([r[8] for r in FIT_ROUNDS], float)
 
-# `w_time`, MEASURED DIRECTLY rather than fitted -- now THREE TIMES, by three single-subscore
+# `w_time`, MEASURED DIRECTLY rather than fitted -- now FIVE TIMES, by five single-subscore
 # A/Bs in which the four error subscores came back bit-identical and only `time` moved:
 #   R13   -> R14   the gated mean-blend fired on ZERO hidden windows
 #   R17   -> R18   HOST_WRITE="torch": the same bytes to the same place, threaded
 #   T2R5  -> T2R6  SPEC_PATH="bmm": the spectral product as one batched real matmul (2e-06)
-# They agree to 0.3 % of each other and put w_time BELOW the free fit's 0.0967 by ~1 %.
+#   R20   -> R23   FUSE=False.  dtime -2.338, the largest single-subscore move ever submitted
+#   T2R8  -> T2R10 the same, on the other board
+# The first three had `dtime` of 0.03-0.14 score points, so each divided two small numbers; the
+# round-23 pair moved `time` by 1.7-2.3 points and lands at 0.09609 / 0.09616 -- 0.07 % apart,
+# and the free fit's 0.0965 sits between them.  This weight is now MEASURED, not estimated, and
+# the constrained fit's 0.085 is excluded by 15 %.
 W_TIME_AB = [
-    ("R13->R14 ", 92.978725 - 93.115432, 80.630755 - 80.643823),
-    ("R17->R18 ", 93.058602 - 92.988361, 81.176572 - 81.169843),
+    ("R13->R14  ", 92.978725 - 93.115432, 80.630755 - 80.643823),
+    ("R17->R18  ", 93.058602 - 92.988361, 81.176572 - 81.169843),
     ("T2R5->T2R6", 92.399134 - 92.427051, 81.016621 - 81.019298),
+    ("R20->R23  ", 90.932390 - 93.270089, 81.015201 - 81.239831),
+    ("T2R8->T2R10", 90.928559 - 92.597588, 80.945935 - 81.106430),
 ]
 W_TIME_DIRECT = float(np.mean([f / t for _, t, f in W_TIME_AB]))   # = 0.0958
+
+
+# ---------------------------------------------------------------------------------------
+# THE INVOCATION, MEASURED (round 23, 2026-09-11).
+#
+# `board ms = a + b*invocations + c*local ms` had been FITTED since round 10 and never tested.
+# Round 23 tested it the only way it can be tested: ship a package that differs from one
+# already on the board in the invocation count and in NOTHING else.  `track{1,2}_r23_nofuse4
+# fp16_a060.zip` are round 20's four checkpoints, round 20's fp16 packing and round 20's band
+# byte for byte, with `FUSE = False` -- so `_fno.fuse()` does not collapse the four width-96
+# L8 members into one grouped StackedFNO and the shipped path runs four sequential forwards.
+#
+#   the gate:  rel_l2, tke and mvpe came back IDENTICAL TO SIX DECIMALS on both boards and
+#              `sps` moved 1.8e-05 / 3e-06.  Nothing but `time` moved, which is what makes the
+#              rest of this block a measurement instead of an inference.
+#   the read:  T1  3.795 -> 7.249 ms over +3 invocations = 1.151 ms each  (fitted 0.435: x2.65)
+#              T2  4.659 -> 7.255 ms over +3 invocations = 0.866 ms each  (fitted 0.435: x1.99)
+#
+# Two things fall out that no fit could have given:
+#
+#   1. AN INVOCATION IS EXPENSIVE.  Priced through `w_time` at round 20's operating point, the
+#      FIRST extra invocation costs -0.085 `final` on Track 1 and -0.058 on Track 2 (the curve
+#      is convex, so the fourth costs -0.066 / -0.049).  That is the size of a good accuracy
+#      arm.  Any package with more than one architecture family has to earn it back.
+#   2. TRACK 2'S PENALTY IS FIXED, NOT PER-INVOCATION -- and round 22's reading is WITHDRAWN.
+#      At 1 invocation Track 2 costs +0.864 ms more than Track 1; at 4 the two boards land at
+#      7.249 and 7.255.  So the streaming path's cost is a per-STEP overhead that the member
+#      set does not multiply, and Track 1 actually pays MORE per invocation.  "The invocation
+#      tax is 2.4x heavier on Track 2" (round 22, from R21/T2R9) was reading the VIT's forward
+#      pass, which is heavier at batch 1, not the invocation.
+#
+# Use these as DELTAS against a recent anchor of the same shape.  The level model is withdrawn:
+# its residuals reach -2.5 ms and are ordered by date.
+INV_MS_T1 = (0.72896 * (100.0 / 90.932390 - 1.0) ** 2
+             - 0.72896 * (100.0 / 93.270089 - 1.0) ** 2) * 1000.0 / 3.0     # = 1.151
+INV_MS_T2 = (0.72896 * (100.0 / 90.928559 - 1.0) ** 2
+             - 0.72896 * (100.0 / 92.597588 - 1.0) ** 2) * 1000.0 / 3.0     # = 0.866
+
+
+def board_ms(time_score: float) -> float:
+    """Invert `time_score = 100/(1+sqrt(t/0.72896))` back to board milliseconds."""
+    return 0.72896 * (100.0 / float(time_score) - 1.0) ** 2 * 1000.0
+
+
+def time_score(ms: float) -> float:
+    """Forward: board milliseconds -> `time_score`."""
+    return 100.0 / (1.0 + (float(ms) / 1000.0 / 0.72896) ** 0.5)
+
+
+def invocation_cost(anchor_time_score: float, n: int = 1, track: int = 1) -> tuple:
+    """(d time_score, d final) of adding `n` sequential forwards to a package scoring `anchor`.
+
+    The time curve is convex, so this depends on where you already are -- a second invocation
+    on a 3.8 ms package costs more than a fifth one on a 7 ms package.  Always pass the
+    anchor's own `time_score`.
+    """
+    per = INV_MS_T1 if track == 1 else INV_MS_T2
+    d = time_score(board_ms(anchor_time_score) + n * per) - anchor_time_score
+    return d, d * W_TIME_DIRECT
 
 
 def fit(constrained: bool = False, nonneg: bool = True):
@@ -371,6 +455,15 @@ def main():
     print(f"\n  best at constant latency: {best[0].strip()} ({best[3]:.3f})")
 
     print("\n=== Board latency, inverted from time_score ===")
+    print("  THE LEVEL MODEL IS WITHDRAWN (round 23).  `4.447 + 0.324*inv + 0.431*local` is")
+    print("  kept in the `model` column only to show HOW wrong it is: its residuals reach")
+    print("  -2.5 ms and are ordered by date, i.e. the eval machine drifts and the intercept")
+    print("  is not a constant.  Never predict a board LEVEL with it.")
+    print("  What IS measured, from the round-23 unfused pair (same checkpoints, same fp16")
+    print("  packing, same band bytes, FUSE=False the only change, both tracks the same day):")
+    print(f"     one extra sequential model forward = +{INV_MS_T1:.3f} board ms on Track 1,")
+    print(f"                                          +{INV_MS_T2:.3f} board ms on Track 2.")
+    print("  Anchor on a RECENT round of the same shape and move only in deltas.")
     print(f"  {'round':<24s} {'inv':>4s} {'local ms':>9s} {'board ms':>9s} "
           f"{'model':>7s} {'miss':>7s}")
     # local ms are 4060-EQUIVALENT (the A100 runs 1.850x faster; CLAUDE.md round 12).
@@ -412,14 +505,30 @@ def main():
              # R19 / T2R7: R18 / T2R6's shape with different weights.
              "R19": (1, 2.451), "T2R7": (1, 4.480),
              # R20 / T2R8: cmb3sim, the same shape again.
-             "R20": (1, 2.450), "T2R8": (1, 4.480)}
+             "R20": (1, 2.450), "T2R8": (1, 4.480),
+             # R21 / T2R9: xfam5 -- R20's four FNOs (one fused group) plus a ViT (a second
+             # group), and int8 instead of fp16 to fit the cap.  Two variables at once, so its
+             # +0.758 / +1.596 ms cannot be split between the ViT's forward and the packing.
+             "R21": (2, None), "T2R9": (2, None),
+             # R23 / T2R10: THE MEASUREMENT.  R20 / T2R8's own checkpoints, own fp16 packing
+             # and own band (md5 2eed9e6b...), `FUSE = False` the only difference, uploaded to
+             # both boards on one day.  Verified before upload by verify/pkg_identity.py at
+             # 4.66e-06 / 4.27e-06 against the archives actually uploaded in round 20; verified
+             # after by the board, which returned rel/tke/mvpe bit-identical to six decimals
+             # and sps to 2e-05.  Local ms is NOT recorded: every reading available (1.139,
+             # 1.355, 1.406 A100 ms) came from a contended node and they span 23 %, which is
+             # larger than the whole effect the local term is supposed to carry.
+             "R23": (4, None), "T2R10": (4, None)}
     for r in FIT_ROUNDS:
         key = r[0].split()[0]
         t = 0.72896 * (100.0 / r[6] - 1.0) ** 2 * 1000.0
         if key in known:
             inv, loc = known[key]
-            m = 4.447 + 0.324 * inv + 0.431 * loc
-            print(f"  {r[0]:<24s} {inv:>4d} {loc:>9.3f} {t:>9.3f} {m:>7.3f} {t - m:>+7.3f}")
+            if loc is None:
+                print(f"  {r[0]:<24s} {inv:>4d} {'-':>9s} {t:>9.3f}")
+            else:
+                m = 4.447 + 0.324 * inv + 0.431 * loc
+                print(f"  {r[0]:<24s} {inv:>4d} {loc:>9.3f} {t:>9.3f} {m:>7.3f} {t - m:>+7.3f}")
         else:
             print(f"  {r[0]:<24s} {'?':>4s} {'?':>9s} {t:>9.3f}")
 
