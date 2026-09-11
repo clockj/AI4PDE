@@ -76,6 +76,10 @@ fi
 
 echo "=== 2/5  ALPHA (both tracks) and BLEND_BETA (Track 1 only) ================"
 sed -i "s/^ALPHA = .*/ALPHA = $ALPHA/" Track_1/submit_fno/submission.py Track_2/submit/submission.py
+# FUSE is BAKED, not read from the environment: submission.py is imported by the evaluator
+# in a process that never saw our shell, and two round-17 env A/Bs were silent no-ops for
+# exactly that reason. Default True -- only the invocation-count experiment sets it False.
+sed -i "s/^FUSE = .*/FUSE = ${RPDE_FUSE:-True}/" Track_1/submit_fno/submission.py Track_2/submit/submission.py
 # The gated mean-blend lives only in Track 1's predict(): Track 2's step runs inside a captured
 # CUDA graph, where a data-dependent early-out is not expressible. It fires only for windows
 # outside the training speed range, so NOTHING LOCAL EXERCISES IT -- `verify/blend_path.py` is

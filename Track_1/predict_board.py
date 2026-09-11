@@ -165,6 +165,17 @@ ANCHORS = {
                 sps=41.410372, final=81.239831),
     "t2r8": dict(rel_l2=94.782311, tke=78.278425, mvpe=93.933159, time=92.597588,
                  sps=41.310588, final=81.106430),
+    # ROUND 21 / T2R9, 2026-09-10 -- cmb3sim x4 + ONE ViT d384 L8, 2 invocations. The first
+    # heterogeneous package this account has shipped, and THE DEFAULT ANCHOR for anything
+    # cross-family. Recorded 81.303 / 81.176 middle; actual 81.331 / 81.156 (+0.028 / -0.020).
+    # Its sps splits +0.162 forced / +0.184 CONTAINMENT on T1 and +0.176 / +0.163 on T2, the
+    # largest containment move since dropout and replicated across boards. Its latency is the
+    # warning: board ms went 3.795 -> 4.553 (T1) and 4.659 -> 6.255 (T2) for the SAME change,
+    # against +0.653 predicted -- the invocation term is ~1.2x on Track 1 and ~2.4x at batch 1.
+    "r21": dict(rel_l2=94.847008, tke=78.684381, mvpe=94.298686, time=92.676031,
+                sps=41.755710, final=81.330636),
+    "t2r9": dict(rel_l2=94.841673, tke=78.469938, mvpe=94.157190, time=91.521812,
+                 sps=41.649497, final=81.155762),
     "r10": R10,
 }
 

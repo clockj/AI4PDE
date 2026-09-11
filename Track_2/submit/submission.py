@@ -89,6 +89,17 @@ torch.backends.cudnn.allow_tf32 = _TF32
 # strided write.  `ttt_step` copies the graph's output buffers into PINNED torch tensors, so
 # Track 1's `HOST_WRITE` has no counterpart on this path.
 SPEC_PATH = "bmm"
+# FUSE = False  keeps every member as its own module instead of collapsing same-architecture
+#   members into one grouped invocation. It is NOT a speed switch and must never be flipped for
+#   score: fuse() is score-identical (78.4925 against 78.4927 on the AoA 15-20 proxy, exact to
+#   1.5e-8 with TF32 off), so the ONLY thing it changes is how many times the board sees a model
+#   called. That is exactly what makes it an instrument. `board ms = a + 0.435*invocations +
+#   0.336*local` has never had its invocation term measured -- it is fitted, on rounds whose
+#   residuals are ordered by date, and R21 came in 1.2x over it on Track 1 and 2.4x on Track 2
+#   for a change that added compute AND an invocation at the same time. Shipping the same
+#   members unfused holds the compute BIT-IDENTICAL and moves only the invocation count, which
+#   is the R13/R14 design that measured w_time directly.
+FUSE = True
 _fno._SPEC = SPEC_PATH
 
 # `_body` below runs the members itself rather than going through `_fno.predict_fno`, so the
@@ -356,7 +367,9 @@ def get_ttt_model(submission_dir: str, device: str):
     ckpts = [p for p in [os.path.join(submission_dir, "fno.pth")]
              + [os.path.join(submission_dir, f"fno_{i}.pth") for i in range(2, 17)]
              if os.path.exists(p)]
-    models = _fno.fuse([_fno.load_any(p, dev) for p in ckpts])
+    models = [_fno.load_any(p, dev) for p in ckpts]
+    if FUSE:
+        models = _fno.fuse(models)
     band, ref, p = _load_band(submission_dir)
     m = FrozenEnsemble(models, dev, band, ref, p)
     try:

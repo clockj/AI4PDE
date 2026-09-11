@@ -60,3 +60,8 @@ Rounds R6–R12 predate the `submitted/` archive and their bands are gone.
   priced a whole package against a stale band because a failed build left the old file readable
   and nothing recorded which file that build had produced. `git log Track_1/bands/` is that
   record now.
+
+| `r21_xfam5.npz` | `e32707e77ab6e484b9af5b369bf0a772` | R21 (921000), T2R9 (921001) |
+
+`r21_xfam5.npz` is the first band fitted on a HETEROGENEOUS member set (three held-out cmb3sim
+twins plus `arch_vit_d384`). Promoted 2026-09-11 after R21/T2R9 scored.

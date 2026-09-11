@@ -109,6 +109,17 @@ torch.backends.cudnn.allow_tf32 = _TF32
 #   O(batch). One switch, opposite signs on the two tracks; set it per track, never globally.
 HOST_WRITE = "torch"
 SPEC_PATH = "bmm"
+# FUSE = False  keeps every member as its own module instead of collapsing same-architecture
+#   members into one grouped invocation. It is NOT a speed switch and must never be flipped for
+#   score: fuse() is score-identical (78.4925 against 78.4927 on the AoA 15-20 proxy, exact to
+#   1.5e-8 with TF32 off), so the ONLY thing it changes is how many times the board sees a model
+#   called. That is exactly what makes it an instrument. `board ms = a + 0.435*invocations +
+#   0.336*local` has never had its invocation term measured -- it is fitted, on rounds whose
+#   residuals are ordered by date, and R21 came in 1.2x over it on Track 1 and 2.4x on Track 2
+#   for a change that added compute AND an invocation at the same time. Shipping the same
+#   members unfused holds the compute BIT-IDENTICAL and moves only the invocation count, which
+#   is the R13/R14 design that measured w_time directly.
+FUSE = True
 _fno._HOSTW = HOST_WRITE
 _fno._SPEC = SPEC_PATH
 
@@ -276,7 +287,9 @@ def _load():
     # load_any, not load: round 12's package is a MIXED ensemble (8 FNO + 1 U-Net) and the
     # architecture is read off each checkpoint's own `arch` field, not off its packaged
     # filename -- build_zip.py names every member fno*.pth regardless of family.
-    models = _fno.fuse([_fno.load_any(p, dev) for p in _CKPTS])
+    models = [_fno.load_any(p, dev) for p in _CKPTS]
+    if FUSE:
+        models = _fno.fuse(models)
     # band.npz carries `base` (per-element half-widths), `sigma_ref` (the per-element mean of
     # the variance head's sigma over the fitting split) and `p`. The half-width actually used
     # is base * (sigma_i / sigma_ref)**p, i.e. a per-WINDOW interval: windows the model itself
