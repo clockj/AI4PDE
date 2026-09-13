@@ -1120,7 +1120,7 @@ def dequant8(sd: dict) -> dict:
 
 
 def pack_state_dict(sd: dict, fp16: bool = False, int8: bool = False,
-                    min_numel: int = 4096) -> dict:
+                    min_numel: int = 4096, linear: str = "tensor") -> dict:
     """The INVERSE of dequant8, and the only place either packing is implemented.
 
     build_zip.py (Track 1) and Track_2/build_t2.py both write the archive's checkpoints, and
@@ -1135,15 +1135,32 @@ def pack_state_dict(sd: dict, fp16: bool = False, int8: bool = False,
     56.9: rel-L2 8.3e-4 of the field for a single member, 3.9e-4 for an eight-member ensemble
     (the quantization noise is independent across members and averages down), against a model
     rel-L2 of 0.077.
+
+    `linear` -- WHAT HAPPENS TO A 2-D WEIGHT, and why it is a parameter (round 24).  The scale
+    reduces over `range(2, dim)`, which is right for convs and spectral weights: (out, in) keeps
+    a scale per channel pair and shares it over the kernel or the retained modes.  On a 2-D
+    Linear weight that range is EMPTY, and `torch.amax(x, dim=())` reduces over EVERY dimension
+    (checked on torch 2.2.2), so each Linear got ONE scale for the whole matrix.  No FNO member
+    has a 2-D tensor, so every FNO package was unaffected -- but a ViT is 97.5 % Linear, and
+    R21 / T2R9 shipped their ViT that way: median weight error 1.33e-2 per Linear, 2.4e-2 at
+    the worst (transformer rows carry max/rms up to 10.7).
+      "tensor"  the historical behaviour, kept so the archives actually uploaded rebuild
+                byte for byte
+      "row"     one scale per output row, 7.4e-3 median weight error
+      "fp16"    leave 2-D weights in fp16, exactly as free as fp16 is everywhere else
     """
+    if linear not in ("tensor", "row", "fp16"):
+        raise ValueError(f"linear must be 'tensor', 'row' or 'fp16', not {linear!r}")
     if not (fp16 or int8):
         return sd
     out = {}
     for k, v in sd.items():
         if not v.is_floating_point():
             out[k] = v
-        elif int8 and v.numel() >= min_numel and v.dim() >= 2:
-            red = tuple(range(2, v.dim()))
+        elif (int8 and v.numel() >= min_numel and v.dim() >= 2
+              and not (v.dim() == 2 and linear == "fp16")):
+            # () on a 2-D tensor reduces over ALL dims -- the per-tensor scale "tensor" keeps.
+            red = (1,) if (v.dim() == 2 and linear == "row") else tuple(range(2, v.dim()))
             sc = v.abs().amax(dim=red, keepdim=True).clamp(min=1e-12).div(127.0).half()
             out[k] = torch.clamp(torch.round(v / sc.float()), -127, 127).to(torch.int8)
             out[k + _Q8_SUFFIX] = sc

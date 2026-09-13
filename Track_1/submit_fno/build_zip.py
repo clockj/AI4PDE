@@ -65,6 +65,14 @@ def main() -> None:
                          "20-40x worse and none is shippable. _fno.dequant8 undoes this at "
                          "load time, and it is a no-op on any blob that does not carry the "
                          "companion scale keys. Implies --fp16 for the tensors it leaves alone.")
+    ap.add_argument("--linear", choices=("tensor", "row", "fp16"), default="tensor",
+                    help="what --int8 does to a 2-D weight. The per-(out, in) rule reduces over "
+                         "range(2, dim), which is EMPTY for a Linear, and torch.amax(dim=()) "
+                         "reduces over every dim -- so each Linear got ONE scale. No FNO has a "
+                         "2-D tensor (packed bytes identical in all three modes); a ViT is "
+                         "97.5 %% Linear. 'tensor' is the historical behaviour R21 shipped, "
+                         "'row' is a scale per output row, 'fp16' leaves Linears in fp16. See "
+                         "_fno.pack_state_dict.")
     args = ap.parse_args()
     # The packer and the unpacker are the same file, loaded by path so this script keeps
     # working from any cwd and so the int8 format cannot drift between the two.
@@ -98,7 +106,8 @@ def main() -> None:
             import torch
             blob = torch.load(src, map_location="cpu")
             blob["model_state_dict"] = _pack(blob["model_state_dict"],
-                                             fp16=args.fp16 or args.int8, int8=args.int8)
+                                             fp16=args.fp16 or args.int8, int8=args.int8,
+                                             linear=args.linear)
             torch.save(blob, os.path.join(STAGE, name))
         else:
             shutil.copy2(src, os.path.join(STAGE, name))

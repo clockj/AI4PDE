@@ -206,6 +206,32 @@ def score_schemes(args, blobs, X, du, dev, schemes) -> None:
         print(f"{name:<26s} {rr[0]:>8.4f} {rr[1]:>8.4f} {rr[2]:>8.4f} "
               f"{rr[3]:>7.3f} {rr[4]:>8.3f} {rr[3]-r0[3]:>+7.3f}")
         del ms
+    # THE REAL CODE PATH.  Everything above re-implements the quantizer inside this file,
+    # which is how round 24 found that the shipped one differs from it on 2-D weights: the
+    # packer's per-(out, in) rule reduces over range(2, dim), EMPTY for a Linear, and
+    # torch.amax(dim=()) then reduces over every dim.  These rows go through
+    # _fno.pack_state_dict and back through load_any -> dequant8, exactly as an archive does.
+    print(f"\n{'THE SHIPPED PACKER':<26s} {'MB':>8s}")
+    packer = [("fp16 (packer)", dict(fp16=True)),
+              ("int8, Linear per-TENSOR", dict(int8=True, linear="tensor")),
+              ("int8, Linear per-ROW", dict(int8=True, linear="row")),
+              ("int8, Linear fp16", dict(int8=True, linear="fp16"))]
+    for name, kw in packer:
+        import torch
+        ms, nb = [], 0
+        for c, b in zip(args.ckpt, blobs):
+            sd = _fno.pack_state_dict(dict(b["model_state_dict"]), **kw)
+            nb += sum(t.numel() * t.element_size() for t in sd.values())
+            tmp = dict(b); tmp["model_state_dict"] = sd
+            path = os.path.join("/tmp", f"_q8p_{os.getpid()}_{os.path.basename(c)}")
+            torch.save(tmp, path)
+            ms.append(_fno.load_any(path, dev))          # load_any runs dequant8, as a package does
+            os.remove(path)
+        rr = scored(ms)
+        print(f"{name:<26s} {rr[0]:>8.4f} {rr[1]:>8.4f} {rr[2]:>8.4f} "
+              f"{rr[3]:>7.3f} {rr[4]:>8.3f} {rr[3]-r0[3]:>+7.3f}   {nb/1e6:7.2f} MB total")
+        del ms
+
     print("\nDECISION RULE: the seed floor at w96 L8 is ~0.05 full-split sps. A scheme inside")
     print("it is free and can be shipped; a scheme outside it has to be subtracted from")
     print("whatever the extra members it buys are worth.")

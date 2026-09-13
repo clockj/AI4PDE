@@ -116,6 +116,14 @@ FP16=""; [ "${RPDE_FP16:-0}" = "1" ] && FP16="--fp16"
 # Track 1 and ~0 on Track 2, against +0.086 of accuracy. Cost of the packing itself: rel-L2
 # 3.9e-4 of an eight-member field, verified archive-against-source by verify/quant_identity.py.
 [ "${RPDE_INT8:-0}" = "1" ] && FP16="--int8"
+# RPDE_LINEAR = tensor | row | fp16 decides what --int8 does to a 2-D weight (round 24). The
+# per-(out, in) scale reduces over range(2, dim), EMPTY for a Linear, and torch.amax(dim=())
+# then reduces over every dim, so each Linear got ONE scale. No FNO member has a 2-D tensor
+# (packed bytes identical in all three modes), but a ViT is 97.5 % Linear and R21 / T2R9
+# shipped theirs per-tensor. Unset keeps the historical "tensor" so an uploaded archive still
+# rebuilds byte for byte; any package with a ViT should set it explicitly.
+[ -n "${RPDE_LINEAR:-}" ] && FP16="$FP16 --linear $RPDE_LINEAR"
+echo "packing flags: ${FP16:-(fp32)}"
 echo "=== 3/5  Track 1: build + strict gate ==================================="
 $PY Track_1/submit_fno/validate_strict.py --band Track_2/submit/band8.npz $FP16 \
     --stage Track_1/submit_fno/_package8 --out Track_1/submit_fno/submission8.zip --ckpt $A

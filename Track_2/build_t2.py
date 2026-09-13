@@ -46,6 +46,10 @@ def main():
                          "is 228 MB. The two tracks MUST use the same setting or they stop "
                          "shipping the same model, which is the only reason to submit one "
                          "package to both boards.")
+    ap.add_argument("--linear", choices=("tensor", "row", "fp16"), default="tensor",
+                    help="what --int8 does to a 2-D weight -- see Track_1/submit_fno/"
+                         "build_zip.py --linear and _fno.pack_state_dict. Must match Track 1's "
+                         "setting, for the same reason --fp16 must.")
     a = ap.parse_args()
 
     # `_fno.py` is a symlink to Track 1's, and is resolved below -- the two tracks must ship
@@ -77,7 +81,8 @@ def main():
             import torch
             blob = torch.load(src, map_location="cpu")
             blob["model_state_dict"] = _pack(blob["model_state_dict"],
-                                             fp16=a.fp16 or a.int8, int8=a.int8)
+                                             fp16=a.fp16 or a.int8, int8=a.int8,
+                                             linear=a.linear)
             torch.save(blob, os.path.join(a.stage, name))
         else:
             shutil.copy2(src, os.path.join(a.stage, name))
