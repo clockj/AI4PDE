@@ -49,7 +49,8 @@ def main():
     ap.add_argument("--linear", choices=("tensor", "row", "fp16"), default="tensor",
                     help="what --int8 does to a 2-D weight -- see Track_1/submit_fno/"
                          "build_zip.py --linear and _fno.pack_state_dict. Must match Track 1's "
-                         "setting, for the same reason --fp16 must.")
+                         "setting, for the same reason --fp16 must. All three modes are "
+                         "score-neutral (r24e).")
     a = ap.parse_args()
 
     # `_fno.py` is a symlink to Track 1's, and is resolved below -- the two tracks must ship

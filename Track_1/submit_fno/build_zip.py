@@ -72,7 +72,8 @@ def main() -> None:
                          "2-D tensor (packed bytes identical in all three modes); a ViT is "
                          "97.5 %% Linear. 'tensor' is the historical behaviour R21 shipped, "
                          "'row' is a scale per output row, 'fp16' leaves Linears in fp16. See "
-                         "_fno.pack_state_dict.")
+                         "_fno.pack_state_dict. SCORED, all three are free (r24e: d sps "
+                         "-0.001 / -0.005 / -0.004 on R21's own twins), so the default stays.")
     args = ap.parse_args()
     # The packer and the unpacker are the same file, loaded by path so this script keeps
     # working from any cwd and so the int8 format cannot drift between the two.

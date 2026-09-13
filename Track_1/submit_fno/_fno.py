@@ -1148,6 +1148,14 @@ def pack_state_dict(sd: dict, fp16: bool = False, int8: bool = False,
                 byte for byte
       "row"     one scale per output row, 7.4e-3 median weight error
       "fp16"    leave 2-D weights in fp16, exactly as free as fp16 is everywhere else
+
+    SCORED, ALL THREE ARE FREE (r24e -- the real pack -> load_any -> dequant8 path, each
+    package's own band held fixed): on R21's own twin set d sps -0.001 / -0.005 / -0.004 for
+    tensor / row / fp16 with every error metric identical to four decimals, and on the ViT ALONE
+    -0.004 / -0.009 / +0.002.  A 1.3e-2 weight error in a Linear does not reach the field.  So
+    "tensor" stays the default -- it is the smallest (14.76 MB per ViT against fp16's 29.06) and
+    it is what is already on the board -- and the per-tensor scale is a code defect with no
+    score cost, not a regression.
     """
     if linear not in ("tensor", "row", "fp16"):
         raise ValueError(f"linear must be 'tensor', 'row' or 'fp16', not {linear!r}")

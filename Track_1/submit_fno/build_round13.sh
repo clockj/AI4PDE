@@ -120,8 +120,9 @@ FP16=""; [ "${RPDE_FP16:-0}" = "1" ] && FP16="--fp16"
 # per-(out, in) scale reduces over range(2, dim), EMPTY for a Linear, and torch.amax(dim=())
 # then reduces over every dim, so each Linear got ONE scale. No FNO member has a 2-D tensor
 # (packed bytes identical in all three modes), but a ViT is 97.5 % Linear and R21 / T2R9
-# shipped theirs per-tensor. Unset keeps the historical "tensor" so an uploaded archive still
-# rebuilds byte for byte; any package with a ViT should set it explicitly.
+# shipped theirs per-tensor -- and r24e scored all three modes FREE (R21's own twins: d sps
+# -0.001 / -0.005 / -0.004 for tensor / row / fp16). Unset keeps "tensor", the smallest and the
+# one on the board, so an uploaded archive still rebuilds byte for byte.
 [ -n "${RPDE_LINEAR:-}" ] && FP16="$FP16 --linear $RPDE_LINEAR"
 echo "packing flags: ${FP16:-(fp32)}"
 echo "=== 3/5  Track 1: build + strict gate ==================================="
