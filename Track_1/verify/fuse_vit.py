@@ -6,8 +6,9 @@ WHY THIS EXISTS.  Round 23 shipped round 20's four FNO members UNFUSED -- same c
 same fp16 packing, same band bytes -- and the board returned every error subscore identical to
 six decimals with `time` alone moving: 3.795 -> 7.249 board ms on Track 1 and 4.659 -> 7.255 on
 Track 2.  That is **1.151 / 0.866 ms per invocation** against a model that had fitted 0.435
-since round 10, and it means the board is LAUNCH-bound rather than FLOP-bound -- four sequential
-forwards do the same arithmetic as one grouped forward, so the whole +3.45 ms is dispatch.
+since round 10: four sequential forwards do the same arithmetic as one grouped forward, so the
+launches alone cost +3.45 ms.  (FLOPs are charged too -- round 24, +1.02 board ms for one more
+fused ViT -- so fusion removes the launch tax, not the member's compute.)
 
 Priced through `w_time`, one invocation is -0.085 `final` on Track 1.  A second ViT member is
 worth roughly +0.15 of containment `sps` = +0.04 `final`, so UNFUSED it loses and FUSED it wins.

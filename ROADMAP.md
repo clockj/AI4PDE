@@ -847,11 +847,10 @@ forwards and nothing else moved. The gate held perfectly — `rel_l2`, `tke` and
 Against the fitted 0.435 the model was **2.65× / 1.99× light**; priced through `w_time` the
 first extra invocation is **−0.085 / −0.058 `final`**, the size of a good accuracy arm.
 
-→ **THE BOARD IS LAUNCH-BOUND, NOT FLOP-BOUND.** Four sequential forwards do the same
-arithmetic as one grouped forward, so the entire +3.45 ms is dispatch. **Members added inside a
-fused group are cheap; architecture families, which cannot fuse, are dear** — which is exactly
-why `_fno.fuse()` exists and why a third family (AFNO: +0.03 marginal `sps` for a whole
-invocation) is out of the question.
+→ ~~**THE BOARD IS LAUNCH-BOUND, NOT FLOP-BOUND.**~~ **HALF WRONG — see §1.25.** Launches are
+expensive (+3.45 ms for three extra), which is why `_fno.fuse()` exists and why a third family
+(AFNO: +0.03 marginal `sps` for a whole invocation) is out of the question. But round 24 showed
+that FLOPs are charged as well.
 
 → **Track 2's handicap is a FIXED per-step cost, not a per-invocation one.** At 1 invocation it
 costs +0.864 ms more than Track 1; at 4 the two boards meet (7.249 vs 7.255) and Track 1 pays
@@ -870,6 +869,26 @@ package that CANNOT WIN is worth more than one spent on +0.02, when the package 
 that only one subscore can move. Rounds 14 and 23 both did this deliberately and both returned
 a number no amount of local work could have produced. The Decision phase (to 2026-10-25) is
 what selects the final package; Main Development slots are for learning.
+
+### 1.25 Round 24: the second ViT is +0.050 of accuracy, member count is closed, and FLOPs are charged
+
+The detail and table are in `CLAUDE.md`, "Round 24 BOARD RESULT". The rules:
+
+**(a) FLOPs are charged on the board — §1.24(b) was half wrong.** One more ViT inside a fused
+group cost +1.02 board ms on Track 1 (local +0.316 A100 ms/window); four more FNOs cost +1.37 on
+Track 2. Track 1 reads **1.74 board ms per 4060-equivalent local ms**, the same as the only
+same-day FLOPs pair ever submitted (R16 → R17, 1.76). A member must now earn its FLOPs, not only
+its invocation: at R21's operating point, **+0.1 A100 ms/window ≈ −0.023 `final`**. And latency
+becomes an accuracy-free lever: **≈ +0.072 `final` per board ms saved** on Track 1.
+
+**(b) Member count is closed at w96 L8 with a ViT in the set.** Board accuracy −0.020, and the
+local K-curve (+0.027 sps) called it. **The ViT family is closed at two.** The second paid
++0.050 of accuracy (containment +0.053, a third of the first's); a third would be half again.
+
+**(c) Method.** Both estimates of record landed below their floors, and both misses were the
+`time` row. The brackets were built on a latency slope that had never been measured at fixed
+invocations on the same day. **Bracket every package's `time` with the measured slope, never
+the cross-day refit.**
 
 ## Part 2 — Closed. Do not re-propose without new evidence.
 

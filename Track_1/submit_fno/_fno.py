@@ -811,11 +811,13 @@ class StackedViT(nn.Module):
     Round 23 measured what this is worth.  Shipping round 20's own four FNO members UNFUSED --
     same checkpoints, same packing, same band bytes -- moved board latency 3.795 -> 7.249 ms on
     Track 1 and 4.659 -> 7.255 on Track 2 while every error subscore came back identical to six
-    decimals.  That is **1.151 / 0.866 ms per invocation**, against a fitted 0.435, and it says
-    the board is LAUNCH-bound rather than FLOP-bound: four sequential forwards do the same
-    arithmetic as one grouped forward, so the entire +3.45 ms is dispatch.  A member added
-    INSIDE a fused group therefore costs almost nothing, and one that needs its own invocation
-    costs -0.085 `final` before it has earned anything.
+    decimals.  That is **1.151 / 0.866 ms per invocation**, against a fitted 0.435: four
+    sequential forwards do the same arithmetic as one grouped forward, so the launches alone cost
+    +3.45 ms, and a member that needs its own invocation costs -0.085 `final` before it has earned
+    anything.  (Round 23 also read this as "launch-bound, not FLOP-bound".  ROUND 24 FALSIFIED
+    THAT HALF with this very class: one more ViT in the group cost +1.02 board ms on Track 1 for
+    +0.316 A100 ms/window of local compute.  Fusion removes the launch tax, not the member's
+    FLOPs.)
 
     The ViT is the member that makes this worth building.  On `r21b`'s marginal table over
     cmb3sim x3 it is the best cross-family addition by a wide margin (+0.39 full-split sps

@@ -104,6 +104,13 @@ ROUNDS = [
     #   1.8e-05, so every point of the -0.225 is `time`.  3.795 -> 7.249 board ms for +3
     #   invocations = **1.151 ms each**, against the fitted 0.435: the model was 2.65x LIGHT.
     ("R23 cmb3simx4 UNFUSED/4inv", "2026-09-11", 921706, 94.794522, 78.518609, 94.081696, 90.932390, 41.410354, 81.015201),
+    # R24 = xfam6: R21's UPLOADED archive plus one cmb3sim-recipe ViT fused into the ViT group by
+    # StackedViT (fno.pth-fno_5.pth tensor-identical to R21; 2 invocations). Submission id not
+    # reported. ACCURACY +0.050 -- rel -0.30 %, tke -0.65 %, mvpe -0.91 % of error, sps +0.111 =
+    # forced +0.058 + CONTAINMENT +0.053, a third of the first ViT's, as the local curve said.
+    # TIME -0.069: 4.553 -> 5.570 board ms for +0.316 A100 ms/window of local compute. Net
+    # -0.019. Both this and T2R11 missed their estimates in the `time` row -- see the FLOPs block.
+    ("R24 xfam6 R21+ViT/2inv", "2026-09-12", 0, 94.861827, 78.793104, 94.347768, 91.961259, 41.866674, 81.312041),
 ]
 
 UNSCORED = []   # every round on both tracks now has full subscores
@@ -197,6 +204,12 @@ ROUNDS_T2 = [
     #   Round 22's reading -- "the invocation tax is 2.4x heavier on Track 2" -- is withdrawn:
     #   what was heavier on Track 2 that round was the ViT member, not the invocation.
     ("T2R10 cmb3simx4 UNFUSED/4inv", "2026-09-11", 921707, 94.782311, 78.278425, 93.933159, 90.928559, 41.310591, 80.945935),
+    # T2R11 = x8v: R21's UPLOADED archive plus FNO s5-s8 fused into the FNO group, with fno.pth-
+    # fno_5.pth AND the band byte-identical to T2R9's. Submission id not reported. MEMBER COUNT
+    # IS CLOSED: accuracy -0.020 (rel -0.09 %, tke +0.44 % worse, mvpe +1.64 % worse; sps -0.023 =
+    # forced -0.046 + containment +0.023, inside noise), exactly the null the local K-curve
+    # extrapolation gave once the ViT is in the set. TIME -0.077: 6.255 -> 7.628 board ms. Net -0.097.
+    ("T2R11 x8v R21+4FNO/2inv", "2026-09-12", 0, 94.845935, 78.395628, 94.066988, 90.720061, 41.626260, 81.058649),
 ]
 
 # The fit pools both tracks -- see the module docstring.  ROUNDS first, then ROUNDS_T2;
@@ -286,6 +299,26 @@ def invocation_cost(anchor_time_score: float, n: int = 1, track: int = 1) -> tup
     per = INV_MS_T1 if track == 1 else INV_MS_T2
     d = time_score(board_ms(anchor_time_score) + n * per) - anchor_time_score
     return d, d * W_TIME_DIRECT
+
+
+# ---------------------------------------------------------------------------------------
+# ROUND 24 CORRECTS ROUND 23: FLOPs ARE CHARGED TOO (2026-09-12).
+#
+# Round 23 read "the board is launch-bound, not FLOP-bound" off the unfused package. What it
+# measured was that LAUNCHES are expensive; it could not show that FLOPs are free, and they are
+# not. Round 24 added compute INSIDE fused groups, on both boards, the same day:
+#   R21  -> R24     + one ViT in the ViT group    local +0.316 A100 ms/window   4.553 -> 5.570 ms
+#   T2R9 -> T2R11   + four FNOs in the FNO group  local +1.234 A100 ms/step     6.255 -> 7.628 ms
+# Both boards +22 %. On Track 1 that is 1.74 board ms per 4060-equivalent local ms, and the only
+# SAME-DAY FLOPs pair ever submitted (R16 -> R17, w96 L4 x8 -> L8 x4) reads 1.76. Track 1's
+# board/local ratio has sat at 1.48-1.66 across the four rounds with a trusted local timing, and
+# its identical-shape day-to-day drift has been 0.03-0.30 ms, so +1.02 ms is not drift. Track 2
+# reads 0.60, one reading at ~2.7 sigma of its 0.4-0.7 ms drift. The 0.336 "local slope" was a
+# cross-day refit over residuals ordered by date, and on Track 1 it was 5x light.
+# At R21's operating point, +0.1 A100 ms/window of local compute is ~ -0.023 `final` on Track 1,
+# and a board ms saved is ~ +0.072.
+LOC_SLOPE_T1 = 1.75     # board ms per 4060-equivalent local ms, Track 1 (R16->R17 1.76, R21->R24 1.74)
+LOC_SLOPE_T2 = 0.60     # Track 2, T2R9 -> T2R11 only
 
 
 def fit(constrained: bool = False, nonneg: bool = True):
@@ -518,7 +551,10 @@ def main():
              # and sps to 2e-05.  Local ms is NOT recorded: every reading available (1.139,
              # 1.355, 1.406 A100 ms) came from a contended node and they span 23 %, which is
              # larger than the whole effect the local term is supposed to carry.
-             "R23": (4, None), "T2R10": (4, None)}
+             "R23": (4, None), "T2R10": (4, None),
+             # R24 / T2R11: timed side by side with R21 in ONE process on one node (rp_r24h /
+             # rp_r24i): xfam6 1.812 A100 ms/window (x1.850 = 3.352), x8v's Track-2 step 4.661.
+             "R24": (2, 3.352), "T2R11": (2, None)}
     for r in FIT_ROUNDS:
         key = r[0].split()[0]
         t = 0.72896 * (100.0 / r[6] - 1.0) ** 2 * 1000.0

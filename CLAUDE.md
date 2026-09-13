@@ -5,7 +5,7 @@ Site: https://realpdecompetition.github.io/ · Data: https://huggingface.co/data
 Track 1 (Sim2Real): https://www.codabench.org/competitions/17363/ · Track 2 (LTTTA): https://www.codabench.org/competitions/17385/
 
 > **START HERE: [`ROADMAP.md`](ROADMAP.md).** This file is the reference manual; the roadmap
-> is the plan. The live board record is **`Track_1/board_rounds.py`** (28 pooled rounds across
+> is the plan. The live board record is **`Track_1/board_rounds.py`** (30 pooled rounds across
 > both tracks) and the published calibration log in **`leaderboard/`**
 > (`python leaderboard/lb.py --html`) — prefer either to any table written into these two
 > documents, which lag. Best score: **81.331** (Track 1 round 21, 2026-09-10 — four all-data
@@ -16,7 +16,7 @@ Track 1 (Sim2Real): https://www.codabench.org/competitions/17363/ · Track 2 (LT
 >
 > **THE WEIGHTS CHANGED IN ROUND 17, AND EVERY EARLIER WEIGHT TABLE IN THIS FILE IS THE OLD
 > ONE.** Every fit from round 9 to round 16 imposed `Σw = 1`, which was never tested. Dropped,
-> the twenty-eight-round pooled fit is **rel_l2 0.4772 · tke 0.1014 · mvpe 0.0923 ·
+> the thirty-round pooled fit is **rel_l2 0.4773 · tke 0.1014 · mvpe 0.0922 ·
 > time 0.0965 · sps 0.2501** (Σw 1.018) at a max residual of **0.0025** against the
 > constrained fit's 0.049 — twenty times tighter, and it agrees with the weights measured
 > WITHOUT a fit: five single-subscore A/Bs put `w_time` at **0.0956–0.0962**, the free fit at
@@ -36,9 +36,12 @@ Track 1 (Sim2Real): https://www.codabench.org/competitions/17363/ · Track 2 (LT
 >    latency rebuilds — lands inside ±0.05.
 > 2. **An invocation costs 1.151 board ms on Track 1 and 0.866 on Track 2** (round 23,
 >    measured by shipping one package unfused), i.e. **−0.085 / −0.058 `final`** for the first
->    extra one. Four sequential forwards do the same arithmetic as one grouped forward, so the
->    board is **launch-bound, not FLOP-bound**: members added inside a fused group are cheap,
->    a second architecture family is dear, and a third is out of the question.
+>    extra one. **And FLOPs are charged as well** (round 24): one more ViT inside the ViT group
+>    cost +1.02 board ms on Track 1, four more FNOs inside the FNO group +1.37 on Track 2 (both
+>    +22 %) — **≈ 1.75 board ms per 4060-equivalent local ms on Track 1**, the same as the only
+>    same-day FLOPs pair ever submitted (R16 → R17, 1.76). Round 23's "launch-bound, not
+>    FLOP-bound" was half wrong: nothing is free — a fused member pays its FLOPs, an unfused one
+>    pays its FLOPs plus ~1 ms of launches.
 
 This repo (`~/RealPDE/AI4PDE`, remote `github.com/clockj/AI4PDE`) holds **our** code.
 Datasets, starting kits and official checkpoints live one level up in `~/RealPDE/` and are **not**
@@ -2076,9 +2079,10 @@ the compressed reading. Six board rounds per track, every one predicted before u
   **1.151 ms/invocation on Track 1, 0.866 on Track 2**, against a fitted 0.435 — the model was
   **2.65× / 1.99× light**. Priced through `w_time`: **−0.085 / −0.058 `final`** for the first
   extra invocation.
-  → **The board is LAUNCH-bound, not FLOP-bound.** Four sequential forwards do the same
-  arithmetic as one grouped forward, so the whole +3.45 ms is dispatch. Members added inside a
-  fused group are cheap; architecture families, which cannot fuse, are dear.
+  → ~~**The board is LAUNCH-bound, not FLOP-bound.**~~ **HALF WRONG, round 24.** Four
+  sequential forwards cost +3.45 ms over one grouped forward, so launches ARE expensive — but
+  FLOPs are charged too (≈ 1.75 board ms per 4060-equivalent local ms on Track 1). See "Round
+  24 BOARD RESULT" below.
   → **Track 2's handicap is a FIXED per-step cost, not a per-invocation one.** At 1 invocation
   it costs +0.864 ms more than Track 1; at 4 the boards meet (7.249 vs 7.255), and Track 1 pays
   MORE per invocation. Round 22's "the invocation tax is 2.4× heavier on Track 2" is withdrawn
@@ -2121,3 +2125,44 @@ the compressed reading. Six board rounds per track, every one predicted before u
   archive **actually uploaded** (they live in `sub_candidates/submitted/`): its first run
   failed at 5.7e-03 not because `fuse()` was wrong but because the rebuild used int8 where the
   uploaded package was fp16.
+
+### Round 24 BOARD RESULT (2026-09-12) — the second ViT is real accuracy, FLOPs are charged, member count is closed
+
+Both packages were **R21's uploaded archive plus ONE thing** (`fno.pth`–`fno_5.pth`
+tensor-identical to R21 as uploaded), so each board read one lever against its own xfam5 anchor.
+
+| | package | rel_l2 | tke | mvpe | time | sps | **final** | predicted |
+|---|---|---|---|---|---|---|---|---|
+| **T1 R24** | xfam6 = R21 + 1 cmb3sim ViT fused by `StackedViT`, 2 inv | 94.861827 | 78.793104 | 94.347768 | 91.961259 | 41.866674 | **81.312041** | 81.389 |
+| **T2 R11** | x8v = R21 + FNO s5–s8 fused, R21's band byte for byte, 2 inv | 94.845935 | 78.395628 | 94.066988 | 90.720061 | 41.626260 | **81.058649** | 81.154 |
+
+* **THE SECOND ViT IS REAL ACCURACY: +0.050.** rel −0.30 %, tke −0.65 %, mvpe −0.91 % of error;
+  `sps` +0.111 = forced +0.058 + **containment +0.053**, 29 % of the first ViT's +0.184 —
+  the local marginal curve's "a third". The proxy over-read the error cuts again (rel −0.75 %
+  predicted).
+* **MEMBER COUNT IS CLOSED, and the local curve was right.** Four more FNOs with a ViT in the
+  set: accuracy −0.020 (tke +0.44 %, mvpe +1.64 % worse, containment +0.023 inside noise). The
+  K-curve extrapolation had said +0.027 sps. The ViT already supplies the diversity more FNO
+  seeds would.
+* **FLOPs ARE CHARGED, and both estimates missed in the `time` row.** xfam6 went 4.553 → 5.570
+  board ms for +0.316 A100 ms/window of local compute; x8v went 6.255 → 7.628 for +1.234
+  ms/step. Both boards +22 %. On Track 1 that is **1.74 board ms per 4060-equivalent local ms**.
+  The only SAME-DAY FLOPs pair ever submitted, R16 → R17, reads **1.76**. Track 1's
+  board/local ratio has sat at 1.48–1.66 across the four rounds with a trusted local timing,
+  and its identical-shape day-to-day drift has been 0.03–0.30 ms. The 0.336 slope the estimates
+  used was a cross-day refit over date-ordered residuals, 5× light on Track 1. Track 2 reads 0.60
+  (one reading, ~2.7σ of its 0.4–0.7 ms drift). **Round 23's "launch-bound, not FLOP-bound" is
+  half wrong.** Net: xfam6 −0.019 vs R21 (+0.050 of accuracy paying −0.069 in `time`), x8v
+  −0.097. `predict_board.LAT_LOC_T1/T2`, `board_rounds.LOC_SLOPE_T1/T2`.
+* **What it opens.** A member now has to earn its FLOPs, not just its invocation. At R21's
+  operating point on Track 1, +0.1 A100 ms/window of local compute costs ≈ −0.023 `final`. For
+  the first time latency is an **accuracy-free lever**: anything that cuts GPU compute without
+  moving the four error subscores (fp16 autocast, TF32, a cheaper spectral path) is worth
+  ≈ +0.072 `final` per board ms saved. Both submissions hard-disable TF32 as a correctness fix
+  (a window's output depended on its position in the batch), so the accuracy cost and the
+  permutation invariance of every fast-numerics mode are measured before anything ships
+  (`rp_r25a`).
+* **Also closed this round.** int8's score cost is free for FNO and ViT alike (−0.001 on R21's
+  own twins); the one-scale-per-Linear packing is a code defect with zero score cost. A third
+  ViT is not worth it: +0.07 sps locally, half the second's, for another ViT's FLOPs.
+

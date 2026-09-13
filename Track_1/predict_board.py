@@ -19,8 +19,9 @@ The three instruments
    per-element stretch f_hat = 1.360 and, at that stretch, reproduced the board's 39.626 to
    0.05. So: stretch the proxy error field by 1.360, take the accuracy factors from the
    PREDICTED board metrics, score the package's actual band.
-3. **Board time.** `board ms = 3.274 + 1.151*invocations (0.866 on Track 2) + 0.336*local`.
-   Both slopes are MEASURED, not fitted -- see the LAT_LOC / LAT_INV block below. The
+3. **Board time.** `board ms = 3.274 + 1.151*invocations (0.866 on Track 2) + 1.75*local`
+   (0.60 on Track 2). Both slopes are MEASURED on the board -- see the LAT_LOC / LAT_INV block
+   below. The
    0.803 slope this file used through round 17 was FALSIFIED by R18 and T2R6, two rounds that
    shipped a bit-identical prediction array through a faster path and returned -0.089 and
    +0.039 board ms for local cuts of -0.352 and -0.890. At ~4 board ms, 1 board ms = -0.070
@@ -112,14 +113,30 @@ R10 = dict(rel_l2=94.576394, tke=79.152828, mvpe=93.681162, time=91.120851, sps=
 # **-0.085 `final` on Track 1 and -0.058 on Track 2**: the size of a good accuracy arm.
 # NOTE that in --anchor mode (the only mode anyone should use) LAT_C cancels in the difference
 # and ONLY THE SLOPES matter. The per-track split is why `--track` now reaches this constant.
-LAT_C, LAT_LOC = 3.274, 0.336
+LAT_C = 3.274
 LAT_INV_T1, LAT_INV_T2 = 1.151, 0.866
 LAT_INV = LAT_INV_T1                 # back-compat default; pass track=2 to lat_ms() instead
+#
+# ROUND 24: THE LOCAL-MS SLOPE IS 1.75 ON TRACK 1, NOT 0.336 -- FLOPs ARE CHARGED. Both round-24
+# estimates of record landed BELOW their floors, and both misses were the `time` row: xfam6
+# added one ViT inside the fused ViT group (+0.316 A100 ms/window, one process) and the board
+# went 4.553 -> 5.570 ms; x8v added four FNOs inside the FNO group (+1.234 ms/step) and Track 2
+# went 6.255 -> 7.628. On Track 1 that is 1.74 board ms per 4060-equivalent ms, matching the only
+# same-day FLOPs pair (R16 -> R17, 1.76); Track 2 reads 0.60 on one noisier reading. The 0.336
+# above was refit ACROSS days, and Track 1's R17 -> R18 "0.25" was a host-write change -- host
+# work is cheap on the board, GPU compute is not.
+LAT_LOC_T1, LAT_LOC_T2 = 1.75, 0.60
+LAT_LOC = LAT_LOC_T1
 
 
 def lat_inv_of(track: int = 1) -> float:
     """Board ms per extra SEQUENTIAL model forward, measured in round 23. See above."""
     return LAT_INV_T1 if int(track) == 1 else LAT_INV_T2
+
+
+def lat_loc_of(track: int = 1) -> float:
+    """Board ms per 4060-equivalent local ms of GPU compute, measured in round 24. See above."""
+    return LAT_LOC_T1 if int(track) == 1 else LAT_LOC_T2
 
 # Recorded board rounds usable as anchors: the five actual subscores, and `final`.
 ANCHORS = {
@@ -211,6 +228,14 @@ ANCHORS = {
                 sps=41.410354, final=81.015201),
     "t2r10": dict(rel_l2=94.782311, tke=78.278425, mvpe=93.933159, time=90.928559,
                   sps=41.310591, final=80.945935),
+    # ROUND 24 / T2R11, 2026-09-12 -- each R21's uploaded archive plus ONE thing. r24 = xfam6
+    # (+1 ViT fused, accuracy +0.050, time -0.069); t2r11 = x8v (+4 FNO fused, accuracy -0.020,
+    # time -0.077). Anchor anything built on xfam6 at r24 -- WITH local ms given on both sides,
+    # because FLOPs are charged.
+    "r24": dict(rel_l2=94.861827, tke=78.793104, mvpe=94.347768, time=91.961259,
+                sps=41.866674, final=81.312041),
+    "t2r11": dict(rel_l2=94.845935, tke=78.395628, mvpe=94.066988, time=90.720061,
+                  sps=41.626260, final=81.058649),
     "r10": R10,
 }
 
@@ -365,7 +390,8 @@ def main():
     # is no level anyway, so Track 1's is the harmless default.
     track = 2 if (args.anchor or "").startswith("t2") else 1
     lat_inv = lat_inv_of(track)
-    board_ms = LAT_C + lat_inv * args.invocations + LAT_LOC * args.local_ms
+    lat_loc = lat_loc_of(track)
+    board_ms = LAT_C + lat_inv * args.invocations + lat_loc * args.local_ms
 
     anc = anc_board = None
     if args.anchor:
@@ -401,11 +427,11 @@ def main():
         # package predict its own time_score exactly.
         anc_ms_actual = 728.96 * (100.0 / anc["time"] - 1.0) ** 2
         anc_ms_model = (LAT_C + lat_inv * (args.anchor_invocations or args.invocations)
-                        + LAT_LOC * (args.anchor_local_ms
+                        + lat_loc * (args.anchor_local_ms
                                      if args.anchor_local_ms is not None else args.local_ms))
         board_ms = anc_ms_actual + (board_ms - anc_ms_model)
         print(f"  board ms: anchor measured {anc_ms_actual:.3f}, model {anc_ms_model:.3f}; "
-              f"candidate model {LAT_C + lat_inv*args.invocations + LAT_LOC*args.local_ms:.3f}"
+              f"candidate model {LAT_C + lat_inv*args.invocations + lat_loc*args.local_ms:.3f}"
               f" -> anchored {board_ms:.3f}")
         print(f"anchor {args.anchor}: proxy rel {a_prox['rel']:.5f} tke {a_prox['tke']:.5f} "
               f"mvpe {a_prox['mvpe']:.5f}  -> board rel {anc_board['rel']:.5f} "
@@ -422,7 +448,7 @@ def main():
     print(f"predicted board errors:  rel {pred['rel']:.5f}  tke {pred['tke']:.5f}  "
           f"mvpe {pred['mvpe']:.5f}   (a = {a0:.4f})")
     print(f"board ms = {LAT_C} + {lat_inv}*{args.invocations} (track {track}, MEASURED "
-          f"round 23) + {LAT_LOC}*{args.local_ms:.3f} = {board_ms:.3f}\n")
+          f"round 23) + {lat_loc}*{args.local_ms:.3f} (MEASURED round 24) = {board_ms:.3f}\n")
     base = ANCHORS[args.anchor] if args.anchor else R10
     label = args.anchor if args.anchor else "round 10"
     print(f"{'subscore':>10s} {label:>10s} {'predicted':>10s} {'delta':>8s}")

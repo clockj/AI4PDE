@@ -65,3 +65,9 @@ Rounds R6–R12 predate the `submitted/` archive and their bands are gone.
 
 `r21_xfam5.npz` is the first band fitted on a HETEROGENEOUS member set (three held-out cmb3sim
 twins plus `arch_vit_d384`). Promoted 2026-09-11 after R21/T2R9 scored.
+
+| `r24_xfam6.npz` | `94bbebc3f1fef6870bfab36bb35d8450` | R24 (id not reported) |
+
+`r24_xfam6.npz` is fitted on R21's twins plus one cmb3sim-recipe ViT twin (`arch_vit_cmb3sim`),
+for R21's members plus `arch_vit_all_cmb3sim_s3`. Promoted 2026-09-13 after R24 scored. T2R11
+(x8v) shipped `r21_xfam5.npz` byte for byte and needs no row of its own.
