@@ -123,6 +123,21 @@ FUSE = True
 _fno._HOSTW = HOST_WRITE
 _fno._SPEC = SPEC_PATH
 
+# AMP is BAKED like FUSE (round 25). Round 24 measured the board charging GPU compute at ~1.75
+# board ms per 4060-equivalent local ms on Track 1, so a precision that cuts compute without
+# moving the error subscores is worth ~+0.07 `final` per board ms. r25a: fp16 autocast moved the
+# prediction 6e-4 relative, left every error metric identical to 4-5 decimals and kept
+# permutation invariance EXACT; bf16 crashes (torch.complex has no BFloat16). None is the fp32
+# path every earlier round shipped. A non-None value is VERIFIED against fp32 at import, which
+# is untimed, and dropped on any exception, non-finite output or disagreement above 2e-2 on a
+# probe -- a kernel that is broken on the board GPU, not a 1e-3 numerics difference, which is
+# priced offline on real data. `AMP_ACTIVE` records what actually runs. RPDE_AMP still steers
+# the measurement drivers when AMP is None.
+AMP = None
+_AMP_DT = {"fp16": torch.float16}.get(AMP) if AMP is not None else _fno._AMP
+AMP_ACTIVE = None
+AMP_PROBE_DIFF = None
+
 _BAND = os.path.join(_HERE, "band.npz")
 _BAND_LEGACY = os.path.join(_HERE, "band.npy")
 
@@ -232,6 +247,29 @@ def _apply_blend(pred, x):
     pred[..., :2] += b * (x[..., :2].mean(1, keepdims=True)
                           - pred[..., :2].mean(1, keepdims=True))
 
+def _amp_verified(models, dev):
+    """The autocast dtype predict() may use: `_AMP_DT` if it reproduces fp32 on a probe, else None."""
+    global AMP_PROBE_DIFF
+    if _AMP_DT is None or dev != "cuda":
+        return None
+    try:
+        g = np.random.default_rng(0)
+        probe = np.zeros((8, 20, 32, 64, 3), dtype=np.float32)
+        probe[..., :2] = (_fno.MEAN + _fno.STD * g.standard_normal((8, 20, 32, 64, 2))).astype(np.float32)
+        s0 = np.empty((8, 1, 32, 64, 2), dtype=np.float32)
+        s1 = np.empty_like(s0)
+        p0 = _fno.predict_fno(models, probe, dev, alpha=ALPHA, batch=8, sigma_out=s0, amp=None)
+        p1 = _fno.predict_fno(models, probe, dev, alpha=ALPHA, batch=8, sigma_out=s1, amp=_AMP_DT)
+        if not (np.all(np.isfinite(p1)) and np.all(np.isfinite(s1))):
+            return None
+        d = max(float(np.linalg.norm(p1 - p0) / max(float(np.linalg.norm(p0)), 1e-12)),
+                float(np.linalg.norm(s1 - s0) / max(float(np.linalg.norm(s0)), 1e-12)))
+        AMP_PROBE_DIFF = d
+        return _AMP_DT if d < 2e-2 else None
+    except Exception:
+        return None
+
+
 def _pick_batch(models, dev):
     """Time a few batch sizes on THIS machine and keep the fastest.
 
@@ -251,11 +289,11 @@ def _pick_batch(models, dev):
         probe = np.zeros((112, 20, 32, 64, 3), dtype=np.float32)
         best_t, best_b = None, 64
         for b in (14, 28, 56, 112):
-            _fno.predict_fno(models, probe[:b], dev, alpha=ALPHA, batch=b)      # warm up
+            _fno.predict_fno(models, probe[:b], dev, alpha=ALPHA, batch=b, amp=_AMP_DT)  # warm up
             torch.cuda.synchronize()
             t0 = _time.perf_counter()
             for _ in range(2):
-                _fno.predict_fno(models, probe, dev, alpha=ALPHA, batch=b)
+                _fno.predict_fno(models, probe, dev, alpha=ALPHA, batch=b, amp=_AMP_DT)
             torch.cuda.synchronize()
             t = _time.perf_counter() - t0
             if best_t is None or t < best_t:
@@ -312,6 +350,10 @@ def _load():
         band = None
     if band is not None and p and not (ref is not None and np.all(ref > 0.0)):
         p = 0.0
+    # Decided BEFORE the batch is timed, so the batch that wins is the one the mode will run.
+    global _AMP_DT, AMP_ACTIVE
+    _AMP_DT = _amp_verified(models, dev)
+    AMP_ACTIVE = None if _AMP_DT is None else str(_AMP_DT).replace("torch.", "")
     return models, dev, band, ref, p, _pick_batch(models, dev)
 
 
@@ -336,7 +378,7 @@ def predict(input_array, metadata=None):
     # (N, 1, 32, 64, 2), 5.5 MB at N = 336 against the field's 165 MB -- cheap enough to ask
     # for inside a timed call, and only requested when the band actually uses it.
     sig = np.empty((len(x), 1, 32, 64, 2), dtype=np.float32) if p else None
-    _fno.predict_fno(models, x, dev, alpha=ALPHA, batch=batch, out=pred, sigma_out=sig)
+    _fno.predict_fno(models, x, dev, alpha=ALPHA, batch=batch, out=pred, sigma_out=sig, amp=_AMP_DT)
     # Before the band: the interval has to bracket what is actually returned.
     _apply_blend(pred, x)
 

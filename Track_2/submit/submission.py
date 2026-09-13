@@ -104,8 +104,18 @@ _fno._SPEC = SPEC_PATH
 
 # `_body` below runs the members itself rather than going through `_fno.predict_fno`, so the
 # RPDE_AMP switch has to be honoured here too. Default None = the shipped fp32 path.
-_AMP = {"fp16": torch.float16, "half": torch.float16,
-        "bf16": torch.bfloat16}.get(os.environ.get("RPDE_AMP", "").lower())
+#
+# AMP is BAKED like FUSE (round 25) and overrides RPDE_AMP when not None. A non-None value is
+# VERIFIED against fp32 in get_ttt_model (untimed) and dropped on any exception, non-finite output
+# or disagreement above 2e-2 on a probe; `AMP_ACTIVE` records what actually runs. At batch 1
+# autocast's casts are not free: r25a read fp16 23 % SLOWER on R21's package and 32 % faster on
+# R24's, in separate processes -- which is why it is a measured, per-package choice.
+AMP = None
+_AMP = ({"fp16": torch.float16}.get(AMP) if AMP is not None else
+        {"fp16": torch.float16, "half": torch.float16,
+         "bf16": torch.bfloat16}.get(os.environ.get("RPDE_AMP", "").lower()))
+AMP_ACTIVE = None
+AMP_PROBE_DIFF = None
 
 T_IN = T_OUT = 20
 H, W = 32, 64
@@ -355,6 +365,33 @@ def _load_band(submission_dir: str):
     return band, ref, p
 
 
+def _amp_verified(models, dev):
+    """`_AMP` if every member group reproduces its fp32 output under autocast on a probe, else None."""
+    global AMP_PROBE_DIFF
+    if _AMP is None or not str(dev).startswith("cuda"):
+        return None
+    try:
+        g = torch.Generator(device="cpu").manual_seed(0)
+        pv = torch.randn((1, CH, H, W), generator=g).to(dev)      # already-normalized space
+        worst = 0.0
+        with torch.no_grad():
+            for mdl in models:
+                r0, l0 = mdl(pv)
+                with torch.autocast("cuda", dtype=_AMP):
+                    r1, l1 = mdl(pv)
+                r1 = r1.float()
+                l1 = None if l1 is None else l1.float()
+                if not bool(torch.isfinite(r1).all()) or (l1 is not None and not bool(torch.isfinite(l1).all())):
+                    return None
+                worst = max(worst, float((r1 - r0).norm() / r0.norm().clamp(min=1e-12)))
+                if l1 is not None:
+                    worst = max(worst, float((l1 - l0).norm() / l0.norm().clamp(min=1e-12)))
+        AMP_PROBE_DIFF = worst
+        return _AMP if worst < 2e-2 else None
+    except Exception:
+        return None
+
+
 def get_ttt_model(submission_dir: str, device: str):
     """Called once, before the stream, and NOT timed -- so warm-up and capture belong here.
 
@@ -371,6 +408,10 @@ def get_ttt_model(submission_dir: str, device: str):
     if FUSE:
         models = _fno.fuse(models)
     band, ref, p = _load_band(submission_dir)
+    # Decided before the graph is captured, so the graph records the mode that will run.
+    global _AMP, AMP_ACTIVE
+    _AMP = _amp_verified(models, dev)
+    AMP_ACTIVE = None if _AMP is None else str(_AMP).replace("torch.", "")
     m = FrozenEnsemble(models, dev, band, ref, p)
     try:
         probe = torch.zeros((1, T_IN, H, W, 3), dtype=torch.float32)

@@ -82,6 +82,8 @@ def _fft_in(x):
     to be promoted before the FFT.  `Tensor.float()` RETURNS SELF when the tensor is already
     float32, so with autocast off this call is the identity and the shipped path is unchanged
     -- `verify/fast_paths.py` checks that bit-exactly rather than trusting the docstring.
+    The bmm fast path pins its real spectral matmul to fp32 as well (`_spec_bmm`); before
+    round 25 autocast ran that bmm in fp16 and built a ComplexHalf tensor from its output.
     """
     return x.float()
 
@@ -469,7 +471,14 @@ class StackedFNO(nn.Module):
         # ordered [+ky block, -ky block] to match `_packed`.
         a = torch.cat([ft[:, :, :, :my, :mx], ft[:, :, :, -my:, :mx]], 3)
         a = a.permute(1, 3, 4, 0, 2).reshape(-1, b, wid)
-        cr = torch.bmm(torch.cat([a.real, a.imag], 2).contiguous(), self._packed(i, my, mx))
+        # The real matmul is pinned to fp32 even under autocast. Autocast puts `bmm` on its fp16
+        # list, and a half `cr` makes `torch.complex` build a ComplexHalf tensor -- "experimental"
+        # in torch 2.2 (r25a raised the warning here), and an unknown board GPU is exactly where
+        # an experimental kernel fails. With autocast off this is the identity: `.float()`
+        # returns self for fp32, and a disabled autocast context changes nothing.
+        with torch.autocast(x.device.type, enabled=False):
+            cr = torch.bmm(torch.cat([a.real, a.imag], 2).float().contiguous(),
+                           self._packed(i, my, mx).float())
         oc = torch.complex(cr[..., :wid], cr[..., wid:])
         oc = oc.reshape(k, 2 * my, mx, b, wid).permute(3, 0, 4, 1, 2)
         out = torch.zeros(b, k, wid, h, wf, dtype=torch.cfloat, device=x.device)
