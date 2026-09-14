@@ -111,6 +111,14 @@ ROUNDS = [
     # TIME -0.069: 4.553 -> 5.570 board ms for +0.316 A100 ms/window of local compute. Net
     # -0.019. Both this and T2R11 missed their estimates in the `time` row -- see the FLOPs block.
     ("R24 xfam6 R21+ViT/2inv", "2026-09-12", 0, 94.861827, 78.793104, 94.347768, 91.961259, 41.866674, 81.312041),
+    # R25 = R24's EXACT archive with `AMP = "fp16"` baked in (autocast, checked against fp32 at load
+    # time and dropped on any failure). Submission id not reported. THE FINGERPRINT SAYS fp16 RAN:
+    # against R24, rel -0.000037, tke +0.000276, mvpe -0.000260, sps +0.001013 -- not identical to six
+    # decimals, and none near the 0.01 void line. So `time` reads the precision change alone: 5.570 ->
+    # 5.076 board ms (-0.494), 37 % of the -1.321 that the A100's interleaved -21 % (1.918 -> 1.510
+    # ms/window) would give at LOC_SLOPE_T1 (15-60 % across Track 1's 0.03-0.30 ms drift). Estimate of
+    # record 81.356 assumed 50 %; actual 81.345, the miss all `time`. NEW TRACK-1 BEST, +0.014 over R21.
+    ("R25 xfam6 fp16/2inv", "2026-09-13", 0, 94.861790, 78.793380, 94.347508, 92.297891, 41.867687, 81.344644),
 ]
 
 UNSCORED = []   # every round on both tracks now has full subscores
@@ -210,6 +218,14 @@ ROUNDS_T2 = [
     # forced -0.046 + containment +0.023, inside noise), exactly the null the local K-curve
     # extrapolation gave once the ViT is in the set. TIME -0.077: 6.255 -> 7.628 board ms. Net -0.097.
     ("T2R11 x8v R21+4FNO/2inv", "2026-09-12", 0, 94.845935, 78.395628, 94.066988, 90.720061, 41.626260, 81.058649),
+    # T2R12 = R25's archive on the streaming board, read against T2R9: the second ViT AND fp16 at once.
+    # Submission id not reported. The errors landed on the cross-track prediction (rel +0.004, tke
+    # +0.008, mvpe +0.017, sps -0.0003) and sps +0.111 against T2R9 = forced +0.070 + containment
+    # +0.041, the second ViT as on R24 (+0.053). `time` 91.040 is below the 91.52 line: fp16 did NOT
+    # pay for the second ViT's FLOPs here -- 6.255 -> 7.061 board ms, against 7.795 with no fp16
+    # transfer, so ~0.73 of a possible 3.61 ms came back (inside Track 2's drift). Net +0.009 over T2R9:
+    # NEW TRACK-2 BEST. Estimate of record 81.223; the miss is the `time` row (-0.063).
+    ("T2R12 xfam6 fp16/2inv", "2026-09-13", 0, 94.861391, 78.587250, 94.224322, 91.039757, 41.760694, 81.164374),
 ]
 
 # The fit pools both tracks -- see the module docstring.  ROUNDS first, then ROUNDS_T2;
@@ -240,6 +256,9 @@ W_TIME_AB = [
     ("T2R8->T2R10", 90.928559 - 92.597588, 80.945935 - 81.106430),
 ]
 W_TIME_DIRECT = float(np.mean([f / t for _, t, f in W_TIME_AB]))   # = 0.0958
+# R24 -> R25 (fp16 autocast) is a sixth, NEAR-single-subscore pair, kept OUT of the mean: the error
+# subscores moved by <= 3e-4 and sps by 1.0e-3, so it is not bit-identical. Raw dfinal/dtime 0.0969;
+# with those small moves priced out at the fitted weights, 0.0961 -- inside the five readings above.
 
 
 # ---------------------------------------------------------------------------------------
@@ -319,6 +338,16 @@ def invocation_cost(anchor_time_score: float, n: int = 1, track: int = 1) -> tup
 # and a board ms saved is ~ +0.072.
 LOC_SLOPE_T1 = 1.75     # board ms per 4060-equivalent local ms, Track 1 (R16->R17 1.76, R21->R24 1.74)
 LOC_SLOPE_T2 = 0.60     # Track 2, T2R9 -> T2R11 only
+
+# ROUND 25: A PRECISION CUT IS NOT CHARGED LIKE A FLOPs CUT (2026-09-14). R25 is R24's archive with
+# fp16 autocast baked in, and its error subscores moved by <= 3e-4 (the fingerprint that fp16 ran),
+# so `time` reads the precision change alone: 5.570 -> 5.076 board ms for -0.408 A100 ms/window
+# measured interleaved (-0.755 4060-eq). That is 0.65 board ms per 4060-eq local ms, 37 % of
+# LOC_SLOPE_T1: the board realises much less of fp16 than the A100's tensor cores do. One reading;
+# Track 1's 0.03-0.30 ms drift brackets it at 0.26-1.05. On Track 2, T2R12 moved fp16 and the second
+# ViT together; charging the ViT at LOC_SLOPE_T2, fp16 recovered ~0.73 of 3.61 board ms (~0.12 per
+# 4060-eq ms), which is inside that board's 0.4-0.7 ms drift of zero.
+PREC_SLOPE_T1 = 0.65    # board ms per 4060-eq local ms saved by a PRECISION change, Track 1 (R24 -> R25)
 
 
 def fit(constrained: bool = False, nonneg: bool = True):
@@ -554,7 +583,10 @@ def main():
              "R23": (4, None), "T2R10": (4, None),
              # R24 / T2R11: timed side by side with R21 in ONE process on one node (rp_r24h /
              # rp_r24i): xfam6 1.812 A100 ms/window (x1.850 = 3.352), x8v's Track-2 step 4.661.
-             "R24": (2, 3.352), "T2R11": (2, None)}
+             "R24": (2, 3.352), "T2R11": (2, None),
+             # R25 / T2R12: R24's archive with fp16 autocast. rp_r25b timed it interleaved with its
+             # own fp32 twin in one process: 1.510 against 1.918 A100 ms/window (x1.850 = 2.794).
+             "R25": (2, 2.794), "T2R12": (2, None)}
     for r in FIT_ROUNDS:
         key = r[0].split()[0]
         t = 0.72896 * (100.0 / r[6] - 1.0) ** 2 * 1000.0

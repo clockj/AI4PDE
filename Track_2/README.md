@@ -83,7 +83,9 @@ batch.
 * **fp16 autocast** (`AMP`, baked by the build): R24's package went 7.022 → 3.768 ms/step, with
   `ttt_step` outputs within 8.4e-4 of fp32 and the CUDA graph kept. R21's package read fp16
   *slower* in a separate-process run, so AMP is a per-package decision; gate it with
-  `../Track_1/verify/amp_path.py --t2`. The board reading is T2R12.
+  `../Track_1/verify/amp_path.py --t2`. **On the board (T2R12)**, R24's archive with fp16 came
+  in at 7.061 ms against xfam5's 6.255 (T2R9): fp16 recovered ~0.73 of a possible 3.61 board ms
+  and did not pay for the second ViT's FLOPs. xfam5fp16 against T2R12 is the next read.
 * **`SPEC_PATH = "bmm"`:** the complex einsum's strided weight copy was 28 % of the step. A
   batched real 2×2-block matmul removes it: −16.6 %, 2e-6 relative, replicated three times.
 * **Round 13's anatomy** (width-24 members) is why fusion and the graph exist:

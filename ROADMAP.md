@@ -907,6 +907,25 @@ The detail is in `ROUNDS.md`, "Round 25". This round adds three rules:
   3.37 and 3.87 ms/step in two jobs, and 4.79 and 7.02 on two nodes. fp32 against fp16 in one
   process read −21 % and −46 %, and those readings replicated.
 
+### 1.27 Round 25 board: Track 1 keeps 37 % of a precision cut, and fp16 does not buy a second ViT on Track 2
+
+The detail is in `ROUNDS.md`, "Round 25 BOARD RESULT". The rules:
+
+* **On Track 1 the board kept 37 % of fp16's local cut** (5.570 → 5.076 board ms, against
+  −1.321 at full transfer; 15–60 % across drift). Price a precision change at **~0.65 board ms
+  per 4060-eq local ms** (`board_rounds.PREC_SLOPE_T1`, one reading), not at the 1.75 FLOPs
+  slope. Levers that change arithmetic rather than FLOPs (TF32, a CUDA graph) are bracketed
+  between zero and that reading until the board measures each one.
+* **On Track 2, fp16 does not pay for a second ViT.** The xfam6fp16 archive came in at 7.061
+  board ms against xfam5's 6.255 (T2R9). The second ViT's containment (+0.041) arrived as
+  predicted, but fp16 returned only ~0.73 of a possible 3.61 board ms. Track 2's package carries
+  fp16 without the second ViT unless the board says otherwise; xfam5fp16 against T2R12 is that
+  read. Until then, bracket a local fp16 cut on Track 2 between zero and ~20 % transfer.
+* **The fingerprint design worked.** A load-time switch was read unambiguously from error
+  subscores that moved by ≤ 3e-4. Every future load-time decision (a baked TF32) needs one.
+* **Method.** Both estimates of record missed only in the `time` row (−0.011 and −0.059), and
+  both assumed that half of the local cut transfers. Use the measured fractions from now on.
+
 ## Part 2 — Closed. Do not re-propose without new evidence.
 
 Everything here was closed by measurement, with the file that measured it. The list exists so a
@@ -995,12 +1014,13 @@ confirmed it from five directions.
 
 ## Part 3 — What to do next
 
-> **As of 2026-09-13 the live list is `../handoffs/HANDOFF_20260913.md` §4.** The P0–P4 below
-> are the round-13 plan, kept for the record. In short: first read R25 / T2R12 with the
-> fingerprint rule. If fp16 transfers, every Decision-phase package carries it and xfam6fp16 is
-> the Track-1 candidate; if it does not, TF32 is measured on the board the same way. The four
-> containment levers are closed — the band (eight times), capacity, member count, and the ViT
-> family at two — so what remains is latency, and anything structurally new.
+> **As of 2026-09-14 the live plan is `Track_1/plan/plan_20260914.md`, the backbone campaign**,
+> with `../handoffs/HANDOFF_20260913.md` §4 for the latency levers. The P0–P4 below are the
+> round-13 plan, kept for the record. R25 / T2R12 read fp16 (§1.27): Track 1 carries it and
+> xfam6fp16 is the Track-1 candidate; Track 2 reads xfam5fp16 next; a baked TF32 constant and a
+> CUDA graph on Track 1's `predict` path are the remaining latency levers. The four containment
+> levers are closed — the band (eight times), capacity, member count, and the ViT family at two —
+> so what remains is latency, and anything structurally new.
 
 Time remaining: **Main Development closes 2026-09-27**, Decision phase to 10-25, results 11-10.
 **1 submission per day per track**, shared account — so **~27 slots per track**, against the
@@ -1263,7 +1283,7 @@ implement self-normalization but measured it on a split blind to what it is for;
 |---|---|
 | Contracts, current measurements, standing rules | `CLAUDE.md` |
 | Per-round detail and measured baselines (the old `CLAUDE.md` through round 25, verbatim; new rounds appended) | `ROUNDS.md` |
-| **Every board round** (28, both tracks) + the free weight fit + the measured invocation cost | `Track_1/board_rounds.py`, `Track_1/final_v9.py` |
+| **Every board round** (32, both tracks) + the free weight fit + the measured invocation cost | `Track_1/board_rounds.py`, `Track_1/final_v9.py` |
 | Published calibration log (bilingual, regenerate + republish after every board result) | `leaderboard/lb.py --html` |
 | Board latency constants, MEASURED: invocation 1.151 / 0.866 board ms; FLOPs 1.75 / 0.60 board ms per 4060-eq local ms | `Track_1/board_rounds.py` (`INV_MS_*`, `LOC_SLOPE_*`, `board_ms()`, `time_score()`), `Track_1/predict_board.py` (`LAT_INV_*`, `LAT_LOC_*`) |
 | Every scored band, versioned (the one part of a package that cannot be rebuilt) | `Track_1/bands/` + `MANIFEST.md` |

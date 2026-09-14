@@ -44,10 +44,113 @@ M = ["rel", "tke", "mvpe"]
 SUB = ["rel", "tke", "mvpe", "time", "sps"]
 
 
-# Read from Codabench 2026-09-10. The two tracks now have DIFFERENT leaders -- T2's moved
-# +0.235 in the same window in which we moved +0.049, so the T2 board is the faster-moving one.
-LEADER_T1 = 81.82371
-LEADER_T2 = 81.99648
+# Every dated read of the best OTHER team's `final`: (date, track, final, note). 08-25 is np-user's
+# Track-1 entry as read on 08-31; from 09-11 the two tracks have different leaders. Append a row
+# whenever the board is read -- LEADER_T1 / LEADER_T2 and the curve's reference points follow it.
+LEADER_READS = [
+    ("2026-08-25", 1, 81.76136, "np-user, read 08-31"),
+    ("2026-09-11", 1, 81.82371, ""),
+    ("2026-09-11", 2, 81.99648, ""),
+    ("2026-09-14", 1, 81.85874, ""),
+    ("2026-09-14", 2, 81.99648, ""),
+]
+
+
+def leader_latest(track):
+    """(date, final) of the latest leader read on a track."""
+    r = max((x for x in LEADER_READS if x[1] == track), key=lambda x: x[0])
+    return r[0], r[2]
+
+
+LEADER_T1 = leader_latest(1)[1]
+LEADER_T2 = leader_latest(2)[1]
+
+# Backbone families in the FIXED slot order of the categorical palette (--f1 .. --f8 in the page
+# CSS). A family keeps its slot on every chart and never takes a generated hue; an unrecognised
+# family is drawn in --fx and named by its label. Slots 1-3 (FNO, ViT, U-Net) are the only three
+# that stay distinguishable all-pairs in both themes (dataviz validator, 2026-09-14), so families
+# from slot 4 on are also drawn as SQUARES, and every point carries a direct label.
+FAMILIES = ["FNO", "ViT", "U-Net", "U-FNO", "F-FNO", "Swin U-Net", "SimVP", "ST-ViT"]
+_FAMILY_ALIAS = {
+    "fno": "FNO", "vit": "ViT", "vit2d": "ViT", "unet": "U-Net", "cnextunet": "U-Net",
+    "convnextunet": "U-Net", "unetmod": "U-Net", "modernunet": "U-Net", "ufno": "U-FNO",
+    "ffno": "F-FNO", "factorizedfno": "F-FNO", "swin": "Swin U-Net", "swinunet": "Swin U-Net",
+    "swinv2": "Swin U-Net", "scot": "Swin U-Net", "simvp": "SimVP", "simvpv2": "SimVP",
+    "gsta": "SimVP", "stvit": "ST-ViT", "spacetimevit": "ST-ViT", "dividedvit": "ST-ViT",
+}
+
+
+def family_key(name):
+    """Canonical family of a free-text family name, or None when it has no slot."""
+    k = "".join(ch for ch in str(name or "").lower() if ch.isalnum())
+    return _FAMILY_ALIAS.get(k)
+
+
+def fam_var(name):
+    """CSS colour of a family: its fixed slot, else --fx."""
+    f = family_key(name)
+    return f"var(--f{FAMILIES.index(f) + 1})" if f else "var(--fx)"
+
+
+def fam_square(name):
+    """True when a family is drawn as a square (slot 4 on, or unrecognised)."""
+    f = family_key(name)
+    return f is None or FAMILIES.index(f) >= 3
+
+
+def families_of(backbone):
+    """`"FNO w96 L8 ×4 + ViT ×2 fp16"` -> ["FNO", "ViT"]: the first word of each ` + ` part."""
+    return [p.split()[0] for p in str(backbone or "").split(" + ") if p.split()]
+
+
+def _num(v):
+    """A finite float, or None -- screen records are partial while an arm is running."""
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return None
+    return x if np.isfinite(x) else None
+
+
+def load_screen(name="screen.jsonl"):
+    """The backbone-screen ledger, which forge rewrites in place (one record per arm).
+
+    Returns (arms, state). Missing, empty and partly unreadable files all render: a line that does
+    not parse is counted and skipped, and when an arm appears twice its LAST record wins.
+    """
+    p = os.path.join(HERE, name)
+    if not os.path.exists(p):
+        return [], "missing"
+    by, bad = {}, 0
+    with open(p, encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            try:
+                r = json.loads(line)
+            except ValueError:
+                bad += 1
+                continue
+            if isinstance(r, dict) and r.get("arm"):
+                by[str(r["arm"])] = r
+            else:
+                bad += 1
+    if not by:
+        return [], "empty" if not bad else f"{bad} unreadable"
+    return list(by.values()), (f"{bad} unreadable" if bad else "")
+
+
+def best_proj(r):
+    """(value, 'standalone' | 'partner') of an arm's better Track-1 projection, or (None, None)."""
+    c = [(v, k) for k, v in (("standalone", _num(r.get("proj_dfinal_t1_standalone"))),
+                             ("partner", _num(r.get("proj_dfinal_t1_partner")))) if v is not None]
+    return max(c) if c else (None, None)
+
+
+def screen_order(r):
+    """Wave, then best projection (highest first), then arm name."""
+    b, w = best_proj(r)[0], _num(r.get("wave"))
+    return (w if w is not None else 99.0, -b if b is not None else float("inf"), str(r.get("arm")))
 
 
 def load(name):
@@ -204,10 +307,10 @@ def section_calib(B):
     print("      -- the only weight in the family read off a single-subscore A/B, and it PICKS")
     print("         THE FIT: the free eighteen-round fit says 0.0967, the sum(w)=1 fit that")
     print("         rounds 9-16 used said 0.085.  Round 17 dropped the constraint.")
-    print("    board ms = 2.616 + 0.435*inv + 0.803*local_ms   rms 0.690 ms, 7 rounds")
-    print("      -- residuals are ordered by DATE: the eval machine drifts, the intercept is not")
-    print("         a constant. The one clean number is the same-day R12/R13 pair: an")
-    print("         invocation costs 0.52-0.56 board ms = 0.036 `final`.")
+    print("    board latency, MEASURED as deltas (board_rounds.py): +1.151 / +0.866 board ms per")
+    print("      extra invocation (R23); FLOPs 1.75 / 0.60 board ms per 4060-eq local ms (R24);")
+    print("      a PRECISION cut ~0.65 on Track 1 (fp16, R25: 37 % of the local cut kept).")
+    print("      The old level model (2.616 + 0.435*inv + 0.803*local) is withdrawn.")
 
 
 # ---------------------------------------------------------------------------------------
@@ -230,6 +333,29 @@ def section_runs(Rn):
     print("  That column is the single most predictive field here: `ozdo` was +3.84 sigma per")
     print("  model and -0.012 at four members, and `--var-mlp`'s 3.9 % fixed-field TKE cut")
     print("  became +0.08. An arm that has not been ensembled has not been measured.")
+
+
+# ---------------------------------------------------------------------------------------
+def section_screen(S, state):
+    print("\n=== 5. Backbone screen (leaderboard/screen.jsonl, local proxy projections) ===\n")
+    if not S:
+        print(f"  no arms yet ({state or 'no records'})")
+        return
+    if state:
+        print(f"  note: {state} line(s) skipped")
+    print(f"  {'arm':<16s} {'family':<11s} {'status':<8s} {'gpu_h':>6s} {'xFNO':>6s} "
+          f"{'T1 solo':>8s} {'T1 partner':>10s} {'T2 partner':>10s}  verdict")
+
+    def f(r, k, fmt, w):
+        v = _num(r.get(k))
+        return (fmt % v if v is not None else "-").rjust(w)
+    for r in sorted(S, key=screen_order):
+        print(f"  {str(r.get('arm'))[:16]:<16s} {str(r.get('family') or '-')[:11]:<11s} "
+              f"{str(r.get('status') or '-')[:8]:<8s} {f(r, 'gpu_h', '%.1f', 6)} "
+              f"{f(r, 'ms_ratio_fno', '%.2f', 6)} {f(r, 'proj_dfinal_t1_standalone', '%+.3f', 8)} "
+              f"{f(r, 'proj_dfinal_t1_partner', '%+.3f', 10)} "
+              f"{f(r, 'proj_dfinal_t2_partner', '%+.3f', 10)}  {r.get('verdict') or '-'}")
+    print("  Projections are local proxy numbers: a sign, not a size.")
 
 
 # ---------------------------------------------------------------------------------------
@@ -261,6 +387,8 @@ def tsvg(x, y, en, zh, attrs=""):
 
 
 NAV = [("top", "Read this first", "先读这里"),
+       ("curve", "Optimization curve", "优化曲线"),
+       ("screen", "Backbone screen", "骨干网络筛选"),
        ("submissions", "Submissions", "提交记录"),
        ("progress", "Progress at constant latency", "恒定延迟下的进展"),
        ("calibration", "Local &rarr; board correction", "本地 &rarr; board 校正"),
@@ -281,18 +409,25 @@ HTML_HEAD = """<title>RealPDE Calibration Log</title>
   --ink:#14181f; --dim:#6a7280; --faint:#9aa1ac; --line:#dfe3ea; --rule:#c8cfda;
   --probe:#2b5fa8; --cool:#1f6f8b; --warm:#b3402c; --hold:#8a6d1f;
   --coolw:#1f6f8b22; --warmw:#b3402c22;
+  /* backbone families, fixed slot order (lb.FAMILIES); validated on these panels 2026-09-14 */
+  --f1:#2a78d6; --f2:#eb6834; --f3:#1baf7a; --f4:#eda100;
+  --f5:#e87ba4; --f6:#008300; --f7:#4a3aa7; --f8:#e34948; --fx:#9aa1ac;
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
   --ground:#12151b; --panel:#191d24; --sunk:#141920;
   --ink:#e6e9ee; --dim:#98a1ae; --faint:#6b7481; --line:#262c35; --rule:#39414d;
   --probe:#7aa8e0; --cool:#5fb6c9; --warm:#ef8a72; --hold:#d4a94a;
   --coolw:#5fb6c92e; --warmw:#ef8a722e;
+  --f1:#3987e5; --f2:#d95926; --f3:#199e70; --f4:#c98500;
+  --f5:#d55181; --f6:#008300; --f7:#9085e9; --f8:#e66767; --fx:#6b7481;
 }}
 :root[data-theme="dark"]{
   --ground:#12151b; --panel:#191d24; --sunk:#141920;
   --ink:#e6e9ee; --dim:#98a1ae; --faint:#6b7481; --line:#262c35; --rule:#39414d;
   --probe:#7aa8e0; --cool:#5fb6c9; --warm:#ef8a72; --hold:#d4a94a;
   --coolw:#5fb6c92e; --warmw:#ef8a722e;
+  --f1:#3987e5; --f2:#d95926; --f3:#199e70; --f4:#c98500;
+  --f5:#d55181; --f6:#008300; --f7:#9085e9; --f8:#e66767; --fx:#6b7481;
 }
 *{box-sizing:border-box}
 body{background:var(--ground);color:var(--ink);margin:0;padding:0;
@@ -394,6 +529,28 @@ footer{color:var(--faint);font-size:11.5px;margin-top:34px;padding-top:14px;
   border-top:1px solid var(--line);font-family:"IBM Plex Mono",ui-monospace,monospace;
   line-height:1.8}
 footer .zh{font-family:"IBM Plex Mono","Noto Sans SC",ui-monospace,monospace}
+/* charts added 2026-09-14: legend, tooltip, empty state, screen table */
+.legend{display:flex;flex-wrap:wrap;gap:6px 18px;margin:2px 0 12px;font-size:12px;color:var(--dim)}
+.legend>span{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.legend svg{display:inline-block;flex:none}
+svg.chart{min-width:900px}
+.pt{outline:none}
+.pt .fr{opacity:0}
+.pt:hover .fr,.pt:focus .fr{opacity:1}
+.tip{position:fixed;z-index:30;pointer-events:none;background:var(--panel);color:var(--ink);
+  border:1px solid var(--rule);box-shadow:0 4px 14px rgba(20,24,31,.16);padding:7px 10px;
+  font:12px/1.5 "IBM Plex Mono","Noto Sans SC",ui-monospace,monospace;max-width:340px}
+.tip div:first-child{font-weight:600}
+.tip div+div{color:var(--dim)}
+.tip[hidden]{display:none}
+.empty{border:1px dashed var(--rule);background:var(--sunk);padding:14px 16px;color:var(--dim);
+  font-size:13px;margin:0 0 4px}
+.cap{color:var(--dim);font-size:12.5px;margin:10px 0 0;max-width:86ch}
+th.grp{text-align:center;border-bottom:1px solid var(--line);color:var(--dim)}
+.sw{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:0}
+.sw.sq{border-radius:1px}
+.v-advance{color:var(--cool)}.v-replicate{color:var(--probe)}.v-pending{color:var(--faint)}
+.v-drop{color:var(--warm)}.st-failed{color:var(--warm)}.st-running{color:var(--probe)}
 @media (prefers-reduced-motion:no-preference){
   tbody tr td{transition:background .12s ease}}
 /* narrow: the rail becomes a top bar with a horizontally scrollable nav */
@@ -466,8 +623,44 @@ NAV_SCRIPT = """<script>
 })();
 </script>"""
 
+TIP_SCRIPT = """<script>
+/* Chart tooltips. An element carrying data-tip-en holds its readout as newline-separated lines
+   (data-tip-zh when the page is in Chinese); the lines go in through textContent. Every value a
+   tooltip shows is also in a table on this page -- the tooltip only saves the lookup. */
+(function(){
+  var tip=document.createElement("div");tip.className="tip";tip.hidden=true;
+  document.body.appendChild(tip);
+  function target(n){
+    while(n&&n!==document){if(n.getAttribute&&n.getAttribute("data-tip-en"))return n;n=n.parentNode;}
+    return null;
+  }
+  function fill(el){
+    var zh=document.documentElement.getAttribute("data-lang")==="zh";
+    var s=(zh&&el.getAttribute("data-tip-zh"))||el.getAttribute("data-tip-en")||"";
+    while(tip.firstChild)tip.removeChild(tip.firstChild);
+    var ls=s.split("\\n"),i;
+    for(i=0;i<ls.length;i++){var d=document.createElement("div");d.textContent=ls[i];tip.appendChild(d);}
+    tip.hidden=false;
+  }
+  function place(x,y){
+    var w=tip.offsetWidth,h=tip.offsetHeight,vw=window.innerWidth,vh=window.innerHeight;
+    var l=x+14,t=y+14;
+    if(l+w>vw-8)l=Math.max(8,x-w-14);
+    if(t+h>vh-8)t=Math.max(8,y-h-14);
+    tip.style.left=l+"px";tip.style.top=t+"px";
+  }
+  document.addEventListener("pointerover",function(e){var t=target(e.target);if(t){fill(t);place(e.clientX,e.clientY);}});
+  document.addEventListener("pointermove",function(e){if(!tip.hidden&&target(e.target))place(e.clientX,e.clientY);});
+  document.addEventListener("pointerout",function(e){var t=target(e.target);
+    if(t&&!(e.relatedTarget&&t.contains(e.relatedTarget)))tip.hidden=true;});
+  document.addEventListener("focusin",function(e){var t=target(e.target);
+    if(t){fill(t);var r=t.getBoundingClientRect();place(r.right,r.bottom);}});
+  document.addEventListener("focusout",function(){tip.hidden=true;});
+})();
+</script>"""
 
-def _sidebar(B, Rn):
+
+def _sidebar(B, Rn, S=()):
     # The fit pools this account's rounds AND the two collaborator rounds (X1, X2), which are
     # in board_rounds.py but not in board.jsonl -- they have subscores and no thesis of ours.
     # Count what the fit actually uses, not what this page can narrate.
@@ -492,9 +685,9 @@ def _sidebar(B, Rn):
     o.append("</ul></nav>")
     o.append('<p class="stamp">'
              + t(f"generated by leaderboard/lb.py<br>{len(B)} submissions &middot; {len(Rn)} "
-                 f"local arms<br>weights refit on {n_scored} scored rounds",
+                 f"local arms<br>{len(S)} screen arms<br>weights refit on {n_scored} scored rounds",
                  f"由 leaderboard/lb.py 生成<br>{len(B)} 次提交 "
-                 f"&middot; {len(Rn)} 条本地实验<br>"
+                 f"&middot; {len(Rn)} 条本地实验<br>{len(S)} 个筛选实验臂<br>"
                  f"权重基于 {n_scored} 个已评分轮"
                  f"次拟合")
              + "</p></aside>")
@@ -540,6 +733,508 @@ def _progress_svg(T, norm, ref):
     return "".join(o)
 
 
+CURVE_X0, CURVE_X1 = "2026-08-03", "2026-09-15"     # a Monday, and the day after the last read
+CURVE_Y0, CURVE_Y1 = 79.6, 82.1
+
+
+def _date_num(d):
+    """ISO date -> days since 2026-08-01."""
+    import datetime as _dt
+    return (_dt.date.fromisoformat(str(d)[:10]) - _dt.date(2026, 8, 1)).days
+
+
+def _day_label(n):
+    import datetime as _dt
+    return (_dt.date(2026, 8, 1) + _dt.timedelta(days=n)).strftime("%m-%d")
+
+
+def _attr(s):
+    """An attribute value: escaped, with newlines kept as character references."""
+    return _esc(str(s), quote=True).replace("\n", "&#10;")
+
+
+def _collab_rounds():
+    """The collaborator's scored rounds (X1, X2): in board_rounds.py, never staged here."""
+    try:
+        from board_rounds import ROUNDS as _R1
+    except Exception:
+        return []
+    return [dict(round=r[0].split()[0], track=1, date=r[1], actual=dict(final=r[8]), collab=True)
+            for r in _R1 if r[0].strip().startswith("X")]
+
+
+def _marker(x, y, fams, rv=4.0, hollow=False, faded=False):
+    """A family-coloured mark with a 2px surface ring: a disc, a split disc for a two-family
+    package, or a square for a family outside the first three slots. `rv` is the visible radius."""
+    op = ' opacity=".45"' if faded else ""
+    if not fams:
+        return (f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{rv - 0.5:.1f}" fill="var(--panel)" '
+                f'stroke="var(--fx)" stroke-width="1.5"{op}/>')
+    c = fam_var(fams[0])
+    if len(fams) == 1 or hollow:
+        if fam_square(fams[0]):
+            s = rv if hollow else rv + 1
+            return (f'<rect x="{x - s:.1f}" y="{y - s:.1f}" width="{2 * s:.1f}" height="{2 * s:.1f}" '
+                    f'fill="{"var(--panel)" if hollow else c}" '
+                    f'stroke="{c if hollow else "var(--panel)"}" stroke-width="2"{op}/>')
+        if hollow:
+            return (f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{rv:.1f}" fill="var(--panel)" '
+                    f'stroke="{c}" stroke-width="2"{op}/>')
+        return (f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{rv + 1:.1f}" fill="{c}" '
+                f'stroke="var(--panel)" stroke-width="2"{op}/>')
+    c2 = fam_var(fams[1])
+    return (f'<g{op}><path d="M{x:.1f},{y - rv:.1f}A{rv},{rv} 0 0 0 {x:.1f},{y + rv:.1f}Z" '
+            f'fill="{c}"/><path d="M{x:.1f},{y - rv:.1f}A{rv},{rv} 0 0 1 {x:.1f},{y + rv:.1f}Z" '
+            f'fill="{c2}"/><circle cx="{x:.1f}" cy="{y:.1f}" r="{rv + 1:.1f}" fill="none" '
+            f'stroke="var(--panel)" stroke-width="2"/></g>')
+
+
+def _hit(x, y, tip_en, tip_zh, body, r=12):
+    """A focusable, hoverable point: a 24px transparent hit area, a focus ring, and the mark."""
+    return (f'<g class="pt" tabindex="0" role="img" aria-label="{_attr(tip_en.replace(chr(10), ". "))}" '
+            f'data-tip-en="{_attr(tip_en)}" data-tip-zh="{_attr(tip_zh)}">'
+            f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r}" fill="transparent"/>'
+            f'<circle class="fr" cx="{x:.1f}" cy="{y:.1f}" r="9" fill="none" stroke="var(--ink)" '
+            f'stroke-width="1"/>{body}</g>')
+
+
+def _swatch_svg(fam):
+    f = (f'<rect x="2" y="2" width="8" height="8" fill="{fam_var(fam)}"/>' if fam_square(fam)
+         else f'<circle cx="6" cy="6" r="4" fill="{fam_var(fam)}"/>')
+    return f'<svg width="12" height="12" aria-hidden="true">{f}</svg>'
+
+
+def _fam_legend(fams):
+    """One legend entry per family present, in slot order; unrecognised names last, in --fx."""
+    known = [f for f in FAMILIES if f in {family_key(x) for x in fams}]
+    other = sorted({str(x) for x in fams if x and not family_key(x)})
+    return ([f'<span>{_swatch_svg(f)}{_esc(f)}</span>' for f in known]
+            + [f'<span>{_swatch_svg(x)}{_esc(x)}</span>' for x in other])
+
+
+def _curve_svg(B, collab):
+    """Both tracks as small multiples on one date axis and one score axis. Marks are families,
+    the step line is our running best, diamonds are leader reads. Labels hang under each panel's
+    axis and END at the point's tick with the round id, so the ids line up along the axis."""
+    W, L, PW, PH = 1000, 58, 792, 230
+    d0, d1 = _date_num(CURVE_X0), _date_num(CURVE_X1)
+
+    def X(dn):
+        return L + (dn - d0) * PW / (d1 - d0)
+
+    o, y0 = [], 0
+    for track, name in ((1, "Track 1 &middot; Sim2Real"), (2, "Track 2 &middot; LTTTA")):
+        rows = [dict(r, _seq=i) for i, r in enumerate(B) if r.get("actual") and r["track"] == track]
+        rows += [dict(c, _seq=-1) for c in collab if c["track"] == track]
+        if not rows:
+            continue
+        rows.sort(key=lambda r: (r["date"], r["_seq"]))
+        for r in rows:
+            r["_lab"] = r.get("backbone") or "collaborator"
+        LH = 6.0 * max(len(r["_lab"]) + 1 + len(r["round"]) for r in rows) + 10
+        top, bot = y0 + 26, y0 + 26 + PH
+
+        def Y(v, top=top):
+            return top + (CURVE_Y1 - v) * PH / (CURVE_Y1 - CURVE_Y0)
+
+        o.append(f'<text x="{L}" y="{y0 + 13}" style="fill:var(--ink);font-weight:600;'
+                 f'font-size:11px">{name}</text>')
+        for gv in (80.0, 80.5, 81.0, 81.5, 82.0):
+            o.append(f'<line x1="{L}" y1="{Y(gv):.1f}" x2="{L + PW}" y2="{Y(gv):.1f}" '
+                     f'stroke="var(--line)" stroke-width="1"/><text x="{L - 8}" '
+                     f'y="{Y(gv) + 3.5:.1f}" text-anchor="end">{gv:.1f}</text>')
+        o.append(f'<line x1="{L}" y1="{bot}" x2="{L + PW}" y2="{bot}" stroke="var(--rule)" '
+                 f'stroke-width="1"/>')
+        for dn in range(d0, d1 + 1, 7):
+            o.append(f'<line x1="{X(dn):.1f}" y1="{bot}" x2="{X(dn):.1f}" y2="{bot + 6}" '
+                     f'stroke="var(--rule)" stroke-width="1"/><text x="{X(dn):.1f}" y="{bot + 17}" '
+                     f'text-anchor="middle" style="fill:var(--faint)">{_day_label(dn)}</text>')
+        by = {}
+        for r in rows:
+            by.setdefault(r["date"], []).append(r)
+        for d, rs in by.items():                        # same-day rounds sit side by side
+            for i, r in enumerate(rs):
+                r["_x"] = X(_date_num(d) + (i - (len(rs) - 1) / 2) * 0.66)
+        best, path = None, []
+        for r in rows:
+            r["_prev"], r["_nb"] = best, False
+            if r.get("collab"):
+                continue
+            v, x = r["actual"]["final"], r["_x"]
+            if best is None:
+                path.append(f"M{x:.1f},{Y(v):.1f}")
+            else:
+                path.append(f"H{x:.1f}" + (f"V{Y(v):.1f}" if v > best else ""))
+            if best is None or v > best:
+                best, r["_nb"] = v, True
+        ours = [r for r in rows if not r.get("collab")]
+        if path:
+            path.append(f"H{L + PW:.1f}")
+            o.append(f'<path d="{"".join(path)}" fill="none" stroke="var(--dim)" stroke-width="1.5" '
+                     f'stroke-linejoin="round"/>')
+        reads = sorted((x for x in LEADER_READS if x[1] == track), key=lambda x: x[0])
+        if reads and ours:
+            ld, lv = reads[-1][0], reads[-1][2]
+            bestr = max(ours, key=lambda r: r["actual"]["final"])
+            bv, xr = bestr["actual"]["final"], L + PW
+            o.append(f'<line x1="{X(_date_num(ld)):.1f}" y1="{Y(lv):.1f}" x2="{xr}" y2="{Y(lv):.1f}" '
+                     f'stroke="var(--ink)" stroke-width="1"/>')
+            for k, (dt, _tr, v, note) in enumerate(reads):
+                x, yy = X(_date_num(dt)), Y(v)
+                then = [r["actual"]["final"] for r in ours if r["date"] <= dt]
+                ten = (f"leader · Track {track} · read {dt}" + (f" ({note})" if note else "")
+                       + f"\nfinal {v:.5f}"
+                       + (f"\nour best then {max(then):.3f} · gap {v - max(then):.3f}" if then else ""))
+                tzh = (f"领先者 · Track {track} · {dt} 读取" + (f"（{note}）" if note else "")
+                       + f"\nfinal {v:.5f}"
+                       + (f"\n当时我们的最佳 {max(then):.3f} · 差距 {v - max(then):.3f}" if then else ""))
+                body = (f'<path d="M{x:.1f},{yy - 5.5:.1f}L{x + 5.5:.1f},{yy:.1f}L{x:.1f},{yy + 5.5:.1f}'
+                        f'L{x - 5.5:.1f},{yy:.1f}Z" fill="var(--panel)" stroke="var(--ink)" '
+                        f'stroke-width="1.5"/>')
+                o.append(_hit(x, yy, ten, tzh, body))
+                if k < len(reads) - 1:
+                    o.append(f'<text x="{x:.1f}" y="{yy - 10:.1f}" text-anchor="middle">{v:.3f}</text>')
+            o.append(tsvg(f"{xr + 10}", f"{Y(lv) + 3.5:.1f}", f"leader {lv:.3f}", f"领先者 {lv:.3f}",
+                          'style="fill:var(--ink)"'))
+            o.append(tsvg(f"{xr + 10}", f"{Y(bv) + 3.5:.1f}", f"best {bv:.3f} {bestr['round']}",
+                          f"最佳 {bv:.3f} {bestr['round']}", 'style="fill:var(--ink);font-weight:600"'))
+            o.append(f'<line x1="{xr + 4}" y1="{Y(lv) + 4:.1f}" x2="{xr + 4}" y2="{Y(bv) - 4:.1f}" '
+                     f'stroke="var(--rule)" stroke-width="1"/>')
+            o.append(tsvg(f"{xr + 10}", f"{(Y(lv) + Y(bv)) / 2 + 3.5:.1f}", f"gap {lv - bv:.3f}",
+                          f"差距 {lv - bv:.3f}"))
+        for r in rows:
+            x, v = r["_x"], r["actual"]["final"]
+            yy = Y(v)
+            head = f"{r['round']} · Track {track} · {r['date']}\nfinal {v:.4f}"
+            if r.get("collab"):
+                ten = head + "\ncollaborator round, package not recorded"
+                tzh = head + "\n合作者提交，未记录包"
+                body = _marker(x, yy, [])
+            else:
+                prev, p = r["_prev"], (r.get("pred") or {}).get("final")
+                if prev is None:
+                    s_en, s_zh = "first round on this board", "本板第一轮"
+                elif r["_nb"]:
+                    s_en, s_zh = f"new best, +{v - prev:.4f}", f"新最佳，+{v - prev:.4f}"
+                else:
+                    s_en, s_zh = f"best then {prev:.4f}", f"此前最佳 {prev:.4f}"
+                ten = (f"{head} ({s_en})\n{r['_lab']}"
+                       + (f"\npredicted {p:.3f} · miss {v - p:+.3f}" if p else ""))
+                tzh = (f"{head}（{s_zh}）\n{r['_lab']}"
+                       + (f"\n预测 {p:.3f} · 偏差 {v - p:+.3f}" if p else ""))
+                body = _marker(x, yy, families_of(r.get("backbone")))
+            o.append(f'<line x1="{x:.1f}" y1="{bot}" x2="{x:.1f}" y2="{bot + 3}" stroke="var(--dim)" '
+                     f'stroke-width="1"/>')
+            o.append(_hit(x, yy, ten, tzh, body))
+            lab_st = "fill:var(--faint)" if r.get("collab") else "fill:var(--dim)"
+            id_st = ("fill:var(--ink);font-weight:600" if r["_nb"]
+                     else ("fill:var(--faint)" if r.get("collab") else "fill:var(--ink)"))
+            o.append(f'<text transform="translate({x:.1f},{bot + 26}) rotate(-90)" text-anchor="end" '
+                     f'dy="3.5"><tspan style="{lab_st}">{_esc(r["_lab"])} </tspan>'
+                     f'<tspan style="{id_st}">{_esc(r["round"])}</tspan></text>')
+        y0 = bot + 26 + LH + 30
+    return (f'<svg class="chart" viewBox="0 0 {W} {max(y0 - 20, 60):.0f}" role="img" '
+            f'aria-label="board final of every scored round by upload date, Track 1 and Track 2">'
+            + "".join(o) + "</svg>")
+
+
+def _curve_section(B):
+    collab = _collab_rounds()
+    fams = [f for r in B if r.get("actual") for f in families_of(r.get("backbone"))]
+    items = _fam_legend(fams) + [
+        '<span><svg width="12" height="12" aria-hidden="true"><path d="M6,2A4,4 0 0 0 6,10Z" '
+        'fill="var(--f1)"/><path d="M6,2A4,4 0 0 1 6,10Z" fill="var(--f2)"/></svg>'
+        + t("two families in one package", "一个包里有两个家族") + "</span>",
+        '<span><svg width="12" height="12" aria-hidden="true"><circle cx="6" cy="6" r="3.5" '
+        'fill="none" stroke="var(--fx)" stroke-width="1.5"/></svg>'
+        + t("collaborator round", "合作者提交") + "</span>",
+        '<span><svg width="18" height="12" aria-hidden="true"><path d="M1,9H9V3H17" fill="none" '
+        'stroke="var(--dim)" stroke-width="1.5"/></svg>' + t("running best", "历史最佳") + "</span>",
+        '<span><svg width="12" height="12" aria-hidden="true"><path d="M6,1.5L10.5,6L6,10.5L1.5,6Z" '
+        'fill="none" stroke="var(--ink)" stroke-width="1.5"/></svg>'
+        + t("leader, dated read", "领先者，按读取日期") + "</span>"]
+    return ('<section id="curve"><div class="head"><h2>' + t("Optimization curve", "优化曲线")
+            + '</h2><span class="eyebrow">'
+            + t("board final &middot; every scored round", "board final &middot; 每个已评分轮次")
+            + "</span><p>"
+            + t("Board <code>final</code> of every scored round against the day it was uploaded, "
+                "Track&nbsp;1 above Track&nbsp;2 on one shared scale. Under each panel, every point "
+                "is labelled with its backbone composition and round; a split marker is a package "
+                "with two families. The step line is our running best, and the diamonds are dated "
+                "reads of the best other team. Hover or focus a point for its prediction; every "
+                "number is also in the Submissions table.",
+                "每个已评分轮次的 board <code>final</code>，横轴为上传日期；Track&nbsp;1 在上、"
+                "Track&nbsp;2 在下，共用同一纵轴。每个点在所在面板下方标注骨干组成与轮次；双色点表示"
+                "一个包里有两个家族。阶梯线是我们的历史最佳，菱形是按日期读取的其他队伍最佳成绩。"
+                "悬停或聚焦某个点可看其预测；所有数字也在「提交记录」表中。")
+            + '</p></div><div class="legend">' + "".join(items) + '</div><div class="scroll">'
+            + _curve_svg(B, collab) + "</div></section>")
+
+
+SCREEN_VERDICTS = {"advance": ("advance", "晋级"), "replicate": ("replicate", "复现"),
+                   "pending": ("pending", "待定"), "drop": ("drop", "淘汰")}
+SCREEN_STATUS = {"queued": "排队", "running": "运行中", "done": "完成", "failed": "失败"}
+
+
+def _screen_mark(x, y, r):
+    """An arm's mark: the family's colour and shape; the FILL says the verdict -- hollow pending,
+    filled replicate, filled and ringed advance, faded hollow drop."""
+    fam = [str(r.get("family") or "?")]
+    v = str(r.get("verdict") or "pending").lower()
+    if v == "drop":
+        return _marker(x, y, fam, hollow=True, faded=True)
+    if v not in ("replicate", "advance"):
+        return _marker(x, y, fam, hollow=True)
+    m = _marker(x, y, fam)
+    if v == "advance":
+        m = (f'<circle cx="{x:.1f}" cy="{y:.1f}" r="8" fill="none" stroke="var(--ink)" '
+             f'stroke-width="1.5"/>') + m
+    return m
+
+
+def _screen_svg(S):
+    """Latency against projected accuracy, one point per arm. Returns (svg, plotted arm names), or
+    (None, set()) when no arm has both numbers yet."""
+    ratio = any(_num(r.get("ms_ratio_fno")) is not None for r in S)
+    xk = "ms_ratio_fno" if ratio else "ms_b64_fp16"
+    pts = [(r, _num(r.get(xk)), best_proj(r)) for r in S]
+    pts = [(r, x, b) for r, x, b in pts if x is not None and x > 0 and b[0] is not None]
+    if not pts:
+        return None, set()
+    W, H, L, Rm, T, Bm = 1000, 400, 64, 118, 18, 46
+    PW, PH = W - L - Rm, H - T - Bm
+    xs = [x for _, x, _ in pts] + ([1.0] if ratio else [])
+    lo, hi = float(np.log2(min(xs))) - 0.35, float(np.log2(max(xs))) + 0.35
+    if hi - lo < 1.5:
+        c = (hi + lo) / 2
+        lo, hi = c - 0.75, c + 0.75
+    ys = [b[0] for _, _, b in pts] + [0.0, 0.10]
+    ylo, yhi = min(ys) - 0.04, max(ys) + 0.04
+
+    def X(v):
+        return L + (float(np.log2(v)) - lo) * PW / (hi - lo)
+
+    def Y(v):
+        return T + (yhi - v) * PH / (yhi - ylo)
+
+    o = []
+    step = 0.05 if yhi - ylo <= 0.5 else (0.1 if yhi - ylo <= 1.0 else 0.25)
+    g = float(np.ceil(ylo / step) * step)
+    while g <= yhi + 1e-9:
+        o.append(f'<line x1="{L}" y1="{Y(g):.1f}" x2="{L + PW}" y2="{Y(g):.1f}" stroke="var(--line)" '
+                 f'stroke-width="1"/><text x="{L - 8}" y="{Y(g) + 3.5:.1f}" text-anchor="end">'
+                 f'{g + 0.0:+.2f}</text>')
+        g = round(g + step, 6)
+    cands = ([0.125, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8, 16] if ratio
+             else [0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32])
+    ticks = [c for c in cands if lo <= np.log2(c) <= hi]
+    if len(ticks) > 7:
+        ticks = [c for c in ticks if float(np.log2(c)).is_integer()]
+    o.append(f'<line x1="{L}" y1="{T + PH}" x2="{L + PW}" y2="{T + PH}" stroke="var(--rule)" '
+             f'stroke-width="1"/>')
+    for c in ticks:
+        o.append(f'<line x1="{X(c):.1f}" y1="{T + PH}" x2="{X(c):.1f}" y2="{T + PH + 5}" '
+                 f'stroke="var(--rule)" stroke-width="1"/><text x="{X(c):.1f}" y="{T + PH + 17}" '
+                 f'text-anchor="middle">{("×%g" % c) if ratio else ("%g ms" % c)}</text>')
+    if ratio and lo <= 0.0 <= hi:
+        o.append(f'<line x1="{X(1):.1f}" y1="{T}" x2="{X(1):.1f}" y2="{T + PH}" stroke="var(--rule)" '
+                 f'stroke-width="1"/>')
+        o.append(tsvg(f"{X(1) + 5:.1f}", f"{T + 10}", "FNO w96 L8 latency", "FNO w96 L8 的延迟"))
+    o.append(f'<line x1="{L}" y1="{Y(0):.1f}" x2="{L + PW}" y2="{Y(0):.1f}" stroke="var(--dim)" '
+             f'stroke-width="1"/>')
+    o.append(f'<line x1="{L}" y1="{Y(0.10):.1f}" x2="{L + PW}" y2="{Y(0.10):.1f}" stroke="var(--cool)" '
+             f'stroke-width="1.2" stroke-dasharray="5 4"/>')
+    o.append(tsvg(f"{L + PW + 8}", f"{Y(0.10) + 3.5:.1f}", "advance +0.10", "晋级线 +0.10",
+                  'style="fill:var(--ink)"'))
+    o.append(tsvg(f"{L + PW + 8}", f"{Y(0) + 3.5:.1f}", "R25 = 0", "R25 = 0"))
+    xt = (("A100 latency ÷ FNO w96 L8, batch 64 fp16 (log scale)", "A100 延迟 ÷ FNO w96 L8，batch 64 fp16（对数轴）")
+          if ratio else ("A100 ms/window, batch 64 fp16 (log scale)", "A100 ms/window，batch 64 fp16（对数轴）"))
+    o.append(tsvg(f"{L + PW / 2:.1f}", f"{H - 6}", xt[0], xt[1], 'text-anchor="middle" style="fill:var(--faint)"'))
+    for cls, s in (("en", "projected Δ final, Track 1"), ("zh", "Track 1 预测 Δ final")):
+        o.append(f'<text class="{cls}" transform="translate(15,{T + PH / 2:.1f}) rotate(-90)" '
+                 f'text-anchor="middle" style="fill:var(--faint)">{s}</text>')
+    placed, done = [], set()
+    for r, xv, (bv, which) in sorted(pts, key=lambda p: (-p[2][0], str(p[0].get("arm")))):
+        px, py, name = X(xv), Y(bv), str(r.get("arm"))
+        w = 6.0 * len(name) + 2
+        side = 1 if px + 10 + w < W - 4 else -1
+        lx = px + 10 if side > 0 else px - 10 - w
+        box, dy = None, 0
+        for dy in (0, -12, 12, -24, 24, -36, 36, -48, 48):
+            box = (lx, py + dy - 7, lx + w, py + dy + 5)
+            if all(box[2] < b[0] or box[0] > b[2] or box[3] < b[1] or box[1] > b[3] for b in placed):
+                break
+        placed.append(box)
+        lat = []
+        if _num(r.get("ms_ratio_fno")) is not None:
+            lat.append(f"×{_num(r.get('ms_ratio_fno')):.2f} of FNO")
+        if _num(r.get("ms_b64_fp16")) is not None:
+            lat.append(f"{_num(r.get('ms_b64_fp16')):.3f} ms b64 fp16")
+        pr_en, pr_zh = [], []
+        for k, en, zh in (("proj_dfinal_t1_standalone", "T1 standalone", "T1 单独"),
+                          ("proj_dfinal_t1_partner", "T1 partner", "T1 作伙伴"),
+                          ("proj_dfinal_t2_partner", "T2 partner", "T2 作伙伴")):
+            v = _num(r.get(k))
+            if v is not None:
+                pr_en.append(f"{en} {v:+.3f}")
+                pr_zh.append(f"{zh} {v:+.3f}")
+        verdict = str(r.get("verdict") or "pending").lower()
+        base = ([f"{name} · {r.get('family') or '?'} · {r.get('status') or '?'}"]
+                + ([str(r.get("backbone"))] if r.get("backbone") else []) + ([" · ".join(lat)] if lat else []))
+        ten = "\n".join(base + [" · ".join(pr_en), f"plotted: {which} · verdict {verdict}"])
+        tzh = "\n".join(base + [" · ".join(pr_zh),
+                                f"作图取{'单独' if which == 'standalone' else '作伙伴'} · "
+                                f"结论 {SCREEN_VERDICTS.get(verdict, (verdict, verdict))[1]}"])
+        if dy:
+            o.append(f'<line x1="{px + 5 * side:.1f}" y1="{py:.1f}" x2="{lx if side > 0 else lx + w:.1f}" '
+                     f'y2="{py + dy - 1:.1f}" stroke="var(--rule)" stroke-width="1"/>')
+        o.append(_hit(px, py, ten, tzh, _screen_mark(px, py, r)))
+        o.append(f'<text x="{lx if side > 0 else lx + w:.1f}" y="{py + dy + 3.5:.1f}" '
+                 f'text-anchor="{"start" if side > 0 else "end"}" '
+                 f'style="fill:var({"--faint" if verdict == "drop" else "--ink"})">{_esc(name)}</text>')
+        done.add(name)
+    return (f'<svg class="chart" viewBox="0 0 {W} {H}" role="img" aria-label="backbone screen: '
+            f'latency against projected final">' + "".join(o) + "</svg>"), done
+
+
+def _fmt(v, fmt):
+    x = _num(v)
+    return (fmt % x) if x is not None else '<span class="d">&mdash;</span>'
+
+
+def _screen_table(S):
+    """Every arm, whatever state its record is in."""
+    th = lambda en, zh, cls="", extra="": f'<th{cls}{extra}>{t(en, zh)}</th>'  # noqa: E731
+    o = ['<div class="scroll" style="margin-top:14px"><table><thead><tr>',
+         th("Arm", "实验臂", ' class="l"', ' rowspan="2"'), th("Family", "家族", ' class="l"', ' rowspan="2"'),
+         th("Status", "状态", ' class="l"', ' rowspan="2"'), th("Wave", "批次", "", ' rowspan="2"'),
+         '<th rowspan="2">GPU-h</th>', th("Params M", "参数 M", "", ' rowspan="2"'),
+         th("Epochs", "轮数", "", ' rowspan="2"'), '<th rowspan="2">dropout</th>',
+         th("latency, A100 ms", "延迟，A100 ms", ' class="grp"', ' colspan="4"'),
+         th("single model &middot; full split", "单模型 &middot; 全划分", ' class="grp"', ' colspan="4"'),
+         th("single model &middot; AoA 15&ndash;20", "单模型 &middot; AoA 15&ndash;20", ' class="grp"', ' colspan="4"'),
+         th("projected &Delta; final", "预测 &Delta; final", ' class="grp"', ' colspan="3"'),
+         th("Verdict", "结论", ' class="l"', ' rowspan="2"'), th("Note", "备注", ' class="l t"', ' rowspan="2"'),
+         "</tr><tr><th>b64 fp16</th><th>b64 fp32</th><th>b1 fp16</th><th>&times;FNO</th>",
+         "<th>rel</th><th>tke</th><th>mvpe</th><th>sps</th>" * 2,
+         th("T1 solo", "T1 单独"), th("T1 partner", "T1 作伙伴"), th("T2 partner", "T2 作伙伴"),
+         "</tr></thead><tbody>"]
+    for r in sorted(S, key=screen_order):
+        fam, st = r.get("family"), str(r.get("status") or "")
+        v = str(r.get("verdict") or "pending").lower()
+        ven, vzh = SCREEN_VERDICTS.get(v, (v, v))
+
+        def metric(block, k, fmt, r=r):
+            d = r.get(block) if isinstance(r.get(block), dict) else {}
+            return f"<td>{_fmt(d.get(k), fmt)}</td>"
+
+        def proj(k, r=r):
+            x = _num(r.get(k))
+            if x is None:
+                return '<td><span class="d">&mdash;</span></td>'
+            cls = ' class="g"' if x >= 0.10 else (' class="b"' if x < 0 else "")
+            return f"<td{cls}>{x:+.3f}</td>"
+        sq = " sq" if fam_square(fam) else ""
+        stc = f' class="st-{_esc(st)}"' if st in ("failed", "running") else ""
+        o.append(
+            f'<tr><td class="l"><code>{_esc(str(r.get("arm")))}</code>'
+            + (f'<br><span class="d">{_esc(str(r.get("backbone")))}</span>' if r.get("backbone") else "")
+            + f'</td><td class="l"><span class="sw{sq}" style="background:{fam_var(fam)}"></span>'
+            f'{_esc(str(fam or "?"))}</td>'
+            f'<td class="l"><span{stc}>{t(_esc(st or "?"), SCREEN_STATUS.get(st, _esc(st or "?")))}</span></td>'
+            f'<td>{_fmt(r.get("wave"), "%g")}</td><td>{_fmt(r.get("gpu_h"), "%.1f")}</td>'
+            f'<td>{_fmt(r.get("params_M"), "%.1f")}</td><td>{_fmt(r.get("epochs"), "%g")}</td>'
+            f'<td>{_fmt(r.get("dropout"), "%g")}</td><td>{_fmt(r.get("ms_b64_fp16"), "%.3f")}</td>'
+            f'<td>{_fmt(r.get("ms_b64_fp32"), "%.3f")}</td><td>{_fmt(r.get("ms_b1_fp16"), "%.3f")}</td>'
+            f'<td>{_fmt(r.get("ms_ratio_fno"), "%.2f")}</td>'
+            + "".join(metric(b, k, f) for b in ("single_full", "single_aoa1520")
+                      for k, f in (("rel", "%.4f"), ("tke", "%.4f"), ("mvpe", "%.4f"), ("sps", "%.2f")))
+            + proj("proj_dfinal_t1_standalone") + proj("proj_dfinal_t1_partner")
+            + proj("proj_dfinal_t2_partner")
+            + f'<td class="l"><span class="chip v-{_esc(v)}">{t(_esc(ven), _esc(vzh))}</span></td>'
+            f'<td class="l t">{tdata(r.get("note") or "", r.get("note_zh"))}</td></tr>')
+    o.append("</tbody></table></div>")
+    return "".join(o)
+
+
+def _screen_section(S, state):
+    o = ['<section id="screen"><div class="head"><h2>' + t("Backbone screen", "骨干网络筛选")
+         + '</h2><span class="eyebrow">' + t("phase 1 &middot; local proxy", "第一阶段 &middot; 本地代理")
+         + "</span><p>"
+         + t("Local proxy projections &mdash; <b>a sign, not a size</b>. Each arm is one held-out "
+             "model trained with the shared screening recipe. Its &Delta;&nbsp;final is projected "
+             "against R25 (Track&nbsp;1) and T2R12 (Track&nbsp;2) with <code>predict_board.py</code>: "
+             "the local accuracy delta is halved (the proxy over-reads about 2&times;) and latency "
+             "is charged (+1 invocation as a partner family, FLOPs at the measured slopes). The "
+             "scatter plots the better of the standalone and partner projections; an arm advances "
+             "at &ge;&nbsp;+0.10 on Track&nbsp;1, replicated. Source: "
+             "<code>leaderboard/screen.jsonl</code>, written by forge "
+             "(<code>Track_1/plan/plan_20260914.md</code> &sect;4, &sect;7).",
+             "本地代理的预测——<b>只看方向，不看大小</b>。每个实验臂是用统一筛选配方训练的一个留出模型，"
+             "其 &Delta;&nbsp;final 以 R25（Track&nbsp;1）和 T2R12（Track&nbsp;2）为锚，用 "
+             "<code>predict_board.py</code> 计算：本地精度增量减半（代理约高估 2 倍），并计入延迟"
+             "（作为伙伴家族 +1 次调用，FLOPs 按实测斜率）。散点取单独与作伙伴两种预测中的较优者；"
+             "Track&nbsp;1 上 &ge;&nbsp;+0.10 且复现后才晋级。数据来源："
+             "<code>leaderboard/screen.jsonl</code>，由 forge 写入"
+             "（<code>Track_1/plan/plan_20260914.md</code> &sect;4、&sect;7）。")
+         + "</p></div>"]
+    if not S:
+        why = {"missing": ("<code>leaderboard/screen.jsonl</code> does not exist yet.",
+                           "<code>leaderboard/screen.jsonl</code> 还不存在。"),
+               "empty": ("<code>leaderboard/screen.jsonl</code> is empty.",
+                         "<code>leaderboard/screen.jsonl</code> 是空的。")}.get(
+            state, (f"<code>leaderboard/screen.jsonl</code> has no readable record ({_esc(state)}).",
+                    f"<code>leaderboard/screen.jsonl</code> 没有可读的记录（{_esc(state)}）。"))
+        o.append('<div class="empty">' + t("No screen results. " + why[0] + " forge writes one record "
+                                            "per arm; rerun <code>lb.py --html</code> when it changes.",
+                                            "暂无筛选结果。" + why[1] + "forge 每个实验臂写一条记录；"
+                                            "文件变化后重新运行 <code>lb.py --html</code>。")
+                 + "</div></section>")
+        return "".join(o)
+    by, vc = {}, {}
+    for r in S:
+        k = str(r.get("status") or "?")
+        by[k] = by.get(k, 0) + 1
+        k = str(r.get("verdict") or "pending").lower()
+        vc[k] = vc.get(k, 0) + 1
+    gh = sum(_num(r.get("gpu_h")) or 0.0 for r in S)
+    o.append('<p class="cap" style="margin:0 0 10px">'
+             + t(f"{len(S)} arms &middot; " + " &middot; ".join(f"{_esc(k)} {n}" for k, n in sorted(by.items()))
+                 + f" &middot; {gh:.1f} GPU-h &middot; "
+                 + " &middot; ".join(f"{_esc(k)} {n}" for k, n in sorted(vc.items())),
+                 f"{len(S)} 个实验臂 &middot; "
+                 + " &middot; ".join(f"{SCREEN_STATUS.get(k, _esc(k))} {n}" for k, n in sorted(by.items()))
+                 + f" &middot; {gh:.1f} GPU 小时 &middot; "
+                 + " &middot; ".join(f"{_esc(SCREEN_VERDICTS.get(k, (k, k))[1])} {n}"
+                                     for k, n in sorted(vc.items())))
+             + (" &middot; " + t(f"{_esc(state)} line(s) skipped", f"跳过 {_esc(state)} 行") if state else "")
+             + "</p>")
+    svg, done = _screen_svg(S)
+    glyph = lambda body: f'<svg width="18" height="18" aria-hidden="true">{body}</svg>'  # noqa: E731
+    legend = _fam_legend([r.get("family") for r in S]) + [
+        "<span>" + glyph('<circle cx="9" cy="9" r="4" fill="var(--panel)" stroke="var(--dim)" stroke-width="2"/>')
+        + t("pending", "待定") + "</span>",
+        "<span>" + glyph('<circle cx="9" cy="9" r="5" fill="var(--dim)"/>') + t("replicate", "复现") + "</span>",
+        "<span>" + glyph('<circle cx="9" cy="9" r="8" fill="none" stroke="var(--ink)" stroke-width="1.5"/>'
+                         '<circle cx="9" cy="9" r="5" fill="var(--dim)"/>') + t("advance", "晋级") + "</span>",
+        "<span>" + glyph('<circle cx="9" cy="9" r="4" fill="var(--panel)" stroke="var(--dim)" stroke-width="2" '
+                         'opacity=".45"/>') + t("drop", "淘汰") + "</span>"]
+    o.append('<div class="legend">' + "".join(legend) + "</div>")
+    if svg:
+        o.append('<div class="scroll">' + svg + "</div>")
+    else:
+        o.append('<div class="empty">' + t("No arm has both a latency and a projection yet; the table "
+                                            "lists what exists.",
+                                            "还没有同时具备延迟与预测的实验臂；下表列出现有记录。") + "</div>")
+    rest = sorted(str(r.get("arm")) for r in S if str(r.get("arm")) not in done)
+    if svg and rest:
+        o.append('<p class="cap">' + t("Not plotted yet (no latency or no projection): ",
+                                       "尚未作图（缺延迟或缺预测）：")
+                 + ", ".join(f"<code>{_esc(a)}</code>" for a in rest) + "</p>")
+    o.append(_screen_table(S) + "</section>")
+    return "".join(o)
+
+
 def _residual_svg(rows, rms):
     """Diverging bars: how much of each board move the local proxy failed to explain."""
     n = len(rows)
@@ -578,7 +1273,7 @@ def _residual_svg(rows, rms):
     return "".join(o)
 
 
-def html(B, Rn, w, path):
+def html(B, Rn, w, path, S=(), state="missing"):
     T = [r for r in B if r.get("actual") and r["track"] == 1]
     ref = float(np.median([r["actual"]["time"] for r in T]))
     norm = [r["actual"]["final"] + (ref - r["actual"]["time"]) * w[3] for r in T]
@@ -586,21 +1281,13 @@ def html(B, Rn, w, path):
              if r.get("actual") and (r.get("pred") or {}).get("final")]
     R, rat0, rawrows, res, rms = calib(B)
     rows = [(f"{a}&#8594;{b}", m, pd, bd, rr) for a, b, m, pd, bd, rr in rawrows]
-    span = max(norm[-4:]) - min(norm[-4:])
     best = max(T, key=lambda r: r["actual"]["final"])
-    # Best on either board, and the constant-latency series for Track 2 alongside Track 1's.
     scored = [r for r in B if r.get("actual")]
-    best_any = max(scored, key=lambda r: r["actual"]["final"])
     T2 = [r for r in scored if r["track"] == 2]
-    norm2 = [r["actual"]["final"] + (ref - r["actual"]["time"]) * w[3] for r in T2]
-    gap = LEADER_T1 - best_any["actual"]["final"]
-    # Exchange rate, re-priced with the FREE eighteen-round weights (round 17): 10 % of error
-    # removed is worth ~0.95 `final` (Track_1/exchange_v9.py, round 9's instrument).  The
-    # total barely moved when the constraint came off; its SPLIT across subscores did.
-    gap_pct = gap / 0.0948
     best2 = max(T2, key=lambda r: r["actual"]["final"])
+    (ld1, lv1), (ld2, lv2) = leader_latest(1), leader_latest(2)
 
-    o = [HTML_HEAD, '<div class="app">', _sidebar(B, Rn), '<main><div class="wrap">',
+    o = [HTML_HEAD, '<div class="app">', _sidebar(B, Rn, S), '<main><div class="wrap">',
          "<h1>" + t("RealPDE calibration log", "RealPDE 校准日志") + "</h1>",
          '<p class="lede">'
          + t("Every submission, the prediction recorded before it was uploaded, and what the "
@@ -616,17 +1303,17 @@ def html(B, Rn, w, path):
     o.append('<div class="strip">')
     for k_en, k_zh, v, n_en, n_zh in [
             ("best, track 1", "最佳，track 1", f"{best['actual']['final']:.3f}",
-             f"round {best['round']}", f"轮次 {best['round']}"),
+             f"{best['round']} &middot; {_esc(best.get('backbone') or '')}",
+             f"{best['round']} &middot; {_esc(best.get('backbone') or '')}"),
             ("best, track 2", "最佳，track 2", f"{best2['actual']['final']:.3f}",
-             f"round {best2['round']}", f"轮次 {best2['round']}"),
-            ("leader", "领先者", f"{LEADER_T1:.3f}",
-             "np-user &middot; 08-25", "np-user &middot; 08-25"),
-            ("gap", "差距", f"{gap:.3f}",
-             f"&asymp;&thinsp;{gap_pct:.1f}% of error",
-             f"约为误差的 {gap_pct:.1f}%"),
-            ("track 1, last 4 @ const t",
-             "track 1，恒定延迟下最近四轮",
-             f"{span:.3f}", "span, four rounds", "四轮跨度"),
+             f"{best2['round']} &middot; {_esc(best2.get('backbone') or '')}",
+             f"{best2['round']} &middot; {_esc(best2.get('backbone') or '')}"),
+            ("gap to leader, track 1", "与领先者差距，track 1",
+             f"{lv1 - best['actual']['final']:.3f}",
+             f"leader {lv1:.3f} &middot; read {ld1[5:]}", f"领先者 {lv1:.3f} &middot; {ld1[5:]} 读取"),
+            ("gap to leader, track 2", "与领先者差距，track 2",
+             f"{lv2 - best2['actual']['final']:.3f}",
+             f"leader {lv2:.3f} &middot; read {ld2[5:]}", f"领先者 {lv2:.3f} &middot; {ld2[5:]} 读取"),
             ("prediction rms", "预测残差 rms",
              f"{np.sqrt(np.mean(np.square(resid))):.3f}",
              f"{len(resid)} predicted rounds",
@@ -643,6 +1330,8 @@ def html(B, Rn, w, path):
              + t(f"<b>`sps` factorizes, and the residual names every lever.</b> The scoring rule is <code>sps = 100 &middot; mean(a_i) &middot; containment</code> with <code>a_i = 0.5g(rel)+0.3g(tke)+0.2g(mvpe)</code>, so any round can be priced from its published subscores alone &mdash; no free parameter, no local measurement. THE RESIDUAL IS THEN THE CONTAINMENT TERM, and across all eighteen consecutive board steps it is nonzero for exactly four kinds of change: the <b>band</b> (+1.410, R9&#8594;R10), regularized <b>capacity</b> (+0.992 / +0.961, width 24&#8594;96 on both boards), <b>member count</b> (+0.668, 3&#8594;8), and the architecture <b>family</b> (+0.464 / &minus;0.440, U-FNO in and back out). Everything rounds 16&ndash;20 tried &mdash; sim co-training, depth at equal FLOPs, the coverage and temporal-gradient losses, <code>lam_v</code>, both latency rebuilds, the gated blend &mdash; lands inside &plusmn;0.05. It also re-prices the exchange rate, because <code>a_i</code> is computed from the other three subscores: per 10% of error removed, <code>rel_l2</code> is worth <b>+0.346</b>, <code>tke</code> <b>+0.290</b> and <code>mvpe</code> <b>+0.100</b>, so <code>tke</code> is 84% of <code>rel_l2</code>, not 74%. Two corrections it forced: round 16 closed every non-FNO family on U-FNO&rsquo;s &minus;0.45 miss, which was true of the <i>package</i> (batch-1 latency, worse <code>rel_l2</code>) and false of the <i>member</i>, whose +0.44 <code>sps</code> was filed as noise and was the third-largest containment move on record; and &ldquo;<code>sps</code> is unreachable&rdquo; was a statement about rms, not about <code>sps</code>. Section&nbsp;3 remains the reason every local reading is hedged: the proxy predicts the board&rsquo;s <i>level</i> to &plusmn;2&ndash;8% and almost none of its <i>movement</i> ({rms:.1f}% residual rms).",
                  f"<b>`sps` 可以分解，而残差把每一个杠杆都点了名。</b>评分规则是 <code>sps = 100 &middot; mean(a_i) &middot; 含盖率</code>，其中 <code>a_i = 0.5g(rel)+0.3g(tke)+0.2g(mvpe)</code>，所以任何一轮都可以只用它已公布的子分数来定价——没有自由参数，也不需要任何本地测量。于是残差就是含盖率项：在全部十八对连续 board 步骤上，它只对四类改动非零——<b>band</b>（+1.410，R9&#8594;R10）、带正则的<b>容量</b>（+0.992 / +0.961，宽度 24&#8594;96，两块板都复现）、<b>成员数</b>（+0.668，3&#8594;8），以及架构<b>家族</b>（+0.464 / &minus;0.440，U-FNO 进再出）。第 16&ndash;20 轮试过的一切——sim 联合训练、等 FLOPs 的深度、coverage 与 temporal-gradient 损失、<code>lam_v</code>、两次延迟重构、门控混合——全在 &plusmn;0.05 之内。它同时重新给兑换率定了价，因为 <code>a_i</code> 由另外三个子分数算出：每削减 10% 误差，<code>rel_l2</code> 值 <b>+0.346</b>，<code>tke</code> 值 <b>+0.290</b>，<code>mvpe</code> 值 <b>+0.100</b>——<code>tke</code> 是 <code>rel_l2</code> 的 84%，不是 74%。它逼出两处更正：第 16 轮用 U-FNO 的 &minus;0.45 封了所有非 FNO 家族，那对<i>包</i>成立（batch 1 的延迟、更差的 <code>rel_l2</code>），对<i>成员</i>不成立——它那 +0.44 的 <code>sps</code> 被当噪声记下，实际是有记录以来第三大的含盖率移动；而「<code>sps</code> 拿不到」说的是 rms，不是 <code>sps</code>。第 3 节仍然是这里每个本地读数都要打折的理由：proxy 能把 board 的<i>水平</i>预测到 &plusmn;2&ndash;8%，却几乎解释不了它的<i>变化</i>（残差 rms {rms:.1f}%）。")
              + "</div></div>")
+    o.append(_curve_section(B))
+    o.append(_screen_section(S, state))
 
     # 1 -----------------------------------------------------------------------------------
     o.append('<section id="submissions"><div class="head"><h2>'
@@ -659,6 +1348,7 @@ def html(B, Rn, w, path):
              '<th class="l">' + t("Round", "轮次") + "</th>"
              "<th>" + t("Tr", "赛道") + "</th>"
              '<th class="l">' + t("Date", "日期") + "</th>"
+             '<th class="l">' + t("Backbone", "骨干组成") + "</th>"
              '<th class="l t">' + t("Thesis", "论点") + "</th>"
              "<th>" + t("Pred", "预测") + "</th>"
              "<th>" + t("Actual", "实际") + "</th>"
@@ -676,8 +1366,11 @@ def html(B, Rn, w, path):
             miss = f"{a['final'] - p:+.3f}"
             d = abs(a["final"] - p)
             cls = ' class="g"' if d < 0.05 else (' class="b"' if d > 0.12 else ' class="w"')
+        sws = "".join(f'<span class="sw{" sq" if fam_square(f) else ""}" style="background:{fam_var(f)}">'
+                      f'</span>' for f in families_of(r.get("backbone")))
         o.append(f'<tr><td class="l"><b>{r["round"]}</b></td><td>{r["track"]}</td>'
                  f'<td class="l d">{r["date"]}</td>'
+                 f'<td class="l">{sws}{_esc(r.get("backbone") or "")}</td>'
                  f'<td class="l t">{tdata(r.get("thesis"), r.get("thesis_zh"))}</td>'
                  f'<td class="d">{pv}</td><td><b>{act}</b></td>'
                  f"<td{cls}>{miss}</td></tr>")
@@ -813,20 +1506,16 @@ def html(B, Rn, w, path):
     o.append(_residual_svg(rows, rms))
     o.append('<p class="stamp" style="margin:14px 0 0">'
              + t("also calibrated &mdash; sps element-tail f 1.360 (T1) / 1.350 (T2), "
-                 "calib_band13.py &middot; board ms = 2.616 + 0.435&times;inv + "
-                 "0.803&times;local, rms 0.690 over 7 rounds, residuals ordered by date "
-                 "&middot; one invocation = 0.52&ndash;0.56 board ms = 0.036 final "
-                 "&middot; w_time = 0.0956, measured directly from R13 vs R14 (identical "
-                 "error subscores, <code>time</code> alone moved)",
-                 "其他已校准常数 &mdash; sps 元素"
-                 "尾部 f 1.360（T1）/ 1.350（T2），"
-                 "calib_band13.py &middot; board ms = 2.616 + 0.435&times;inv + "
-                 "0.803&times;local，7 轮 rms 0.690，残差按"
-                 "日期排序 &middot; 一次调用 = "
-                 "0.52&ndash;0.56 board ms = 0.036 final &middot; w_time = 0.0956，"
-                 "由 R13 与 R14 直接测得（误差"
-                 "子分数完全相同，只有 "
-                 "<code>time</code> 变了）")
+                 "calib_band13.py &middot; board latency, measured as deltas: +1.151 / +0.866 "
+                 "board ms per extra invocation (R23), FLOPs 1.75 / 0.60 board ms per 4060-eq "
+                 "local ms (R24), a precision cut ~0.65 on Track 1 (fp16, R25) &middot; w_time "
+                 "0.0956&ndash;0.0962 from five pairs whose error subscores were identical "
+                 "(<code>time</code> alone moved)",
+                 "其他已校准常数 &mdash; sps 元素尾部 f 1.360（T1）/ 1.350（T2），"
+                 "calib_band13.py &middot; board 延迟按增量实测：每多一次调用 +1.151 / +0.866 "
+                 "board ms（R23），FLOPs 每 4060 等效本地毫秒 1.75 / 0.60 board ms（R24），"
+                 "精度削减在 Track 1 约 0.65（fp16，R25）&middot; w_time 0.0956&ndash;0.0962，"
+                 "来自五对误差子分数完全相同、只有 <code>time</code> 变了的提交")
              + "</p></section>")
 
     # 4 -----------------------------------------------------------------------------------
@@ -895,6 +1584,7 @@ def html(B, Rn, w, path):
                  "Track_1/proxy_calib.py")
              + "</footer></div></main></div>")
     o.append(NAV_SCRIPT % json.dumps([n[0] for n in NAV]))
+    o.append(TIP_SCRIPT)
     with open(path, "w") as fh:
         fh.write("\n".join(o))
     print(f"\nwrote {path}")
@@ -907,12 +1597,14 @@ def main():
     import final_v9
     w = final_v9.W0
     B, Rn = load("board.jsonl"), load("runs.jsonl")
+    S, state = load_screen()
     section_board(B, w)
     section_progress(B, w)
     section_calib(B)
     section_runs(Rn)
+    section_screen(S, state)
     if a.html:
-        html(B, Rn, w, HTML_OUT)
+        html(B, Rn, w, HTML_OUT, S, state)
 
 
 if __name__ == "__main__":

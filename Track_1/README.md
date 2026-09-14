@@ -97,6 +97,6 @@ predicted board subscores in `../../sub_candidates/README.md` before the user up
 
 ## Status
 
-Live: `board_rounds.py`, and `python ../leaderboard/lb.py`. As of 2026-09-13: best **81.330636**
-(R21, xfam5); last scored R24 (xfam6), 81.312041; R25 (xfam6 with fp16 autocast) awaiting its
-result.
+Live: `board_rounds.py`, and `python ../leaderboard/lb.py`. As of 2026-09-14: best **81.344644**
+(R25, xfam6 with fp16 autocast), +0.014 over R21; fp16 ran on the board and kept 37 % of its local
+cut. The backbone campaign is `plan/plan_20260914.md`.

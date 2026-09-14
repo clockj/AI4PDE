@@ -2230,3 +2230,41 @@ without touching the four error subscores. Nothing was trained; four small GPU j
     board GPU, and `time` is only drift;
   * a move above 0.01 voids the A/B.
 
+### Round 25 BOARD RESULT (2026-09-14) — fp16 ran on the board; Track 1 kept 37 % of the local cut, and on Track 2 it did not pay for the second ViT
+
+Both slots carried `track{1,2}_r25_xfam6fp16_a060.zip`: R24's archive with `AMP = "fp16"` baked in.
+
+| | rel_l2 | tke | mvpe | time | sps | **final** | estimate |
+|---|---|---|---|---|---|---|---|
+| **T1 R25** | 94.861790 | 78.793380 | 94.347508 | 92.297891 | 41.867687 | **81.344644** | 81.356 |
+| T1 R24 (reference) | 94.861827 | 78.793104 | 94.347768 | 91.961259 | 41.866674 | 81.312041 | |
+| **T2 R12** | 94.861391 | 78.587250 | 94.224322 | 91.039757 | 41.760694 | **81.164374** | 81.223 |
+| T2 R9 (reference) | 94.841673 | 78.469938 | 94.157190 | 91.521812 | 41.649497 | 81.155762 | |
+
+* **The fingerprint says fp16 RAN on Track 1.** Against R24: rel −0.000037, tke +0.000276,
+  mvpe −0.000260, sps +0.001013. None is identical to six decimals and none is near the 0.01
+  void line, so the load-time self-check kept fp16 on the board GPU and the A/B is valid.
+* **Track 1 kept 37 % of the local cut.** `time` +0.337: board 5.570 → 5.076 ms (−0.494). At
+  1.75 board ms per 4060-equivalent ms, the A100's interleaved −21 % (1.918 → 1.510 ms/window)
+  would have been −1.321. Track 1's 0.03–0.30 ms same-shape drift brackets the fraction at
+  15–60 %. The estimate of record assumed 50 % (92.416); `time` landed between it and the floor.
+  **A precision cut is charged at ~0.65 board ms per 4060-eq ms** (`board_rounds.PREC_SLOPE_T1`,
+  one reading), not the 1.75 that FLOPs cost. Final +0.033: **new Track-1 best, 81.344644**
+  (+0.014 over R21). `dfinal/dtime` reads 0.0961 once the fingerprint's own moves are priced out.
+* **Track 2: the accuracy landed on the cross-track prediction.** Errors against the estimate:
+  rel +0.004, tke +0.008, mvpe +0.017, sps −0.0003. Against T2R9, sps +0.111 = forced +0.070 +
+  **containment +0.041**, the second ViT as R24 read it (+0.053).
+* **Track 2: fp16 did not pay for the second ViT's FLOPs.** `time` 91.040 < 91.52: board
+  6.255 → 7.061 ms, against 7.795 if none of fp16 transferred. That is ~0.73 of a possible
+  3.61 ms (~20 %), inside Track 2's 0.4–0.7 ms drift. Final +0.009 over T2R9: **new Track-2
+  best, 81.164374**. The estimate missed by −0.059, the `time` row −0.063.
+* **Refit.** 32 pooled rounds: rel_l2 0.4775 · tke 0.1013 · mvpe 0.0920 · time 0.0965 · sps
+  0.2501 (Σw 1.0175), max residual 0.002505 at R6. R6 was recorded to 3–4 decimals, so
+  `final_v9`'s gate is now 0.0025 plus each row's recording rounding; every row recorded to six
+  decimals still clears 0.0025 (worst R15, 0.00225). Leave-one-out max 0.0042 (R6), rms 0.0014.
+* **Leaders, read 09-14:** T1 81.85874 (81.82371 on 09-11; gap 0.514), T2 81.99648 (gap 0.832).
+* **What it decides.** Track 1's Decision-phase candidate is xfam6fp16. On Track 2 the second ViT
+  costs more than fp16 returns, so the next Track-2 A/B is xfam5fp16 (R21's archive plus
+  `RPDE_SHIP_AMP`) against T2R12. Track 1's next latency levers are a baked TF32 constant and a
+  CUDA graph on the `predict` path, each read against R25. The backbone campaign
+  (`Track_1/plan/plan_20260914.md`) looks for the structural gain that is left.

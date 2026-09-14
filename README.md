@@ -6,10 +6,10 @@ CFD simulations of the same airfoil are available for training, never at test ti
 
 | track | protocol | entry point | best board score |
 |---|---|---|---|
-| [1 — Sim2Real](https://www.codabench.org/competitions/17363/) | one batched call over every test window, raw physical units | `predict(input_array, metadata)` | 81.331 |
-| [2 — LTTTA](https://www.codabench.org/competitions/17385/) | streaming at batch 1, normalized units, the previous window's truth revealed | `get_ttt_model(dir, device)` → `ttt_step(...)` | 81.156 |
+| [1 — Sim2Real](https://www.codabench.org/competitions/17363/) | one batched call over every test window, raw physical units | `predict(input_array, metadata)` | 81.345 |
+| [2 — LTTTA](https://www.codabench.org/competitions/17385/) | streaming at batch 1, normalized units, the previous window's truth revealed | `get_ttt_model(dir, device)` → `ttt_step(...)` | 81.164 |
 
-Board scores as of 2026-09-13; the live record is `Track_1/board_rounds.py`, rendered by
+Board scores as of 2026-09-14; the live record is `Track_1/board_rounds.py`, rendered by
 `python leaderboard/lb.py --html`. A board score blends five subscores: relative L2 error,
 turbulent kinetic energy, mean velocity at wake probes, latency, and an interval-coverage score
 (SPS).

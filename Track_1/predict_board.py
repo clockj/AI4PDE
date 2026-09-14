@@ -236,6 +236,17 @@ ANCHORS = {
                 sps=41.866674, final=81.312041),
     "t2r11": dict(rel_l2=94.845935, tke=78.395628, mvpe=94.066988, time=90.720061,
                   sps=41.626260, final=81.058649),
+    # ROUND 25 / T2R12, 2026-09-13 -- R24's archive with `AMP = "fp16"` baked in, on both boards. The
+    # error subscores moved by <= 3e-4 against R24: the fingerprint that fp16 RAN on the board GPU.
+    # Track 1 realised 37 % of the A100's interleaved -21 % (5.570 -> 5.076 board ms, i.e. ~0.65 board
+    # ms per 4060-eq ms for a precision cut, board_rounds.PREC_SLOPE_T1); on Track 2 the same archive
+    # (T2R9 + the second ViT + fp16) came in at 7.061 ms against T2R9's 6.255. Anchor anything built on
+    # xfam6fp16 here -- `r25` for Track 1, `t2r12` for Track 2 -- with local ms measured in fp16 on
+    # BOTH sides, interleaved: fp16 cuts each package's compute by a package-dependent fraction.
+    "r25": dict(rel_l2=94.861790, tke=78.793380, mvpe=94.347508, time=92.297891,
+                sps=41.867687, final=81.344644),
+    "t2r12": dict(rel_l2=94.861391, tke=78.587250, mvpe=94.224322, time=91.039757,
+                  sps=41.760694, final=81.164374),
     "r10": R10,
 }
 

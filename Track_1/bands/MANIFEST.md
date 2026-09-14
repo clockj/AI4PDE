@@ -71,3 +71,6 @@ twins plus `arch_vit_d384`). Promoted 2026-09-11 after R21/T2R9 scored.
 `r24_xfam6.npz` is fitted on R21's twins plus one cmb3sim-recipe ViT twin (`arch_vit_cmb3sim`),
 for R21's members plus `arch_vit_all_cmb3sim_s3`. Promoted 2026-09-13 after R24 scored. T2R11
 (x8v) shipped `r21_xfam5.npz` byte for byte and needs no row of its own.
+
+`r24_xfam6.npz` shipped again, byte for byte, in R25 and T2R12 (2026-09-13): R24's archive with
+fp16 autocast baked in.

@@ -7,7 +7,8 @@ could not: **does a local gain transfer to the board, and by how much?**
 leaderboard/
 ├── board.jsonl   one record per SUBMISSION  — package, thesis, PREDICTION, actual, local numbers
 ├── runs.jsonl    one record per LOCAL EXPERIMENT — arm, instrument, effect, verdict, did it ship
-└── lb.py         loads both, fits the local→board correction, renders the page
+├── screen.jsonl  one record per BACKBONE-SCREEN ARM — written by forge (Track_1/plan/plan_20260914.md §7)
+└── lb.py         loads all three, fits the local→board correction, renders the page
 ```
 
 ```bash
@@ -51,7 +52,8 @@ prediction into this record no later than when the result is recorded.
    both tracks, which share one test set and one rule. At import `final_v9.py` checks that the
    two lists hold the same rounds (as a multiset — row order does not matter) and checks its own
    residuals;
-4. add the round as an anchor in `Track_1/predict_board.py`;
+4. add the round as an anchor in `Track_1/predict_board.py`; give its `board.jsonl` record a
+   `backbone`, and add a `LEADER_READS` row in `lb.py` whenever the board's leaders are read;
 5. rerun `lb.py --html` — the ratios, the resolution limit and the prediction-residual history
    all refit — and republish the page.
 
@@ -60,7 +62,8 @@ arm was only measured on a single model, say so, and expect the effect to be sma
 
 ## Fields
 
-`board.jsonl` — `round`, `track`, `id`, `date`, `package`, `thesis`, `invocations`,
+`board.jsonl` — `round`, `track`, `id`, `date`, `package`, `backbone` (the package's composition,
+e.g. `FNO ×4 + ViT ×2 fp16`; the first word of each ` + ` part is a family), `thesis`, `invocations`,
 `local_ms_a100` / `local_ms_4060`, `local_pkg` (the shipped package's own errors, val-contaminated
 for all-data members), `proxy` (the **held-out twin** set on the AoA 15–20 slice of `val_unseen`,
 scored at the ALPHA that package ships — the column the correction is fitted on), `pred`,
@@ -79,9 +82,24 @@ and file names in Latin inside the Chinese (`rel_l2`, `tke`, `sps`, `final`, `AL
 ## The page
 
 A two-column instrument page: a sticky ~220 px left rail with the page name, an **EN / 中文**
-toggle, one nav anchor per section (read this first · submissions · progress at constant latency ·
-local→board correction · experiment ledger) and the generated stamp, next to a 1200 px content
-column. Under ~880 px the rail becomes a top bar with a horizontally scrollable nav.
+toggle, one nav anchor per section (read this first · optimization curve · backbone screen ·
+submissions · progress at constant latency · local→board correction · experiment ledger) and the
+generated stamp, next to a 1200 px content column. Under ~880 px the rail becomes a top bar with a
+horizontally scrollable nav.
+
+* **Optimization curve.** Board `final` of every scored round against its upload date, Track 1
+  over Track 2 on one shared scale, with each track's running best as a step line and every
+  dated leader read (`LEADER_READS`) as a diamond. Every point is labelled with its round and
+  its `backbone`; a split marker is a package with two families.
+* **Backbone screen.** Reads `screen.jsonl` and renders whatever is there, including nothing: a
+  latency–accuracy scatter (x `ms_ratio_fno`, else `ms_b64_fp16`; y the better of
+  `proj_dfinal_t1_standalone` and `proj_dfinal_t1_partner`; the marker's fill is the verdict)
+  and a table of every arm. The numbers are local proxy projections, a sign and not a size.
+* **Family colours** come from one fixed slot order (`lb.FAMILIES`): FNO, ViT and U-Net hold
+  the three hues that stay distinct all-pairs in both themes; later families are also drawn as
+  squares. Every point is direct-labelled, and every value is in a table.
+* **Idempotent.** Nothing on the page depends on the clock, so `lb.py --html` rewrites the same
+  bytes until a ledger changes; rerun it whenever `screen.jsonl` does.
 
 Both languages are emitted into the DOM and CSS hides one (`html[data-lang]`), so the page is
 complete without JavaScript, in English. A small inline script picks the language from
@@ -94,7 +112,7 @@ declared once, side by side, through `lb.py`'s `t(en, zh)`; ledger strings go th
 
 | quantity | source | last measured |
 |---|---|---|
-| subscore weights | `Track_1/board_rounds.py` → `Track_1/final_v9.py`: free linear fit (no Σw = 1) over every board round, **pooled across both tracks** | 30 rounds, max residual 0.0025 |
+| subscore weights | `Track_1/board_rounds.py` → `Track_1/final_v9.py`: free linear fit (no Σw = 1) over every board round, **pooled across both tracks** | 32 rounds, max residual 0.0025 (R6; the gate allows each row its recording precision) |
 | `w_time`, read directly | pairs of rounds whose four error subscores are identical, so only `time` moved (first R13 → R14, largest R20 → R23) | 0.0956–0.0962 over five pairs (fit 0.0965) |
 | proxy → board ratios | `Track_1/predict_board.py --anchor` / `Track_1/proxy_calib.py` (GPU; once per round) | rel 1.068 · tke 1.136 · mvpe 1.454 |
 | SPS element tail `f` | `Track_1/calib_band13.py`, inverted from a board SPS for a known band | 1.360 (T1) / 1.350 (T2) |

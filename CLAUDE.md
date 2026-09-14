@@ -23,31 +23,28 @@ working branch `qwu/dev`.
 4. The live record, preferred over any table in prose: `Track_1/board_rounds.py` (every scored
    round), `Track_1/final_v9.py` (the weight fit), `python leaderboard/lb.py --html`.
 
-## Current state — 2026-09-13
+## Current state — 2026-09-14
 
 | | `final` | package |
 |---|---|---|
-| Track 1 best | **81.330636** | R21 xfam5 (09-10) |
-| Track 2 best | **81.155762** | T2R9 xfam5 (09-10) |
-| last scored | T1 81.312041 · T2 81.058649 | R24 xfam6 · T2R11 x8v (09-12) |
-| leader, read 09-11 | T1 81.82371 · T2 81.99648 | gaps 0.493 · 0.841 |
+| Track 1 best | **81.344644** | R25 xfam6fp16 (09-13) |
+| Track 2 best | **81.164374** | T2R12 xfam6fp16 (09-13) |
+| leader, read 09-14 | T1 81.85874 · T2 81.99648 | gaps 0.514 · 0.832 |
 
-* **Awaiting R25 / T2R12**, uploaded 09-13: R24's xfam6 archive with `AMP = "fp16"` baked in.
-  Estimates of record T1 **81.356**, T2 **81.223**; brackets and reading guides are in
-  `../sub_candidates/README.md`.
-  * **Track 1 reads against R24, and its error subscores are a fingerprint.** fp16 moves
-    predictions by ~6e-4. Moves within ±0.005 (sps ±0.03) mean fp16 ran, and `time` reads its
-    effect. All four identical to six decimals mean the load-time check fell back to fp32, and
-    `time` is drift only. Any error subscore off by more than 0.01 voids the A/B.
-  * **Track 2 reads against T2R9** and also adds the second ViT, so its errors should move (to
-    ≈ 94.857 / 78.579 / 94.207). `sps` above 41.708 is containment; `time` above 91.52 means fp16
-    more than pays for the second ViT's FLOPs.
-* **Package of record, xfam6:** 4 all-data `cmb3sim` FNOs (one fused invocation) + 2 ViTs (a
+* **R25 / T2R12 (read 09-14): fp16 ran on the board**; the error subscores moved by ≤ 3e-4
+  against R24, the fingerprint. Track 1 kept **37 %** of the local −21 % (5.570 → 5.076 board
+  ms, +0.033). Track 2's archive also added the second ViT: its containment (+0.041) landed, but
+  `time` 91.04 < 91.52, so fp16 did not pay for the ViT's FLOPs. Both estimates (81.356 /
+  81.223) missed only in `time`.
+* **Package of record, xfam6fp16:** 4 all-data `cmb3sim` FNOs (one fused invocation) + 2 ViTs (a
   second) · int8 `--linear tensor` · band `Track_1/bands/r24_xfam6.npz` · `ALPHA = 0.60` ·
-  `SPEC_PATH = "bmm"`, `HOST_WRITE = "torch"` · 146 MB extracted.
+  `AMP = "fp16"`, `SPEC_PATH = "bmm"`, `HOST_WRITE = "torch"` · 146 MB extracted.
+* **Next slots (planned, not built):** Track 2 xfam5fp16 (R21's archive + fp16) against T2R12;
+  Track 1 a baked TF32 constant or a CUDA graph on `predict` against R25.
 * **Where the remaining score is:** the four containment levers (band, capacity, member count,
-  family) are closed. What is left is latency — fp16 (being read), TF32 (safe, not baked), a CUDA
-  graph on the Track-1 `predict` path — and anything structurally new.
+  family) are closed and precision is read. Left: TF32 (safe, not baked), a CUDA graph on the
+  Track-1 `predict` path, and anything structurally new — the **backbone campaign**,
+  `Track_1/plan/plan_20260914.md` (ledger `leaderboard/screen.jsonl`).
 
 ## Standing rules
 
@@ -166,11 +163,11 @@ The official program is `/users/PAS1187/qwu/RealPDE/official/t1_v9/realpde_t1_st
   and a board round's `sps` follows from its other three subscores, `sps(B) ≈ sps(A)·a(B)/a(A)`,
   with containment as the residual. Board steps that moved containment: band +1.41 · capacity
   w24→w96 +0.99 / +0.96 · members 3→8 +0.67 · U-FNO in/out +0.46 / −0.44 · first ViT +0.18 / +0.16 ·
-  second ViT +0.05. Everything else (sim, depth at equal FLOPs, auxiliary losses, latency
+  second ViT +0.05 / +0.04. Everything else (sim, depth at equal FLOPs, auxiliary losses, latency
   rebuilds, 4→8 members with a ViT present) landed within ±0.05.
 * **The rule combining the subscores into `final_score` is unpublished. It is a free linear fit**
-  (no Σw = 1) over 30 rounds pooled across both tracks: **rel_l2 0.4773 · tke 0.1014 · mvpe
-  0.0922 · time 0.0965 · sps 0.2501** (Σw 1.018, max residual 0.0025). Five single-subscore A/Bs
+  (no Σw = 1) over 32 rounds pooled across both tracks: **rel_l2 0.4775 · tke 0.1013 · mvpe
+  0.0920 · time 0.0965 · sps 0.2501** (Σw 1.018, max residual 0.0025). Five single-subscore A/Bs
   read `w_time` directly at 0.0956–0.0962. `Track_1/final_v9.py` is the authority; work in deltas.
   Every weight table in `ROUNDS.md` before round 17 is the superseded constrained fit.
 * **Exchange rate** with containment held fixed, per 10 % of error removed: rel_l2 **+0.346**, tke
@@ -188,6 +185,8 @@ The official program is `/users/PAS1187/qwu/RealPDE/official/t1_v9/realpde_t1_st
   unfused).
 * **FLOPs:** ≈ 1.75 board ms per 4060-equivalent local ms on Track 1 (R16→R17 1.76, R21→R24
   1.74), 0.60 on Track 2 (one reading). A100 local ms × 1.850 = 4060-equivalent.
+* **Precision** is charged less than FLOPs: fp16 kept 37 % of its local cut on Track 1, ≈ 0.65
+  board ms per 4060-eq ms (R24→R25, `PREC_SLOPE_T1`); on Track 2 ~20 % (T2R12, confounded).
 * At ~4.5 board ms on Track 1, 1 board ms ≈ −0.072 `final`, and +0.1 A100 ms/window ≈ −0.023.
   Track 2 carries a fixed ~+0.86 ms per-step handicap at one invocation.
 * The eval machine drifts by date, so anchor on a recent round of the same shape. Code:
@@ -229,7 +228,7 @@ symlink to the same file):
    write, bit-identical, −17 % on Track 1); `SPEC_PATH = "bmm"` (real 2×2-block spectral matmul,
    2e-6, −17 % of the Track-2 step); int8 packing (free for FNO and ViT); `AMP` (autocast checked
    against fp32 at import, falling back on an exception, non-finite output or a diff above 2e-2;
-   `AMP_ACTIVE` records the outcome; fp16 cut compute −21 % / −46 % on R24's archive; bf16
+   `AMP_ACTIVE` records the outcome; fp16 cut compute −21 % / −46 % on R24's archive, and Track 1's board kept 37 % of it; bf16
    crashes in `torch.complex`). TF32 is off (`RPDE_TF32` opts in for drivers only). `_pick_batch`
    times batch sizes at import. Track 2 captures the whole device-side step in a CUDA graph at
    load, verified bit-exact against eager.

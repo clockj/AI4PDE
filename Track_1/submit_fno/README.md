@@ -42,7 +42,7 @@ The evaluator's process never sees our shell, so anything that ships is a consta
 |---|---|---|
 | `ALPHA` | `0.60` | fluctuation rescaling; changing it requires refitting the band |
 | `FUSE` | `True` | `False` only for the invocation-cost measurement (R23) |
-| `AMP` | `None` (R24) · `"fp16"` (R25, awaiting) · `None` in the tree | autocast behind a load-time check against fp32; `AMP_ACTIVE` and `AMP_PROBE_DIFF` record what ran |
+| `AMP` | `None` (R24) · `"fp16"` (R25: ran on the board, 37 % of the local cut kept) · `None` in the tree | autocast behind a load-time check against fp32; `AMP_ACTIVE` and `AMP_PROBE_DIFF` record what ran |
 | `SPEC_PATH` | `"bmm"` | real 2×2-block spectral matmul |
 | `HOST_WRITE` | `"torch"` | threaded output write, bit-identical to the numpy one |
 | `BLEND_BETA` | `0.0` | R14's gated mean-blend, off since the hidden set proved to be in range |
