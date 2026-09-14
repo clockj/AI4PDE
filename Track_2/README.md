@@ -38,6 +38,7 @@ window's std, a zero-parameter anchor at rel-L2 0.501 against the σ head's 0.32
 | **Residual EMA / output bias correction** | lag-1 residual correlation **+0.051** (full field), +0.074 (time-mean). ORACLE per-trajectory additive correction: rel-L2 0.0800 → 0.0786, **1.75 %**. Every causal variant loses (−0.02 to −5.1 wfinal). | `ttt_offline.py` |
 | **Online SPS band calibration** | at the board's 1.39× error stretch the shipped band is **already exactly optimal** (best global rescale c = 1.00, +0.000 sps); 1.0× leaves 0.667, 1.2× 0.114, 1.7× 0.276. Causal estimators recover none of it (−0.9 to −10). | `ttt_band.py` |
 | **Gradient test-time training** | works, and does not pay. Best of 40 arms (all params, Adam 1e-5, rel-L2 loss, last pair): rel-L2 **−1.6 %** single member / −0.7 % on a 5-member ensemble, TKE and MVPE also down. Worth ≈ +0.02 `final`; costs ~9.7 ms/step of backward ⇒ **−0.5 `final`**. No lr, parameter subset, buffer or loss changes the sign. | `ttt_grad.py` |
+| **Closed-form readout refit** (09-14) | an exact ridge solve of `head_field`'s and `head_logstd`'s last 1×1 conv, per trajectory, from every revealed window, with no backward pass. Best arm (ρ = 1000, the strongest prior): rel −0.18 % / tke +0.64 % / mvpe +0.06 % of error removed on one held-out twin, −0.01 / +0.48 / +0.14 on three; the largest rel cut (+1.02 %) costs −3.6 % tke. The trained readout is already near the per-trajectory optimum, and the update costs 1.07 ms per member at batch 1 ⇒ ≈ **−0.06 / −0.19 `final`**. | `readout_refit_check.py` |
 | **Trajectory history** | legitimate here (the kit holds one model object and resets it at trajectory boundaries, so earlier windows are past measurements), and worth nothing: the model already carries what 200 frames of history add, and every blend loses. Shipped off as `HIST_BETA = 0.0`. | `../Track_1/dmd_probe.py`, `../Track_1/hist_blend.py` |
 
 **The band is robust to error mis-specification**, which matters for the Decision phase:
@@ -132,7 +133,7 @@ python validate_t2.py --zip <archive>                                     # the 
 | `verify_space.py` | proves the normalized-space path reproduces Track 1's `predict()` (4e-6 physical) |
 | `t1_vs_t2_score.py` | the two submitted archives side by side on the same windows (the Track-1-over-Track-2 `tke` gap) |
 | `t2_latency.py`, `t2_profile.py`, `t2_graph_scan.py`, `t2_lat17.py` | the latency measurements |
-| `ttt_offline.py`, `ttt_band.py`, `ttt_grad.py` | the three adaptation families, priced and closed |
+| `ttt_offline.py`, `ttt_band.py`, `ttt_grad.py`, `readout_refit_check.py` | the four adaptation families, priced and closed |
 
 ## Two traps that cost real time here
 

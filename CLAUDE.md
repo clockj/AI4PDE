@@ -300,8 +300,8 @@ Evidence and files: `ROADMAP.md` Part 2, the latest handoff, and `ROUNDS.md`.
 * **Sim:** sim pretraining (+0.00); `lam_sim` dose; sim stride; per-pixel maps; `--sim-loss
   shape`; a real-data structured perturbation (`--aux-fstride`); a sim pressure head.
 * **Track 2 adaptation:** residual EMA; online band calibration; gradient TTT (+0.02 of accuracy
-  for −0.5 of latency); trajectory history (legitimate, worth nothing). Transductive pooled
-  statistics are a leak.
+  for −0.5 of latency); closed-form readout refit (≤ 1 %, 09-14); trajectory history (legitimate,
+  worth nothing). Transductive pooled statistics are a leak.
 * **Test-set range:** the gated mean blend (the hidden set is in range; `BLEND_BETA = 0.0`).
 
 ## Build and gate a package
