@@ -322,11 +322,17 @@ def main() -> None:
                          "the same variance reduction at 1x. Safe here because the network uses "
                          "GroupNorm, which carries no running statistics to recompute.")
     ap.add_argument("--arch",
-                    choices=["unet", "fno", "deeponet", "afno", "dilres", "ufno", "vit"],
+                    choices=["unet", "fno", "deeponet", "afno", "dilres", "ufno", "vit",
+                             "cnext_unet", "unet_mod", "ffno", "ffno_nff", "swin_unet",
+                             "simvp", "stvit"],
                     default="unet",
                     help="round 15 adds afno / dilres / ufno / vit, all with FNO2d's "
                          "interface. --width is the trunk width (the token dim for "
-                         "vit) and --n-layers the depth for all of them.")
+                         "vit) and --n-layers the depth for all of them. The 2026-09-14 "
+                         "wave 1 adds cnext_unet / unet_mod / ffno (ffno_nff: its per-layer "
+                         "FF off) / swin_unet / simvp / stvit (models_alt.WAVE1_ARCHS), sized "
+                         "the same way; --modes-y/-x matter only for ffno, and --var-mlp / "
+                         "--lift-mlp are ignored (every wave-1 head is already an MLP).")
     ap.add_argument("--modes-y", type=int, default=12, help="FNO: retained ky modes")
     ap.add_argument("--modes-x", type=int, default=16, help="FNO: retained kx modes")
     ap.add_argument("--n-layers", type=int, default=4, help="FNO: spectral blocks")
