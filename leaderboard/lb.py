@@ -140,11 +140,37 @@ def load_screen(name="screen.jsonl"):
     return list(by.values()), (f"{bad} unreadable" if bad else "")
 
 
+ROLE_ZH = {"standalone": "单独", "partner": "作伙伴", "replace": "替换 ViT 对"}
+
+
+def _extrapolated(r, role):
+    """True when the ledger flags this role's projection as extrapolated (plan §4: K=1 figures)."""
+    if r.get("extrapolated") is True or r.get(f"{role}_extrapolated") is True:
+        return True
+    return role in (r.get("extrapolated_roles") or [])
+
+
 def best_proj(r):
-    """(value, 'standalone' | 'partner') of an arm's better Track-1 projection, or (None, None)."""
-    c = [(v, k) for k, v in (("standalone", _num(r.get("proj_dfinal_t1_standalone"))),
-                             ("partner", _num(r.get("proj_dfinal_t1_partner")))) if v is not None]
+    """(value, role) of an arm's best Track-1 projection -- standalone (X x4 fused, one invocation),
+    partner (the package plus X) or replacing the ViT pair -- never an extrapolated figure."""
+    c = []
+    for k, role in (("proj_dfinal_t1_standalone", "standalone"), ("proj_dfinal_t1_partner", "partner"),
+                    ("proj_dfinal_t1_replace_vits", "replace")):
+        v = _num(r.get(k))
+        if v is not None and not _extrapolated(r, role):
+            c.append((v, role))
     return max(c) if c else (None, None)
+
+
+def arm_family(r):
+    """The ledger's `family`, or -- when forge writes a generic one such as "new" -- the family of
+    `backbone`'s first word (cnext_unet, swin_unet, simvp, ffno, unet_mod, vit, fno)."""
+    fam = r.get("family")
+    if family_key(fam):
+        return family_key(fam)
+    bb = str(r.get("backbone") or "").split()
+    k = family_key(bb[0]) if bb else None
+    return k or (str(fam) if fam else "?")
 
 
 def screen_order(r):
@@ -979,7 +1005,7 @@ SCREEN_STATUS = {"queued": "排队", "running": "运行中", "done": "完成", "
 def _screen_mark(x, y, r):
     """An arm's mark: the family's colour and shape; the FILL says the verdict -- hollow pending,
     filled replicate, filled and ringed advance, faded hollow drop."""
-    fam = [str(r.get("family") or "?")]
+    fam = [arm_family(r)]
     v = str(r.get("verdict") or "pending").lower()
     if v == "drop":
         return _marker(x, y, fam, hollow=True, faded=True)
@@ -1073,17 +1099,18 @@ def _screen_svg(S):
         pr_en, pr_zh = [], []
         for k, en, zh in (("proj_dfinal_t1_standalone", "T1 standalone", "T1 单独"),
                           ("proj_dfinal_t1_partner", "T1 partner", "T1 作伙伴"),
+                          ("proj_dfinal_t1_replace_vits", "T1 replace ViTs", "T1 替换 ViT 对"),
                           ("proj_dfinal_t2_partner", "T2 partner", "T2 作伙伴")):
             v = _num(r.get(k))
             if v is not None:
                 pr_en.append(f"{en} {v:+.3f}")
                 pr_zh.append(f"{zh} {v:+.3f}")
         verdict = str(r.get("verdict") or "pending").lower()
-        base = ([f"{name} · {r.get('family') or '?'} · {r.get('status') or '?'}"]
+        base = ([f"{name} · {arm_family(r)} · {r.get('status') or '?'}"]
                 + ([str(r.get("backbone"))] if r.get("backbone") else []) + ([" · ".join(lat)] if lat else []))
         ten = "\n".join(base + [" · ".join(pr_en), f"plotted: {which} · verdict {verdict}"])
         tzh = "\n".join(base + [" · ".join(pr_zh),
-                                f"作图取{'单独' if which == 'standalone' else '作伙伴'} · "
+                                f"作图取{ROLE_ZH.get(which, which)} · "
                                 f"结论 {SCREEN_VERDICTS.get(verdict, (verdict, verdict))[1]}"])
         if dy:
             o.append(f'<line x1="{px + 5 * side:.1f}" y1="{py:.1f}" x2="{lx if side > 0 else lx + w:.1f}" '
@@ -1102,6 +1129,14 @@ def _fmt(v, fmt):
     return (fmt % x) if x is not None else '<span class="d">&mdash;</span>'
 
 
+def k1cell(r):
+    """The K=1 standalone figure: shown muted and tagged, never plotted, never in a verdict."""
+    v = _num(((r.get("standalone_k1") or {}).get("t1") or {}).get("proj"))
+    if v is None:
+        return '<td><span class="d">&mdash;</span></td>'
+    return f'<td><span class="d">{v:+.3f} ' + t("extrap.", "外推") + "</span></td>"
+
+
 def _screen_table(S):
     """Every arm, whatever state its record is in."""
     th = lambda en, zh, cls="", extra="": f'<th{cls}{extra}>{t(en, zh)}</th>'  # noqa: E731
@@ -1113,14 +1148,15 @@ def _screen_table(S):
          th("latency, A100 ms", "延迟，A100 ms", ' class="grp"', ' colspan="4"'),
          th("single model &middot; full split", "单模型 &middot; 全划分", ' class="grp"', ' colspan="4"'),
          th("single model &middot; AoA 15&ndash;20", "单模型 &middot; AoA 15&ndash;20", ' class="grp"', ' colspan="4"'),
-         th("projected &Delta; final", "预测 &Delta; final", ' class="grp"', ' colspan="3"'),
+         th("projected &Delta; final", "预测 &Delta; final", ' class="grp"', ' colspan="5"'),
          th("Verdict", "结论", ' class="l"', ' rowspan="2"'), th("Note", "备注", ' class="l t"', ' rowspan="2"'),
          "</tr><tr><th>b64 fp16</th><th>b64 fp32</th><th>b1 fp16</th><th>&times;FNO</th>",
          "<th>rel</th><th>tke</th><th>mvpe</th><th>sps</th>" * 2,
-         th("T1 solo", "T1 单独"), th("T1 partner", "T1 作伙伴"), th("T2 partner", "T2 作伙伴"),
+         th("T1 solo", "T1 单独"), th("T1 partner", "T1 作伙伴"), th("T1 replace", "T1 替换"),
+         th("T2 partner", "T2 作伙伴"), th("K=1 solo, extrapolated", "K=1 单独（外推）"),
          "</tr></thead><tbody>"]
     for r in sorted(S, key=screen_order):
-        fam, st = r.get("family"), str(r.get("status") or "")
+        fam, st = arm_family(r), str(r.get("status") or "")
         v = str(r.get("verdict") or "pending").lower()
         ven, vzh = SCREEN_VERDICTS.get(v, (v, v))
 
@@ -1150,7 +1186,8 @@ def _screen_table(S):
             + "".join(metric(b, k, f) for b in ("single_full", "single_aoa1520")
                       for k, f in (("rel", "%.4f"), ("tke", "%.4f"), ("mvpe", "%.4f"), ("sps", "%.2f")))
             + proj("proj_dfinal_t1_standalone") + proj("proj_dfinal_t1_partner")
-            + proj("proj_dfinal_t2_partner")
+            + proj("proj_dfinal_t1_replace_vits") + proj("proj_dfinal_t2_partner")
+            + k1cell(r)
             + f'<td class="l"><span class="chip v-{_esc(v)}">{t(_esc(ven), _esc(vzh))}</span></td>'
             f'<td class="l t">{tdata(r.get("note") or "", r.get("note_zh"))}</td></tr>')
     o.append("</tbody></table></div>")
@@ -1162,19 +1199,26 @@ def _screen_section(S, state):
          + '</h2><span class="eyebrow">' + t("phase 1 &middot; local proxy", "第一阶段 &middot; 本地代理")
          + "</span><p>"
          + t("Local proxy projections &mdash; <b>a sign, not a size</b>. Each arm is one held-out "
-             "model trained with the shared screening recipe. Its &Delta;&nbsp;final is projected "
-             "against R25 (Track&nbsp;1) and T2R12 (Track&nbsp;2) with <code>predict_board.py</code>: "
-             "the local accuracy delta is halved (the proxy over-reads about 2&times;) and latency "
-             "is charged (+1 invocation as a partner family, FLOPs at the measured slopes). The "
-             "scatter plots the better of the standalone and partner projections; an arm advances "
-             "at &ge;&nbsp;+0.10 on Track&nbsp;1, replicated. Source: "
-             "<code>leaderboard/screen.jsonl</code>, written by forge "
-             "(<code>Track_1/plan/plan_20260914.md</code> &sect;4, &sect;7).",
+             "model trained with the shared screening recipe, projected against R25 (Track&nbsp;1) "
+             "and T2R12 (Track&nbsp;2) with <code>predict_board.py</code>. <b>Accuracy gains are "
+             "halved and losses are charged in full</b>; latency charges +1 invocation for a "
+             "partner family, FLOPs through <code>LAT_LOC_*</code> and precision-only changes "
+             "through <code>PREC_SLOPE_T1</code>. Three roles: <i>partner</i> = the package plus X; "
+             "<i>replace</i> = FNO&times;3 + X in place of the ViT pair; <i>standalone</i> = "
+             "X&times;4 fused in one invocation, accuracy along the FNO member-count curve, with "
+             "the ViT pair&rsquo;s containment removed in full. The scatter plots each arm&rsquo;s "
+             "best Track-1 role. A K=1 standalone figure is <i>extrapolated</i>: it appears in the "
+             "table only, never in the scatter or a verdict. An arm advances at &ge;&nbsp;+0.10 on "
+             "Track&nbsp;1, replicated. Source: <code>leaderboard/screen.jsonl</code>, written by "
+             "forge (<code>Track_1/plan/plan_20260914.md</code> &sect;4, &sect;7).",
              "本地代理的预测——<b>只看方向，不看大小</b>。每个实验臂是用统一筛选配方训练的一个留出模型，"
-             "其 &Delta;&nbsp;final 以 R25（Track&nbsp;1）和 T2R12（Track&nbsp;2）为锚，用 "
-             "<code>predict_board.py</code> 计算：本地精度增量减半（代理约高估 2 倍），并计入延迟"
-             "（作为伙伴家族 +1 次调用，FLOPs 按实测斜率）。散点取单独与作伙伴两种预测中的较优者；"
-             "Track&nbsp;1 上 &ge;&nbsp;+0.10 且复现后才晋级。数据来源："
+             "以 R25（Track&nbsp;1）和 T2R12（Track&nbsp;2）为锚，用 <code>predict_board.py</code> "
+             "计算。<b>精度收益减半，损失全额计入</b>；延迟方面，伙伴家族 +1 次调用，FLOPs 按 "
+             "<code>LAT_LOC_*</code>，纯精度改动按 <code>PREC_SLOPE_T1</code>。三种角色："
+             "<i>作伙伴</i> = 现有包加 X；<i>替换</i> = FNO&times;3 + X 取代 ViT 对；<i>单独</i> = "
+             "X&times;4 融合为一次调用，精度沿 FNO 成员数曲线换算，并全额扣除 ViT 对的含盖率。"
+             "散点取每个实验臂在 Track&nbsp;1 上最好的角色。K=1 的单独数字是<i>外推值</i>：只列在表中，"
+             "不进散点，也不用于结论。Track&nbsp;1 上 &ge;&nbsp;+0.10 且复现后才晋级。数据来源："
              "<code>leaderboard/screen.jsonl</code>，由 forge 写入"
              "（<code>Track_1/plan/plan_20260914.md</code> &sect;4、&sect;7）。")
          + "</p></div>"]
@@ -1211,14 +1255,16 @@ def _screen_section(S, state):
              + "</p>")
     svg, done = _screen_svg(S)
     glyph = lambda body: f'<svg width="18" height="18" aria-hidden="true">{body}</svg>'  # noqa: E731
-    legend = _fam_legend([r.get("family") for r in S]) + [
+    legend = _fam_legend([arm_family(r) for r in S]) + [
         "<span>" + glyph('<circle cx="9" cy="9" r="4" fill="var(--panel)" stroke="var(--dim)" stroke-width="2"/>')
         + t("pending", "待定") + "</span>",
         "<span>" + glyph('<circle cx="9" cy="9" r="5" fill="var(--dim)"/>') + t("replicate", "复现") + "</span>",
         "<span>" + glyph('<circle cx="9" cy="9" r="8" fill="none" stroke="var(--ink)" stroke-width="1.5"/>'
                          '<circle cx="9" cy="9" r="5" fill="var(--dim)"/>') + t("advance", "晋级") + "</span>",
         "<span>" + glyph('<circle cx="9" cy="9" r="4" fill="var(--panel)" stroke="var(--dim)" stroke-width="2" '
-                         'opacity=".45"/>') + t("drop", "淘汰") + "</span>"]
+                         'opacity=".45"/>') + t("drop", "淘汰") + "</span>",
+        "<span>" + t("K=1 extrapolated figures: table only, never plotted",
+                     "K=1 外推数字：只列在表中，不进散点") + "</span>"]
     o.append('<div class="legend">' + "".join(legend) + "</div>")
     if svg:
         o.append('<div class="scroll">' + svg + "</div>")

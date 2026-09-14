@@ -39,11 +39,12 @@ working branch `qwu/dev`.
 * **Package of record, xfam6fp16:** 4 all-data `cmb3sim` FNOs (one fused invocation) + 2 ViTs (a
   second) · int8 `--linear tensor` · band `Track_1/bands/r24_xfam6.npz` · `ALPHA = 0.60` ·
   `AMP = "fp16"`, `SPEC_PATH = "bmm"`, `HOST_WRITE = "torch"` · 146 MB extracted.
-* **Next slots (planned, not built):** Track 2 xfam5fp16 (R21's archive + fp16) against T2R12;
-  Track 1 a baked TF32 constant or a CUDA graph on `predict` against R25.
+* **Staged 09-14, not uploaded** (`../sub_candidates/README.md`): Track 2 xfam5fp16 (T2R9 + fp16),
+  est. 81.166 vs T2R12 (81.113–81.210, likely a tie); Track 1 R25 + a CUDA graph on `predict`,
+  est. 81.428 vs R25 (81.345–81.527), fingerprinted by sps −1e-4.
 * **Where the remaining score is:** the four containment levers (band, capacity, member count,
-  family) are closed and precision is read. Left: TF32 (safe, not baked), a CUDA graph on the
-  Track-1 `predict` path, and anything structurally new — the **backbone campaign**,
+  family) are closed and precision is read. Left: TF32 (safe, not baked), the Track-1 graph
+  (staged), and anything structurally new — the **backbone campaign**,
   `Track_1/plan/plan_20260914.md` (ledger `leaderboard/screen.jsonl`).
 
 ## Standing rules
