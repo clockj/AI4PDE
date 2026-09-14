@@ -1,11 +1,12 @@
 # Track 1 — Sim2Real
 
-Codabench: https://www.codabench.org/competitions/17363/ ·
-Official kit: `~/RealPDE/official/t1_v9/realpde_t1_starting_kit_v9/`
+Codabench: https://www.codabench.org/competitions/17363/ · Official kit:
+`/users/PAS1187/qwu/RealPDE/official/t1_v9/realpde_t1_starting_kit_v9/`
 
-**Goal.** One-shot forecasting. 20 frames of real PIV velocity in, the next 20 out, weights
-frozen, no feedback. `../CLAUDE.md` has the contract, the metrics and every measured baseline;
-`../ROADMAP.md` has the board record and the plan. **Start with the roadmap.**
+**Goal.** One-shot forecasting: 20 frames of real PIV velocity in raw physical units, the next 20
+out, weights frozen, no feedback. `../CLAUDE.md` holds the contract, the scoring rule, the current
+package and the standing rules; `../ROADMAP.md` what the board says and what is closed;
+`../ROUNDS.md` every round's detail.
 
 ```python
 # submission.py at the zip root
@@ -14,70 +15,88 @@ def predict(input_array, metadata=None):
     # -> (N, 20, 32, 64, 3), or {"prediction": …, "lower": …, "upper": …}
 ```
 
-The eval image has **no** `scipy` / `h5py` / `einops` / `matplotlib` / `pandas`. Never
-`import h5py` from anything the zip contains — `unet/model.py` imports it lazily inside
-`load_trajectories()` for exactly that reason.
+The eval image has **no** `scipy` / `h5py` / `matplotlib` / `pandas`, and `einops` only from the
+kit's `_vendor/`. Never `import h5py` from anything the zip contains; `unet/model.py` imports it
+lazily inside `load_trajectories()` for that reason.
 
 ## The model, in one paragraph
 
-An ensemble of **0.90M-parameter FNOs** (width 24, modes (8,12), 4 layers) with `--var-mlp`
-and `--lift-mlp`, trained with a **velocity-gradient matching loss** (`--lam-grad 1.0`) —
-still the only loss term in the project's history whose effect cleared the local proxy's
-measured resolution. Each member carries a per-pixel log-std head; at inference the predicted
-fluctuation is rescaled toward that std at `ALPHA = 0.90`, and per-element SPS half-widths come
-from `band.npz`. Same-architecture members are fused into one invocation by
-`_fno.StackedFNO` / `_fno.fuse`.
+An ensemble of four **width-96, 8-layer FNOs** (modes (8, 12), Dropout2d 0.45 between spectral
+blocks, an MLP lift, an MLP σ readout) and **two ViTs** (dim 384, 8 layers, dropout 0.3). Every
+member has a field head and a per-pixel log-std head. The FNOs train their field with a
+curvature-matched Welsch "coverage" loss in place of MSE (`--lam-f 0.0 --lam-cov 2.0`), which
+bends only the error tail that SPS stops paying for, plus velocity-gradient (`--lam-grad 1.0`) and
+temporal-derivative (`--lam-tgrad 0.3`) matching and co-training on CFD mapped into real's
+measurement space (`--sim --lam-sim 0.3 --sim-loss full`). The second ViT uses the same losses and
+sim; the first uses plain MSE with `--lam-grad 1.0` and no sim.
+At inference the members' raw field and σ are averaged on the GPU, the fluctuation is rescaled
+toward σ at `ALPHA = 0.60`, and per-element SPS half-widths come from `band.npz`.
+Same-architecture members are fused into one invocation (`_fno.StackedFNO`, `_fno.StackedViT`).
+The evidence behind each choice is in `../CLAUDE.md`, *What ships, and why*.
 
-**`train2.py`'s argparse defaults are NOT the shipped recipe** — `--alpha-train` defaults to
-1.0 and collapses the model. Read the recipe off a checkpoint's stored `config`.
+## Training
+
+`train2.py`'s argparse defaults are **not** the shipped recipe: `--alpha-train` defaults to 1.0,
+which trains through the composition and collapses the model. Read a recipe off a checkpoint's
+stored `config` (`torch.load(path)["config"]`), or copy it from the job that trained it. The
+shipped FNOs:
+
+```bash
+cd Track_1/unet          # checkpoints are written here and are not tracked
+python train2.py --arch fno --width 96 --modes-y 8 --modes-x 12 --n-layers 8 --stride 5 --epochs 400 \
+  --batch 32 --lr 2e-4 --dropout 0.45 --var-head --var-mlp --lift-mlp --loss mse \
+  --lam-f 0.0 --lam-cov 2.0 --cov-c 0.25 --lam-grad 1.0 --lam-tgrad 0.3 --lam-v 0.15 --lam-t 0.15 \
+  --alpha-train 0.0 --sim /users/PAS1187/qwu/RealPDE/train_sim/train_sim --lam-sim 0.3 \
+  --sim-loss full --all-data --seed 1 --out fno_all_w96L8cmb3sim_s1.pth
+```
+
+A held-out twin — the only source of local evidence, and of the band's error field — drops
+`--all-data` and adds `--sim-exclude-held`. `--seed` makes a control and its arm share
+initialization and batch order. Job scripts for every run are under
+`/fs/scratch/PAS1187/qwu/tmp/realpde/jobs/`.
 
 ## Layout
 
 | path | what |
 |---|---|
-| `unet/` | `model.py` (backbone + data pipeline), `models_alt.py` (FNO2d, DeepONet, the physics operators), `train2.py`, every checkpoint |
-| `submit_fno/` | the shipped package: `submission.py`, `_fno.py`, `fit_band.py`, `build_zip.py`, `validate_strict.py` |
-| `verify/` | `diff_scoring_{official,real}.py` (our scorer against the official kit, worst 2.4e-6), `cpu_smoke_submission.py` (login-node gate) |
-| `report/`, `plan/` | per-round write-ups and plans; `plan/plan_20260831.md` is current |
+| `unet/` | `model.py` (data pipeline), `models_alt.py` (FNO2d, ViT2d, U-FNO, AFNO, DeepONet, the physics operators), `train2.py`, `simreal.py` (the sim → real domain map), `dinov2_init.py`; every checkpoint (untracked) |
+| `submit_fno/` | the package: `submission.py`, `_fno.py`, `fit_band.py`, `build_zip.py`, `validate_strict.py`, `build_round13.sh` — see its `README.md` |
+| `bands/` | every SPS band that has scored on a board, versioned, with `MANIFEST.md` |
+| `verify/` | gates and bit-identity checks: scorer against the official kit, CPU smoke test, package identity, AMP, fusion, packing, blend |
+| `report/`, `plan/` | per-round write-ups (`report_*`), plans (`plan_*`) and campaign ledgers (`campaign_*`) |
+| `val_*.npz` | cached validation sets, untracked (`make_val.py`, `re_split.py`) |
+| `submit/`, `submit_trick/`, `fno_deeponet/`, `deeponet/`, `diffusion/` | historical: the July U-Net package, the disclosed protocol exploit, the round-4 FNO/DeepONet sweeps, early baselines |
 
-## Instruments — what to trust, and how far
+## Instruments
 
-| tool | what it answers |
+Every local number is a sign, not a size; `../CLAUDE.md`, *Instruments*, says how far each goes.
+
+| tool | answers |
 |---|---|
-| `board_rounds.py` | every scored round, the subscore weight fit (8 rounds, max residual 0.025), the board-time inversion |
-| `final_v9.py` | five subscores → `final`, with the admissible range. `delta()` is the one to use between packages |
-| `proxy_calib.py` | **how far the local proxy can be trusted**: level ±1.3 %, deltas below ~2 % do not transfer and can invert |
-| `predict_board.py` | the pre-submission prediction. 1-for-2; read its spread, not its midpoint |
-| `compare_v9.py` | per-checkpoint scores, each with its own band. `--aoa 15 20` is the board-like subset |
-| `ens_v9.py`, `alpha_v9.py`, `band_cv_v9.py`, `sps9.py` | ensemble/α/band machinery; the band is closed |
-| `re_split.py` | Re-EXTRAPOLATION held-out sets plus an interior control — the one thing the standard split cannot see |
+| `board_rounds.py` | every scored board round on both tracks; the latency constants and helpers (`board_ms`, `time_score`, `invocation_cost`) |
+| `final_v9.py` | five subscores → `final` under the free 30-round fit, with the admissible range; self-checks every round at import |
+| `predict_board.py` | a package's five board subscores, predicted before upload |
+| `compare_v9.py` | single checkpoints, each with its own band (`--aoa 15 20` is the board-like subset) |
+| `ens_v9.py` | member sets on the AoA 15–20 proxy — the screen at ensemble size |
+| `kfold.py` | out-of-fold evaluation over all 82 trajectories; `--split re` bands 1–3 is the confirmation step, `--paired` the A/B |
+| `proxy_calib.py` | board/proxy ratios per round, and the proxy's resolution |
+| `sps9.py` | exact, fast SPS and the exact optimal band |
+| `alpha_board.py`, `band_cv_v9.py` | ALPHA and band sweeps (both closed) |
+| `quant8.py` | the scored cost of a packing scheme (`--score BAND.npz`) |
+| `sub_value.py` | what a submission would resolve, as information |
+| `re_split.py` | Re-extrapolation held-out sets (retired as decision instruments: the hidden set is interior) |
 
-**The resolution limit is the important number here.** A change must move the proxy's error by
-more than ~2 % before it is worth shipping (≈ +0.19 `final`). Every change made in rounds 9–12
-was smaller than that.
+Most other top-level scripts are one-off diagnostics named after what they measured (`diag_*`,
+`calib_*`, `tke_*`, `band_*`, `lat_*`); the round that used each is in `report/` or `../ROUNDS.md`.
 
-## Building and gating a package
+## Build and gate
 
-```bash
-# 1. fit the band FOR THIS EXACT MEMBER SET, at the alpha it will deploy at.
-#    --ckpt supplies sigma_ref (the all-data members that emit sigma at test time);
-#    --err-ckpt supplies the ERROR FIELD (their held-out twins). Skipping --err-ckpt is the
-#    single most expensive mistake available: the July 30 package did it and scored sps 36.94.
-python submit_fno/fit_band.py --ckpt $A --err-ckpt $M --alpha 0.90 --band-p 0.45 --out band8.npz
-
-# 2. build and gate in one step -- validate_strict forwards every argument to build_zip, so it
-#    always validates an archive it just built from the members named here.
-python submit_fno/validate_strict.py --band submit_fno/band8.npz \
-       --stage submit_fno/_package8 --out submit_fno/submission8.zip --ckpt $A
-```
-
-`validate_strict.py` needs a GPU (it also times). `verify/cpu_smoke_submission.py` is the
-login-node stand-in — point it at a specific archive with `RPDE_ZIP=... python
-verify/cpu_smoke_submission.py`, since a round usually has more than one candidate staged. **Record the predicted board score before submitting** — it is the
-only reason any round's post-mortem was possible.
+`bash submit_fno/build_round13.sh ALPHA` builds and gates both tracks' archives from one member
+set; the full command, the knobs and the gates are in `submit_fno/README.md`. **Record the
+predicted board subscores in `../../sub_candidates/README.md` before the user uploads.**
 
 ## Status
 
-Eight scored board rounds, best **80.60907** (R11). At constant `time_score` rounds 10–12 are
-indistinguishable; the leader was **81.76136** on 2026-08-25. Staged for the next slot:
-8 members / 1 invocation, in `../../sub_candidates/`.
+Live: `board_rounds.py`, and `python ../leaderboard/lb.py`. As of 2026-09-13: best **81.330636**
+(R21, xfam5); last scored R24 (xfam6), 81.312041; R25 (xfam6 with fp16 autocast) awaiting its
+result.

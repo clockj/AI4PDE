@@ -1,5 +1,10 @@
 # submit_trick — protocol exploit, submitted as a hypothesis test
 
+> **Historical — a round-4 hypothesis test. Never submit it again.** It scored 93.500 on the live
+> Track-1 board, which confirmed that the windowing leaks the targets. The leak was disclosed
+> (`DISCLOSURE.md`), and the organizers confirmed such scores are invalid. The SPS arithmetic
+> below predates kit v9.
+
 **This is not a forecasting model.** It returns rows of the input array it was handed. It exists
 to test one claim: that the 93.3 at the top of the Track 1 leaderboard is the windowing
 protocol, not a better predictor.

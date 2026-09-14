@@ -9,7 +9,8 @@ first non-FNO family behind a k-fold gate; **revised 2026-09-04 22:06 after the 
 which read the scoring rule correctly for the first time; **revised 2026-09-05 after the
 round-17 campaign, which saturated the FNO recipe everywhere except sim and staged two pairs (§1.23)**. This is the
 handoff document: it records what the leaderboard actually says, what is closed, and what to do
-next. Read it with `CLAUDE.md` (contracts, measurements, per-round detail),
+next. Read it with `CLAUDE.md` (contracts, current measurements, standing rules), `ROUNDS.md`
+(per-round detail),
 `Track_1/board_rounds.py` (every number in Part 1 is reproducible from it) and
 **`Track_1/plan/plan_20260905.md` (the CURRENT round's plan and recorded predictions)**.
 
@@ -135,7 +136,7 @@ no-intercept form on four points; it holds on eight and on nine.)
 **rel +0.189 / tke −1.184**, worth **+0.019** at the eight-round weights and **+0.128** in
 fact. The only fit is `tke` down and `rel_l2` up.
 
-Consequences, all of which invalidate advice still sitting in `CLAUDE.md`'s older sections:
+Consequences, all of which invalidate advice still sitting in `CLAUDE.md`'s older sections (now `ROUNDS.md`):
 
 * **`rel_l2` is the most valuable subscore, at >2× the round-9 weight.** Round 10's
   "**stop optimizing rel-L2**, TKE and SPS carry the response" is **FALSIFIED**. It read the
@@ -663,7 +664,7 @@ recorded predictions: T2 `L8x4` do30 (81.035) / T1 `L8x4` do45 (81.188).
 Board 2026-09-04 22:06. **T1 R17** (915380) 94.745531 / 78.635462 / 93.974234 / 92.988361 /
 41.324574 → **81.169843**, predicted 81.188. **T2 R5** (915381), the *same four members*,
 94.727329 / 78.357043 / 93.692366 / 92.427051 / 41.191134 → **81.019298**, predicted 81.088.
-Detail: CLAUDE.md "Round 17 BOARD RESULT"; plan `Track_1/plan/plan_20260905.md`.
+Detail: `ROUNDS.md` "Round 17 BOARD RESULT"; plan `Track_1/plan/plan_20260905.md`.
 
 * **Depth at 4 members ≈ 8 members at 4 layers.** Both boards agree on every subscore's sign:
   rel **worse** by 0.37 %/0.57 % of error, tke −1.19 %/−1.07 %, mvpe worse by 1.00 %/0.81 %,
@@ -809,7 +810,7 @@ reading `Track_1/plan/plan_20260905.md` §7. Two packages staged, neither submit
 
 ### 1.24 Rounds 18–23: `sps` factorizes, one ViT is worth an invocation, and the invocation is 1.15 ms
 
-The round-by-round record for 18–23 is in `CLAUDE.md` (section "Rounds 18–23"), the live data
+The round-by-round record for 18–23 is in `ROUNDS.md` (section "Rounds 18–23"), the live data
 in `Track_1/board_rounds.py`, the published log in `leaderboard/`. Two of it are *rules*, and
 this is where rules live.
 
@@ -872,7 +873,7 @@ what selects the final package; Main Development slots are for learning.
 
 ### 1.25 Round 24: the second ViT is +0.050 of accuracy, member count is closed, and FLOPs are charged
 
-The detail and table are in `CLAUDE.md`, "Round 24 BOARD RESULT". The rules:
+The detail and table are in `ROUNDS.md`, "Round 24 BOARD RESULT". The rules:
 
 **(a) FLOPs are charged on the board — §1.24(b) was half wrong.** One more ViT inside a fused
 group cost +1.02 board ms on Track 1 (local +0.316 A100 ms/window); four more FNOs cost +1.37 on
@@ -892,7 +893,7 @@ the cross-day refit.**
 
 ### 1.26 Round 25: fp16 is accuracy-free here, and a latency lever can only be read on the board
 
-The detail is in `CLAUDE.md`, "Round 25". This round adds three rules:
+The detail is in `ROUNDS.md`, "Round 25". This round adds three rules:
 
 * **A precision change is priced in two halves, measured in different places.** Its ACCURACY
   cost is measured locally, on real windows, against an fp32 twin of the same archive, through
@@ -920,7 +921,7 @@ new session does not spend a week re-deriving a negative.
 | Extra invocations | R12 paid 0.973 `time_score` for its 4th group and got it back nowhere |
 | MVPE as an objective | weight ≈ 0.000, §1.4 |
 
-**Closed with held-out local evidence** (each cost a real experiment; see `CLAUDE.md`):
+**Closed with held-out local evidence** (each cost a real experiment; see `ROUNDS.md`):
 
 * **Capacity, both directions.** w16 < w24 > w48 > w64; modes ladder flat. Architecture search
   finished (round 10b).
@@ -1260,7 +1261,8 @@ implement self-normalization but measured it on a split blind to what it is for;
 
 | what | where |
 |---|---|
-| Per-round detail, contracts, measured baselines | `CLAUDE.md` |
+| Contracts, current measurements, standing rules | `CLAUDE.md` |
+| Per-round detail and measured baselines (the old `CLAUDE.md` through round 25, verbatim; new rounds appended) | `ROUNDS.md` |
 | **Every board round** (28, both tracks) + the free weight fit + the measured invocation cost | `Track_1/board_rounds.py`, `Track_1/final_v9.py` |
 | Published calibration log (bilingual, regenerate + republish after every board result) | `leaderboard/lb.py --html` |
 | Board latency constants, MEASURED: invocation 1.151 / 0.866 board ms; FLOPs 1.75 / 0.60 board ms per 4060-eq local ms | `Track_1/board_rounds.py` (`INV_MS_*`, `LOC_SLOPE_*`, `board_ms()`, `time_score()`), `Track_1/predict_board.py` (`LAT_INV_*`, `LAT_LOC_*`) |
@@ -1270,7 +1272,7 @@ implement self-normalization but measured it on a split blind to what it is for;
 | AMP gate: does the archive run fp16, score fp32's numbers, and how much faster (interleaved) | `Track_1/verify/amp_path.py` |
 | The SCORED cost of a packing scheme (not just its field perturbation) | `Track_1/quant8.py --score BAND.npz` |
 | Round-12 report and raw campaign rows | `Track_1/report/report_20260829_round12.md`, `Track_1/plan/campaign_20260829.md` |
-| Shipped Track-1 package (11 memb / 4 inv) | `Track_1/submit_fno/` (`README.md` documents the build) |
+| Track-1 package code, band fitting, build and gates | `Track_1/submit_fno/` (`README.md`) |
 | Scorer: official kits + reconstruction diff | `~/RealPDE/official/{t1_v9,t2_v6}/`, `Track_1/verify/diff_scoring_{official,real}.py` |
 | GPU-free pre-submission gate | `Track_1/verify/cpu_smoke_submission.py` |
 | **Track 2: everything** | `Track_2/README.md` — contract, the three closed adaptation families, the latency table |
