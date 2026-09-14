@@ -890,6 +890,22 @@ local K-curve (+0.027 sps) called it. **The ViT family is closed at two.** The s
 invocations on the same day. **Bracket every package's `time` with the measured slope, never
 the cross-day refit.**
 
+### 1.26 Round 25: fp16 is accuracy-free here, and a latency lever can only be read on the board
+
+The detail is in `CLAUDE.md`, "Round 25". This round adds three rules:
+
+* **A precision change is priced in two halves, measured in different places.** Its ACCURACY
+  cost is measured locally, on real windows, against an fp32 twin of the same archive, through
+  the scorer, with permutation invariance checked. For fp16 the metrics were identical to 4–5
+  decimals and invariance was exact. Its LATENCY value can only be read off the board, because
+  the A100 is not the board GPU. That is why round 25's two slots are measurements.
+* **Anything decided at load time must leave a trace of what it decided.** `AMP` falls back to
+  fp32 when its self-check fails, so a board result reading "fp16 did nothing" is ambiguous
+  unless the archive can be fingerprinted — here, by the error subscores moving by ~0.001.
+* **Only interleaved, same-process timings count as local evidence.** The same package read
+  3.37 and 3.87 ms/step in two jobs, and 4.79 and 7.02 on two nodes. fp32 against fp16 in one
+  process read −21 % and −46 %, and those readings replicated.
+
 ## Part 2 — Closed. Do not re-propose without new evidence.
 
 Everything here was closed by measurement, with the file that measured it. The list exists so a
@@ -977,6 +993,13 @@ confirmed it from five directions.
 ---
 
 ## Part 3 — What to do next
+
+> **As of 2026-09-13 the live list is `../handoffs/HANDOFF_20260913.md` §4.** The P0–P4 below
+> are the round-13 plan, kept for the record. In short: first read R25 / T2R12 with the
+> fingerprint rule. If fp16 transfers, every Decision-phase package carries it and xfam6fp16 is
+> the Track-1 candidate; if it does not, TF32 is measured on the board the same way. The four
+> containment levers are closed — the band (eight times), capacity, member count, and the ViT
+> family at two — so what remains is latency, and anything structurally new.
 
 Time remaining: **Main Development closes 2026-09-27**, Decision phase to 10-25, results 11-10.
 **1 submission per day per track**, shared account — so **~27 slots per track**, against the
@@ -1240,6 +1263,12 @@ implement self-normalization but measured it on a split blind to what it is for;
 | Per-round detail, contracts, measured baselines | `CLAUDE.md` |
 | **Every board round** (28, both tracks) + the free weight fit + the measured invocation cost | `Track_1/board_rounds.py`, `Track_1/final_v9.py` |
 | Published calibration log (bilingual, regenerate + republish after every board result) | `leaderboard/lb.py --html` |
+| Board latency constants, MEASURED: invocation 1.151 / 0.866 board ms; FLOPs 1.75 / 0.60 board ms per 4060-eq local ms | `Track_1/board_rounds.py` (`INV_MS_*`, `LOC_SLOPE_*`, `board_ms()`, `time_score()`), `Track_1/predict_board.py` (`LAT_INV_*`, `LAT_LOC_*`) |
+| Every scored band, versioned (the one part of a package that cannot be rebuilt) | `Track_1/bands/` + `MANIFEST.md` |
+| Is a rebuilt archive the one on the board? | `Track_1/verify/pkg_identity.py` |
+| Fusion gates | `Track_1/verify/fuse_vit.py` (`StackedViT`), `Track_1/verify/fuse_osc.py` |
+| AMP gate: does the archive run fp16, score fp32's numbers, and how much faster (interleaved) | `Track_1/verify/amp_path.py` |
+| The SCORED cost of a packing scheme (not just its field perturbation) | `Track_1/quant8.py --score BAND.npz` |
 | Round-12 report and raw campaign rows | `Track_1/report/report_20260829_round12.md`, `Track_1/plan/campaign_20260829.md` |
 | Shipped Track-1 package (11 memb / 4 inv) | `Track_1/submit_fno/` (`README.md` documents the build) |
 | Scorer: official kits + reconstruction diff | `~/RealPDE/official/{t1_v9,t2_v6}/`, `Track_1/verify/diff_scoring_{official,real}.py` |

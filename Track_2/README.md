@@ -56,6 +56,18 @@ for work already done — not a new algorithmic lever. Ship the forecaster froze
 
 ## What IS worth engineering here: latency
 
+> **Rounds 23–25 update, measured on the board.**
+> * **Invocations.** One extra invocation costs **0.866 board ms** on Track 2, against 1.151 on
+>   Track 1. Track 2's handicap over Track 1 is a fixed per-step cost, not a per-invocation one.
+> * **FLOPs are charged too.** Four more FNOs inside the fused group cost +1.37 board ms, about
+>   0.60 board ms per 4060-equivalent local ms (a single reading).
+> * **fp16 autocast** is baked as `AMP` in `submit/submission.py`. It is verified against fp32
+>   in `get_ttt_model` before the CUDA graph is captured, and the graph is kept. On R24's
+>   package it cut the step from 7.022 to 3.768 ms (interleaved, one process), with `ttt_step`
+>   outputs within 8.4e-4 of fp32.
+> * **AMP is a per-package choice measured on the board.** R21's package read fp16 *slower* in
+>   a separate-process run. The gate is `Track_1/verify/amp_path.py --t2`.
+
 Track 1 amortizes one batched call over every window. Track 2 pays the full launch cost every
 step, and `ttt_step` is timed in its entirety. Measured on an A100-PCIe at batch 1:
 

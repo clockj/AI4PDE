@@ -11,8 +11,10 @@ Track 1 (Sim2Real): https://www.codabench.org/competitions/17363/ · Track 2 (LT
 > documents, which lag. Best score: **81.331** (Track 1 round 21, 2026-09-10 — four all-data
 > width-96 L8 dropout-0.45 `cmb3sim` FNOs fused into one invocation plus **one ViT** as a
 > second, int8, ALPHA 0.60; the same members score 81.156 as Track 2 round 9). Leader, read
-> 2026-09-11: **T1 81.82371 / T2 81.99648**. Current plan:
-> [`Track_1/plan/plan_20260909.md`](Track_1/plan/plan_20260909.md).
+> 2026-09-11: **T1 81.82371 / T2 81.99648**. **Latest: round 25 — fp16 autocast baked into R24's
+> archive — was uploaded 2026-09-13 and is awaiting its result.** The predictions of record and
+> the validity rule are in `../sub_candidates/README.md`; the next session starts from
+> `../handoffs/HANDOFF_20260913.md`; the plan is `ROADMAP.md` §1.24–§1.26.
 >
 > **THE WEIGHTS CHANGED IN ROUND 17, AND EVERY EARLIER WEIGHT TABLE IN THIS FILE IS THE OLD
 > ONE.** Every fit from round 9 to round 16 imposed `Σw = 1`, which was never tested. Dropped,
@@ -2165,4 +2167,47 @@ tensor-identical to R21 as uploaded), so each board read one lever against its o
 * **Also closed this round.** int8's score cost is free for FNO and ViT alike (−0.001 on R21's
   own twins); the one-scale-per-Linear packing is a code defect with zero score cost. A third
   ViT is not worth it: +0.07 sps locally, half the second's, for another ViT's FLOPs.
+
+### Round 25 (2026-09-13) — fp16 autocast: accuracy-free, baked, self-verifying, uploaded
+
+Round 24 showed the board charges GPU compute, so this round looked for compute that can be cut
+without touching the four error subscores. Nothing was trained; four small GPU jobs.
+
+* **Screen (`rp_r25a`).** R21's and R24's uploaded Track-1 archives, each precision mode in a
+  fresh process. **fp16 autocast** left every error metric identical to 4–5 decimals, moved the
+  prediction 6e-4, and kept **permutation invariance exact**. **TF32** did the same (5–9e-5,
+  permutation exact): the batch-position hazard that got it disabled in round 15b does not show
+  at these shapes. **bf16 crashes** in the spectral path, because `torch.complex` has no
+  BFloat16. Local timing across separate processes was noise.
+* **`_spec_bmm` now pins its real spectral matmul to fp32.** Autocast puts `bmm` on its fp16
+  list, and the half result made `torch.complex` build a ComplexHalf tensor — "experimental" in
+  torch 2.2. With autocast off the change is bit-identical: 0.000e+00 on both tracks against the
+  archives on the board.
+* **`AMP` is a BAKED constant** in both `submission.py` files, like `FUSE`; `build_round13.sh`
+  sets it from `RPDE_SHIP_AMP='"fp16"'`. `None` is the fp32 path every earlier round shipped.
+  A non-None value is **verified against fp32 at load time** (untimed) on a probe and dropped on
+  any exception, non-finite output, or disagreement above 2e-2. `AMP_ACTIVE` and
+  `AMP_PROBE_DIFF` record what ran. On Track 2 the check runs before the CUDA graph is captured.
+  The `RPDE_AMP` / `RPDE_TF32` environment switches steer measurement drivers only; the board
+  never sets them.
+* **`verify/amp_path.py` is the gate.** It loads an archive as shipped and as an `AMP = None`
+  twin of itself, then checks `AMP_ACTIVE`, the four error metrics through the scorer,
+  permutation invariance and the Track-2 graph. It also times the two **interleaved in one
+  process**, the only local timing that has reproduced in this project.
+* **`rp_r25b`: R24's exact archive with `AMP = "fp16"`.** Probe diff 6.5e-4 / 9.4e-4. Track 1
+  metrics against the fp32 twin are identical to 4–5 decimals (sps 59.539 both), and Track 2
+  keeps its graph. **Interleaved timing: Track 1 1.918 → 1.510 ms/window (−21 %); Track 2
+  7.022 → 3.768 ms/step (−46 %).**
+* **Uploaded 2026-09-13 on both boards (R25 / T2R12).** Estimates of record:
+  * **T1 81.356** against R24. The floor, 81.313, assumes none of the local cut transfers; the
+    optimistic 81.404 assumes all of it does.
+  * **T2 81.223** against T2R9 (81.107–81.345). This package also carries the second ViT.
+
+  How much of the A100's cut an unknown board GPU realises is exactly what the pair reads.
+* **The validity rule is a fingerprint, not an identity.** fp16 moves the prediction by 6e-4,
+  about 0.001 of a board subscore, so R25's error subscores CANNOT equal R24's if fp16 ran:
+  * tiny moves (±0.005) mean fp16 ran, and `time` reads its effect;
+  * **all identical to six decimals** means the load-time self-check fell back to fp32 on the
+    board GPU, and `time` is only drift;
+  * a move above 0.01 voids the A/B.
 

@@ -1,5 +1,31 @@
 # Track 1 submission — 11-member mixed-family ensemble, 4 fused invocations (kit v9, round 12)
 
+> **STALE BELOW THIS BOX: everything under it documents the round-12 package.**
+>
+> **Current state (2026-09-13).** The last upload is **R25 = xfam6fp16**:
+> * four all-data w96 L8 cmb3sim FNOs, fused into one `StackedFNO`;
+> * R21's ViT plus one cmb3sim ViT, fused into one `StackedViT` — 2 invocations in all;
+> * int8 packing (`--linear tensor`), band `Track_1/bands/r24_xfam6.npz`, ALPHA 0.60,
+>   `AMP = "fp16"`.
+>
+> **Build:** `bash Track_1/submit_fno/build_round13.sh ALPHA`. `RPDE_A` names the shipped
+> members and `RPDE_M` the held-out twins the band is fitted on. `RPDE_BAND` reuses a band byte
+> for byte instead of refitting. The remaining switches are `RPDE_INT8=1`,
+> `RPDE_LINEAR=tensor|row|fp16`, `RPDE_SHIP_AMP='"fp16"'`, `RPDE_SPEC_PATH=bmm`,
+> `RPDE_HOST_WRITE=torch` and `RPDE_TAG=...`. Add `RPDE_FORCE=1` when other jobs hold GPUs;
+> that is safe for any build whose timing is not being recorded.
+>
+> **Constants that ship are BAKED into `submission.py`:** `ALPHA`, `FUSE`, `AMP`, `SPEC_PATH`,
+> `HOST_WRITE`, `BLEND_BETA`. Environment switches (`RPDE_AMP`, `RPDE_TF32`, ...) steer
+> measurement drivers only; the board never sets them.
+>
+> **Gates:**
+> * `validate_strict.py` runs inside the build;
+> * `verify/pkg_identity.py` answers "is this the archive on the board?";
+> * `verify/fuse_vit.py`, `verify/amp_path.py`, and `verify/cpu_smoke_submission.py` (GPU-free).
+>
+> History: `CLAUDE.md`, rounds 18–25.
+
 An honest forecaster. Reads only its own input window; it would score identically if the
 evaluator called it one window at a time, and `validate_strict.py` asserts that as a test.
 
