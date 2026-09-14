@@ -324,7 +324,8 @@ def main() -> None:
     ap.add_argument("--arch",
                     choices=["unet", "fno", "deeponet", "afno", "dilres", "ufno", "vit",
                              "cnext_unet", "unet_mod", "ffno", "ffno_nff", "swin_unet",
-                             "simvp", "stvit"],
+                             "simvp", "stvit", "swin_unet_b6", "swin_unet_win16",
+                             "swin_unet_p1"],
                     default="unet",
                     help="round 15 adds afno / dilres / ufno / vit, all with FNO2d's "
                          "interface. --width is the trunk width (the token dim for "
@@ -617,6 +618,19 @@ def main() -> None:
     ap.add_argument("--all-data", action="store_true",
                     help="train on ALL trajectories including the held-out ones. Submission "
                          "checkpoints only -- it makes local evaluation meaningless.")
+    ap.add_argument("--drop-path", type=float, default=None,
+                    help="stochastic-depth rate for the families that have it (swin_unet*, simvp, "
+                         "stvit), linearly ramped over the blocks. Unset keeps each family's own "
+                         "default (swin_unet 0.1). A training-time rate: nothing in the "
+                         "state_dict changes, so every loader rebuilds the checkpoint as before.")
+    ap.add_argument("--oracle-cond", action="store_true",
+                    help="DIAGNOSTIC ONLY, never shipped (2026-09-14 wave 2). FiLM-condition "
+                         "every FNO block on the TRUE (Re, AoA) of the window, read from its "
+                         "trajectory's `<Re>_<AoA>` stem (models_alt.oracle_cond_features). "
+                         "predict() is not given the condition, so the checkpoint cannot ship; "
+                         "its value is how much held-out error knowing the condition removes "
+                         "(Track_1/screen_oracle.py). Under ~2 %% and the conditioning idea "
+                         "closes. Off, nothing is built and the RNG stream is untouched.")
     args = ap.parse_args()
 
     # Store the AS-TRAINED noise width: 0 when no samples are drawn, so a checkpoint's own blob
@@ -673,6 +687,21 @@ def main() -> None:
         raise NotImplementedError(
             "--lam-tail needs the per-element field error the --loss mse branch forms; "
             "--loss rel only produces a per-sample norm")
+    if args.drop_path is not None and not (args.arch.startswith("swin_unet")
+                                           or args.arch in ("simvp", "stvit")):
+        raise SystemExit(f"--drop-path is not a knob of --arch {args.arch}")
+    if args.oracle_cond:
+        # Every forward outside the real batch (sim, aux, FGN samples) and every batch-mixing or
+        # out-of-window input would see the model without its condition: refuse rather than
+        # half-condition a diagnostic.
+        if args.arch != "fno":
+            raise SystemExit(f"--oracle-cond is implemented on --arch fno only (got {args.arch})")
+        bad = [f for f, on in (("--sim", bool(args.sim)), ("--aux-fstride", args.aux_fstride > 0),
+                               ("--fgn", args.fgn > 0), ("--mixup", args.mixup > 0.0),
+                               ("--subpix", args.subpix > 0.0), ("--hist", args.hist),
+                               ("--ctx", args.ctx != T_IN)) if on]
+        if bad:
+            raise SystemExit(f"--oracle-cond refuses {bad}")
 
     if args.seed >= 0:
         torch.manual_seed(args.seed)
@@ -709,6 +738,16 @@ def main() -> None:
     # `trajs` by construction.
     names = trajectory_names(args.data, exclude=excl, phases=PHASES_ALL[:args.phases])
     is_hi = np.isin([int(n.split("_")[1]) for n in names], args.aoa_hi)[idx[:, 0]]
+    cond_tab = None
+    if args.oracle_cond:
+        # One row per trajectory-phase, aligned with `trajs` (same glob, same sort, same phase
+        # loop), so a batch's conditions are a gather on column 0 of its (traj, start) pairs.
+        from models_alt import oracle_cond_features
+        cond_tab = torch.from_numpy(oracle_cond_features(
+            [float(n.split("_")[0]) for n in names],
+            [float(n.split("_")[1]) for n in names])).to(dev)
+        print(f"--oracle-cond: FiLM on the TRUE (Re, AoA) of {len(names)} trajectory-phases "
+              f"(DIAGNOSTIC ONLY; the checkpoint cannot ship)", flush=True)
     if args.aoa_only:
         idx = idx[is_hi]
         is_hi = is_hi[is_hi]
@@ -820,7 +859,9 @@ def main() -> None:
                   osc_global=args.osc_global, osc_zeromean=args.osc_zeromean,
                   tbasis=args.tbasis, mode_drop=args.mode_drop,
                   fgn_dim=args.fgn_dim, p_head=args.sim_p_head,
-                  sub_head=args.subpix > 0.0).to(dev)
+                  sub_head=args.subpix > 0.0,
+                  cond_dim=(2 if args.oracle_cond else 0),
+                  drop_path=args.drop_path).to(dev)
     print(f"params: {sum(p.numel() for p in model.parameters())/1e6:.2f}M", flush=True)
 
     if args.init:
@@ -953,6 +994,11 @@ def main() -> None:
                     # rather than a second pass through eight spectral blocks.
                     raw, logstd, sub = model(inp, detach_var=args.detach_var,
                                              return_sub=True)
+                elif cond_tab is not None:
+                    # --oracle-cond: the batch's TRUE (Re, AoA), gathered by trajectory index.
+                    raw, logstd = model(inp, detach_var=args.detach_var,
+                                        cond=cond_tab[sel[:, 0].to(dev)])
+                    sub = None
                 else:
                     raw, logstd = model(inp, detach_var=args.detach_var)
                     sub = None

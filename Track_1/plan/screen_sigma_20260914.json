@@ -23,7 +23,14 @@
   "t1_standalone": 0.0099,
   "t2_standalone": 0.0099,
   "t1_partner": 0.0031,
-  "definition": "sample sd (ddof 1) over the three FNO cmb3sim twins of the HALVED projection. standalone: the twin as the whole package vs base. partner: 0.5*acc_1to1 of base vs base minus that twin (one member's contribution; time identical)."
+  "definition": "sample sd (ddof 1) over the three FNO cmb3sim twins of the HALVED projection. standalone: the twin as the whole package vs base. partner: 0.5*acc_1to1 of base vs base minus that twin (one member's contribution; time identical).",
+  "t1_standalone_x4": 0.0119,
+  "t2_standalone_x4": 0.012,
+  "t1_standalone_x4_cons": 0.0238,
+  "t2_standalone_x4_cons": 0.024,
+  "t1_standalone_cons": 0.0198,
+  "t2_standalone_cons": 0.0198,
+  "cons_note": "*_standalone_cons = 2 x the halved spread (identical latency across twins, negative standalone accuracy deltas)"
  },
  "per_twin": [
   {

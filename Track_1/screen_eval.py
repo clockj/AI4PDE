@@ -98,7 +98,19 @@ LATENCY_TERMS = (
     "enter. X x K fused compute = X x (FNO x4 fused / FNO x1) at the same batch.")
 ROLE_OF_ARCH = {"ffno": "fno_member", "ffno_nff": "fno_member", "swin_unet": "vit_replacement",
                 "fno": "control"}
-FORMULA = ("proj = 0.5*final_v9.delta(anchor, [rel_p, tke_p, mvpe_p, time_anchor, sps_1to1]) "
+PROFILE_JSON = os.path.join(HERE, "plan", "screen_swin_profile_20260914.json")
+P1_BASIS = ("P1 = Swin x4 fused (one invocation) + ViT x2 (one invocation) against R25 / T2R12 "
+            "(FNO x4 fused + ViT x2, also two invocations). Accuracy: predict_board on the held-out "
+            "Swin x K + ViT x2 set against the base twins, K = the most Swin seeds available (K < 4 "
+            "is conservative); a K = 4 extrapolation (a + b/K on the board errors and local sps) is "
+            "added once K = 1, 2, 3 exist. Gains halved, losses in full, board ms floored. Latency: "
+            "T1 = 4 x Swin b64 fp16 - FNO x4 fused (b64 is FLOP-bound); T2 = the profile's stack "
+            "proxy (prepared Swin at batch 4, CUDA graph, best precision) - FNO x4 fused b1 graph "
+            "fp16 when plan/screen_swin_profile_20260914.json has it, else the FNO fused/single "
+            "ratio applied to the Swin row.")
+FORMULA = ("RECORDED (09-14 calibration): gains halved, losses in full, board ms floored at the lowest "
+           "one-invocation reading. plan (proj_plan_*): "
+           "proj = 0.5*final_v9.delta(anchor, [rel_p, tke_p, mvpe_p, time_anchor, sps_1to1]) "
            "+ final_v9.delta(anchor, [rel_a, tke_a, mvpe_a, time_p, sps_a]); subscores from "
            "predict_board.py --anchor (candidate and anchor err/sigma sets held out, bands refit "
            "by fit_band.py --band-p 0.45 at ALPHA 0.60, --anchor-local-ms 0, --local-ms = delta "
@@ -356,6 +368,43 @@ def conservative(p: dict, track: int) -> dict:
                 proj_cons=round(0.5 * max(acc, 0.0) + min(acc, 0.0) + lat_f, 4))
 
 
+def calibrate_keys(row: dict) -> dict:
+    """Write the CALIBRATED projections into the ledger's required keys (09-14).
+
+    plan/screen_kcurve_20260914.json: the one standalone package the board has scored (FNO x4
+    cmb3sim alone, R20 / T2R8) lost -0.199 / -0.208 of accuracy against R25 / T2R12. This method
+    predicts -0.223 / -0.219 with losses in full and -0.141 / -0.136 with them halved, so the
+    proxy does NOT over-read losses, while R24 says it over-reads cuts ~2x. Every recorded
+    dFinal therefore halves GAINS only -- `proj_cons` in the details -- and the plan's all-halved
+    number moves to proj_plan_*. For a partner that gains accuracy the two are identical."""
+    det = row.get("proj_detail") or {}
+    x4 = row.get("standalone_x4_detail") or {}
+    x4 = {int(k): v for k, v in x4.items()}
+    role = row.get("role", "partner")
+    if role == "fno_member":
+        src = {"proj_dfinal_t1_standalone": det.get("t1_standalone"),
+               "proj_dfinal_t2_standalone": det.get("t2_standalone"),
+               "proj_dfinal_t1_partner": det.get("t1_member_swap"),
+               "proj_dfinal_t2_partner": det.get("t2_member_swap"),
+               "proj_primary": det.get("t1_member_swap"),
+               "proj_dfinal_t1_member_swap_vs_base": det.get("t1_member_swap_vs_base")}
+    else:
+        src = {"proj_dfinal_t1_standalone": x4.get(1), "proj_dfinal_t2_standalone": x4.get(2),
+               "proj_dfinal_t1_partner": det.get("t1_partner"),
+               "proj_dfinal_t2_partner": det.get("t2_partner"),
+               "proj_dfinal_t1_replace_vits": det.get("t1_replace"),
+               "proj_dfinal_t2_replace_vits": det.get("t2_replace"),
+               "proj_primary": det.get("t1_replace") if role == "vit_replacement"
+               else det.get("t1_partner")}
+    for k, d in src.items():
+        if d and "proj_cons" in d:
+            row["proj_plan_" + k.replace("proj_dfinal_", "").replace("proj_", "")] = d["proj"]
+            row[k] = d["proj_cons"]
+    row["proj_calibration"] = ("recorded dFinal = gains halved, losses in full, board ms floored "
+                               "(plan/screen_kcurve_20260914.json); plan all-halved in proj_plan_*")
+    return row
+
+
 def primary_parts(det: dict, role: str):
     """(standalone T1, partner T1, partner T2, primary T1) projections of a row, by role."""
     if role == "fno_member":
@@ -524,7 +573,8 @@ def arm_eval(args) -> None:
     cfg = cfg_of(X[0])
     arch = cfg["arch"]
     family = args.family if args.family != "auto" else (arch if arch in ("fno", "vit") else "new")
-    role = args.role if args.role != "auto" else ROLE_OF_ARCH.get(arch, "partner")
+    role = (args.role if args.role != "auto" else
+            ROLE_OF_ARCH.get(arch, "vit_replacement" if arch.startswith("swin_unet") else "partner"))
     lat = load_lat(args.lat)
     xrow = lat_row_for(lat, cfg, args.lat_row)
     data = Data()
@@ -686,6 +736,7 @@ def arm_eval(args) -> None:
             d_rel_l2_subscore=round(s_["subs_pred"]["rel_l2"] - _anchor_sub(s_["anchor"], "rel_l2"), 4),
             d_sps_containment=round(0.5 * s_["fam_containment_sps"] + s_["ledger_containment_sps"], 4),
             d_tke_subscore=round(s_["subs_pred"]["tke"] - _anchor_sub(s_["anchor"], "tke"), 4))
+    calibrate_keys(row)
     row["verdict_rule"] = verdict_rule(row, sigma)
     upsert(row)
     print(f"[{args.arm}] upserted into {LEDGER} ({row['eval_s']} s); primary {row['proj_primary']:+.4f}"
@@ -703,9 +754,10 @@ def verdict_rule(row: dict, sigma: dict | None) -> str:
         return "control (the no-sim recipe's FNO reference; no verdict)"
     if not sigma:
         return "no sigma_seed yet"
-    # Plan formula on every term (main 09-14: partner and ViT-pair-replacement projections are
-    # the calibrated case); the standalone entry is X x K, never the extrapolated K = 1 number.
-    s_st = sigma.get("t1_standalone_x4") or sigma.get("t1_standalone")
+    # The required keys hold the CALIBRATED projections (calibrate_keys: gains halved, losses in
+    # full); the standalone entry is X x K, never the extrapolated K = 1 number.
+    s_st = (sigma.get("t1_standalone_x4_cons") or sigma.get("t1_standalone_x4")
+            or sigma.get("t1_standalone"))
     s_pa = sigma.get("t1_partner") or s_st
     cands = [(row["proj_dfinal_t1_standalone"], s_st), (row["proj_dfinal_t1_partner"], s_pa),
              (row["proj_primary"], s_pa)]
@@ -779,6 +831,96 @@ def sigma_seed(args) -> None:
     print(f"wrote {SIGMA_JSON}")
 
 
+def _row(arm: str) -> dict:
+    if os.path.exists(LEDGER):
+        with open(LEDGER) as fh:
+            for line in fh:
+                if line.strip() and json.loads(line).get("arm") == arm:
+                    return json.loads(line)
+    return {}
+
+
+def p1_latency(lat: dict, xrow: dict, track: int) -> tuple[float, str]:
+    """A100 ms delta of Swin x4 fused + ViT x2 against FNO x4 fused + ViT x2 (the ViT group cancels)."""
+    f4 = lat["pkg_fno4_fused"]
+    if track == 1:
+        return (SHIP_FNO * xrow["ms_b64_fp16"] - f4["ms_b64_fp16"],
+                "T1: 4 x Swin b64 fp16 eager - FNO x4 fused b64 fp16 (lat table)")
+    key = t2_key(lat)
+    if os.path.exists(PROFILE_JSON):
+        with open(PROFILE_JSON) as fh:
+            sp = json.load(fh).get("stack_proxy") or {}
+        if sp.get("swin_prep_best_b4g_ms") and sp.get("pkg_fno4_fused_b1g_fp16_ms"):
+            return (sp["swin_prep_best_b4g_ms"] - sp["pkg_fno4_fused_b1g_fp16_ms"],
+                    f"T2: prepared Swin at batch 4, CUDA graph, {sp.get('swin_prep_best_name')} - "
+                    f"FNO x4 fused b1 graph fp16, one process (profile stack proxy)")
+    ratio = f4[key] / lat["ref_fno_w96L8"][key]
+    return (ratio * xrow[key] - f4[key],
+            f"T2: FNO fused-4 / single ratio {ratio:.3f} at {key} applied to the Swin row - FNO x4 fused")
+
+
+def p1_mode(args) -> None:
+    """P1 = Swin x K + ViT x2 as the package (main 09-14): projection role `primary`."""
+    import final_v9
+    import predict_board as pb
+    from sps9 import sc
+    swins = [os.path.abspath(c) for c in args.swin]
+    K = len(swins)
+    cfg = cfg_of(swins[0])
+    lat = load_lat(args.lat)
+    xrow = lat_row_for(lat, cfg, args.lat_row)
+    t1, t2 = anchors()
+    logdir = os.path.join(SCREEN, "eval", f"p1_{args.arm}")
+    base = BASE_FNO + BASE_VIT
+    cand = swins + BASE_VIT
+    base_band, cand_band = band_for(base, ALPHA), band_for(cand, ALPHA)
+    rec = dict(K=K, members=[os.path.basename(p) for p in cand], date=time.strftime("%Y-%m-%d %H:%M"),
+               job=os.environ.get("SLURM_JOB_ID"), lat_table=os.path.abspath(args.lat))
+    for track, anchor in ((1, t1), (2, t2)):
+        dms, basis = p1_latency(lat, xrow, track)
+        p = project(cand, cand_band, base_band, ANCHOR_INV, dms, anchor,
+                    os.path.join(logdir, f"predict_board_t{track}_K{K}.txt"), anchor_set=base,
+                    anchor_inv=ANCHOR_INV)
+        p.update(conservative(p, track))
+        p["latency_basis"] = basis
+        rec[f"t{track}"] = p
+        print(f"  P1 K={K} T{track}: proj {p['proj_cons']:+.4f} (acc 1:1 {p['acc_1to1']:+.4f}, lat "
+              f"{p['lat_floored']:+.4f}, dA100ms {dms:+.4f}; {basis})", flush=True)
+    row = _row(args.arm)
+    p1 = dict(row.get("p1_detail", {}))
+    p1[str(K)] = rec
+    kmax = max(int(k) for k in p1)
+    best = p1[str(kmax)]
+    upd = dict(arm=args.arm, p1_detail=p1, proj_primary_K=kmax, proj_primary_basis=P1_BASIS,
+               proj_dfinal_t1_primary=best["t1"]["proj_cons"],
+               proj_dfinal_t2_primary=best["t2"]["proj_cons"])
+    if all(str(k) in p1 for k in (1, 2, 3)):
+        ks = np.array([1.0, 2.0, 3.0])
+        design = np.stack([np.ones(3), 1.0 / ks], 1)
+        ext = {}
+        for track, anchor in ((1, t1), (2, t2)):
+            A = pb.ANCHORS[anchor]
+            a = [A[k] for k in ("rel_l2", "tke", "mvpe", "time", "sps")]
+            subs4 = {}
+            for key in ("rel_l2", "tke", "mvpe"):
+                e = np.array([2.0 * (100.0 / p1[str(int(k))][f"t{track}"]["subs_pred"][key] - 1.0) for k in ks])
+                ca, cb = np.linalg.lstsq(design, e, rcond=None)[0]
+                subs4[key] = float(sc.score_error(ca + cb / 4.0))
+            sv = np.array([p1[str(int(k))][f"t{track}"]["sps"]["sps_1to1"] for k in ks])
+            sa, sb = np.linalg.lstsq(design, sv, rcond=None)[0]
+            sps4 = float(sa + sb / 4.0)
+            acc = final_v9.delta(a, [subs4["rel_l2"], subs4["tke"], subs4["mvpe"], A["time"], sps4])[0]
+            lat_f = p1["3"][f"t{track}"]["lat_floored"]
+            ext[f"t{track}"] = dict(subs_pred=subs4, sps_1to1=round(sps4, 4), acc_1to1=round(acc, 4),
+                                    lat_floored=lat_f,
+                                    proj_cons=round(0.5 * max(acc, 0.0) + min(acc, 0.0) + lat_f, 4))
+        upd["p1_k4_extrapolated"] = ext
+        print(f"  P1 K=4 extrapolated: T1 {ext['t1']['proj_cons']:+.4f}  T2 {ext['t2']['proj_cons']:+.4f}")
+    upsert(upd)
+    print(f"[{args.arm}] P1 K={K} upserted; primary (K={kmax}) T1 {upd['proj_dfinal_t1_primary']:+.4f} "
+          f"T2 {upd['proj_dfinal_t2_primary']:+.4f}")
+
+
 def kcurve_mode(args) -> None:
     """GPU: refit the FNO K-curve, then CALIBRATE the X x K standalone on the one case the board
     has scored -- the FNO x4 cmb3sim package alone at one invocation (R20 on Track 1, T2R8 on
@@ -832,6 +974,13 @@ def rescore(args) -> None:
         with open(SIGMA_JSON) as fh:
             sj = json.load(fh)
         sigma = sj.get("sigma_seed")
+        if sigma is not None and "t1_standalone_x4" in sigma and "t1_standalone_x4_cons" not in sigma:
+            # The twins' X x4 standalone accuracy deltas are all negative (about -0.164), so with
+            # losses in full their spread is exactly twice the halved one.
+            sigma["t1_standalone_x4_cons"] = round(2.0 * sigma["t1_standalone_x4"], 4)
+            sigma["t2_standalone_x4_cons"] = round(2.0 * sigma["t2_standalone_x4"], 4)
+            with open(SIGMA_JSON, "w") as fh:
+                json.dump(sj, fh, indent=1)
         if sigma is not None and "t1_standalone_cons" not in sigma:
             # Latency is identical across the twins and each twin's standalone accuracy delta
             # against the five-member base is negative, so the conservative spread (acc not
@@ -850,13 +999,12 @@ def rescore(args) -> None:
         det = r["proj_detail"]
         for k, p in det.items():
             p.update(conservative(p, 1 if k.startswith("t1_") else 2))
-        st1, pa1, pa2, prim = primary_parts(det, r.get("role", "partner"))
-        upd = dict(arm=r["arm"], proj_detail=det, sigma_seed=sigma,
-                   proj_cons_t1_partner=pa1["proj_cons"],
-                   proj_cons_t2_partner=pa2["proj_cons"], proj_cons_primary=prim["proj_cons"])
-        upd["verdict_rule"] = verdict_rule({**r, **upd}, sigma)
+        merged = calibrate_keys({**r, "proj_detail": det, "sigma_seed": sigma})
+        merged["verdict_rule"] = verdict_rule(merged, sigma)
+        upd = {k: merged[k] for k in merged if k == "arm" or k.startswith("proj_")
+               or k in ("sigma_seed", "verdict_rule")}
         upsert(upd)
-        print(r["arm"], {k: v for k, v in upd.items() if k.startswith("proj_cons")},
+        print(r["arm"], {k: v for k, v in upd.items() if k.startswith("proj_dfinal") or k == "proj_primary"},
               upd["verdict_rule"])
 
 
@@ -904,6 +1052,9 @@ def main() -> None:
     ap.add_argument("--note", default=None)
     ap.add_argument("--sigma-seed", action="store_true")
     ap.add_argument("--register", action="store_true")
+    ap.add_argument("--p1", action="store_true",
+                    help="P1 = Swin x K + ViT x2 projection role (needs --arm and --swin)")
+    ap.add_argument("--swin", nargs="+", default=None, help="--p1: the held-out Swin seeds")
     ap.add_argument("--kcurve", action="store_true",
                     help="GPU: FNO K-curve + X x K standalone calibration against R20 / T2R8")
     ap.add_argument("--rescore", action="store_true",
@@ -917,6 +1068,10 @@ def main() -> None:
         return rescore(args)
     if args.kcurve:
         return kcurve_mode(args)
+    if args.p1:
+        if not (args.arm and args.swin):
+            raise SystemExit("--p1 needs --arm and --swin")
+        return p1_mode(args)
     if not args.arm:
         raise SystemExit("--arm is required")
     if args.register:

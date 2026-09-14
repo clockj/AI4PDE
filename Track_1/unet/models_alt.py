@@ -89,7 +89,7 @@ class FNO2d(nn.Module):
                  mean_head: bool = False, osc_modes: int = 0,
                  osc_global: bool = False, osc_zeromean: bool = False,
                  tbasis: int = 0, mode_drop: float = 0.0, p_head: bool = False,
-                 sub_head: bool = False):
+                 sub_head: bool = False, cond_dim: int = 0):
         super().__init__()
         # Channel dropout between spectral blocks -- the one classical regularizer the project
         # never tried, against a diagnosis that is the project's own: with 74 trajectories the
@@ -287,9 +287,26 @@ class FNO2d(nn.Module):
         # draw the same initialization for the trunk and the two deployed heads.
         self.head_sub = nn.Conv2d(width, 3 * T_OUT * C, 1) if sub_head else None
 
+        # --oracle-cond (2026-09-14 wave 2): a DIAGNOSTIC ONLY, never shipped -- predict() is not
+        # given the condition. Per block, a FiLM on the normalized activation driven by the TRUE
+        # (Re, AoA) of the window (`oracle_cond_features`), so the arm measures how much error
+        # knowing the condition removes. The last Linear is zero-initialised (weight AND bias), so
+        # training starts at the plain FNO. CONSTRUCTED LAST, like head_p / head_sub, so at a
+        # fixed --seed the trunk and both heads draw the same initialisation as the cond_dim = 0
+        # control. cond_dim = 0 builds nothing and the forward below is unchanged.
+        self.cond_dim = cond_dim
+        self.cond_film = None
+        if cond_dim > 0:
+            self.cond_film = nn.ModuleList([
+                nn.Sequential(nn.Linear(cond_dim, 64), nn.GELU(), nn.Linear(64, 2 * width))
+                for _ in range(n_layers)])
+            for f in self.cond_film:
+                nn.init.zeros_(f[-1].weight)
+                nn.init.zeros_(f[-1].bias)
+
     def forward(self, prev: torch.Tensor, detach_var: bool = False,
                 z: torch.Tensor | None = None, return_p: bool = False,
-                return_sub: bool = False):
+                return_sub: bool = False, cond: torch.Tensor | None = None):
         """`z` is the FGN noise vector, (B, fgn_dim). None (or fgn_dim = 0) is the plain FNO.
 
         `return_p` appends the auxiliary pressure prediction, (B, T_OUT, H, W), read off the
@@ -301,6 +318,9 @@ class FNO2d(nn.Module):
         # (B, fgn_dim) x (fgn_dim, 2*width) matmul against a loop body that is spectral.
         films = ([f(z).chunk(2, -1) for f in self.film]
                  if z is not None and self.film is not None else None)
+        # --oracle-cond: (B, cond_dim) true-condition features -> one (scale, shift) per block.
+        cfilms = ([f(cond).chunk(2, -1) for f in self.cond_film]
+                  if cond is not None and self.cond_film is not None else None)
         hs = []
         for i, (s, p, n) in enumerate(zip(self.spec, self.point, self.norm)):
             a = n(s(h) + p(h))
@@ -311,6 +331,9 @@ class FNO2d(nn.Module):
                 # marginal-only training (CRPS per element) produce usable joint samples.
                 dg, db = films[i]
                 a = (1.0 + dg[:, :, None, None]) * a + db[:, :, None, None]
+            if cfilms is not None:
+                cg, cb = cfilms[i]
+                a = (1.0 + cg[:, :, None, None]) * a + cb[:, :, None, None]
             h = h + self.drop(torch.nn.functional.gelu(a))
             hs.append(h)
         field = self.head_field(h)
@@ -529,7 +552,8 @@ def build(arch: str, width: int, var_head: bool, extra_ch: int, modes_y: int = 1
           mean_head: bool = False, osc_modes: int = 0,
           osc_global: bool = False,
           osc_zeromean: bool = False, tbasis: int = 0, mode_drop: float = 0.0,
-          p_head: bool = False, sub_head: bool = False):
+          p_head: bool = False, sub_head: bool = False, cond_dim: int = 0,
+          drop_path: float | None = None):
     """Factory shared by train2.py and eval_wp.run so both build identical objects.
 
     `fgn_dim` defaults to 0, which builds no `film` module at all -- so a state_dict saved
@@ -537,6 +561,10 @@ def build(arch: str, width: int, var_head: bool, extra_ch: int, modes_y: int = 1
     unaffected.
     """
     from model import UNetTwoHead
+    if cond_dim and arch != "fno":
+        raise ValueError(f"cond_dim (the --oracle-cond diagnostic) is FNO-only, not {arch}")
+    if drop_path is not None and not (arch.startswith("swin_unet") or arch in ("simvp", "stvit")):
+        raise ValueError(f"drop_path is not a knob of {arch}")
     if arch == "unet":
         # `dropout` is threaded through so the U-Net can be run at round 15's operating point.
         # Dropout2d adds no parameters and is inert in eval(), so a --dropout U-Net checkpoint
@@ -562,16 +590,16 @@ def build(arch: str, width: int, var_head: bool, extra_ch: int, modes_y: int = 1
                      point_mlp, var_hidden, var_deep, var_in_std,
                      var_pred_std, fgn_dim, dropout, mean_head, osc_modes, osc_global,
                      osc_zeromean, tbasis, mode_drop, p_head=p_head,
-                     sub_head=sub_head)
+                     sub_head=sub_head, cond_dim=cond_dim)
     if arch == "deeponet":
         return DeepONetCh(p, trunk_width=width * 2, branch_width=width,
                           var_head=var_head, extra_ch=extra_ch)
-    if arch in WAVE1_ARCHS:
+    if arch in WAVE1_ARCHS or arch in PHASE2_ARCHS:
         # 2026-09-14 wave 1 (the block at the end of this file). Each family is fully specified
         # by (width, n_layers, modes_y, modes_x) plus class constants, because _fno.load_any's
         # experimental branch rebuilds a checkpoint from exactly those blob fields.
         return build_wave1(arch, width, var_head, extra_ch, modes_y, modes_x, n_layers,
-                           dropout=dropout)
+                           dropout=dropout, drop_path=drop_path)
     raise ValueError(arch)
 
 
@@ -913,6 +941,8 @@ class ViT2d(_GridIn):
 import torch.nn.functional as F  # noqa: E402
 
 WAVE1_ARCHS = ("cnext_unet", "unet_mod", "ffno", "ffno_nff", "swin_unet", "simvp", "stvit")
+# Phase-2 Swin ladder (2026-09-14): structural variants, one knob each (see SwinUNet.__init__).
+PHASE2_ARCHS = ("swin_unet_b6", "swin_unet_win16", "swin_unet_p1")
 
 
 def _drop_path(x: torch.Tensor, p: float, training: bool) -> torch.Tensor:
@@ -1249,24 +1279,54 @@ class _WindowAttnV2(nn.Module):
         rel = (c[:, :, None] - c[:, None, :]).permute(1, 2, 0)              # (N, N, 2)
         idx = (rel[..., 0] + wh - 1) * (2 * ww - 1) + (rel[..., 1] + ww - 1)
         self.register_buffer("rel_index", idx.reshape(-1), persistent=False)
+        # Inference cache (SwinUNet.prepare_inference): None = the as-trained path, recomputed per call.
+        self._frozen = None
+
+    @torch.no_grad()
+    def freeze_cache(self) -> None:
+        """Compute the logit scale and the continuous position bias ONCE, in fp32, by the very ops
+        forward() runs, and keep them -- plus, lazily per (batch, dtype), the attention mask forward()
+        would build -- so the eval path skips the CPB MLP, the clamp/exp and the mask arithmetic on
+        every call. Same tensors, same strides: exact against the uncached forward. .train() drops it."""
+        n = int(round(self.rel_index.numel() ** 0.5))
+        with torch.autocast(device_type=self.coords.device.type, enabled=False):
+            scale = torch.clamp(self.logit_scale, max=math.log(100.0)).exp()
+            bias = (self.cpb(self.coords)[self.rel_index]
+                    .reshape(n, n, self.heads).permute(2, 0, 1))
+        self._frozen = {"scale": scale, "bias": bias, "am": {}}
+
+    def train(self, mode: bool = True):
+        if mode:
+            self._frozen = None
+        return super().train(mode)
 
     def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
         bw, n, c = x.shape
         q, k, v = (self.qkv(x).reshape(bw, n, 3, self.heads, c // self.heads)
                    .permute(2, 0, 3, 1, 4).unbind(0))
-        scale = torch.clamp(self.logit_scale, max=math.log(100.0)).exp()
+        fz = None if self.training else self._frozen
+        scale = (torch.clamp(self.logit_scale, max=math.log(100.0)).exp() if fz is None
+                 else fz["scale"])
         q = F.normalize(q, dim=-1) * scale
         k = F.normalize(k, dim=-1)
-        bias = (self.cpb(self.coords)[self.rel_index]
-                .reshape(n, n, self.heads).permute(2, 0, 1))                 # (heads, N, N)
-        if mask is None:
-            am = bias.unsqueeze(0)
-        else:                                                                # mask (nW, 1, N, N)
-            nw = mask.shape[0]
-            am = ((bias[None, None] + mask[None]).expand(bw // nw, nw, self.heads, n, n)
-                  .reshape(bw, self.heads, n, n))
         dt = v.dtype
-        o = F.scaled_dot_product_attention(q.to(dt), k.to(dt), v, attn_mask=am.to(dt),
+        key = (bw, dt, mask is not None)
+        if fz is not None and key in fz["am"]:
+            am = fz["am"][key]
+        else:
+            bias = ((self.cpb(self.coords)[self.rel_index]
+                     .reshape(n, n, self.heads).permute(2, 0, 1)) if fz is None
+                    else fz["bias"])                                         # (heads, N, N)
+            if mask is None:
+                am = bias.unsqueeze(0)
+            else:                                                            # mask (nW, 1, N, N)
+                nw = mask.shape[0]
+                am = ((bias[None, None] + mask[None]).expand(bw // nw, nw, self.heads, n, n)
+                      .reshape(bw, self.heads, n, n))
+            am = am.to(dt)
+            if fz is not None:
+                fz["am"][key] = am
+        o = F.scaled_dot_product_attention(q.to(dt), k.to(dt), v, attn_mask=am,
                                            dropout_p=self.attn_p if self.training else 0.0,
                                            scale=1.0)
         return self.proj_drop(self.proj(o.transpose(1, 2).reshape(bw, n, c)))
@@ -1346,6 +1406,18 @@ class _PatchExpand(nn.Module):
         return self.norm(x)
 
 
+class _TokenProj(nn.Module):
+    """(B, H, W, C) -> (B, H, W, out): Linear + LayerNorm, the patch-1 stand-in for _PatchExpand."""
+
+    def __init__(self, dim: int, out_dim: int):
+        super().__init__()
+        self.proj = nn.Linear(dim, out_dim, bias=False)
+        self.norm = nn.LayerNorm(out_dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.norm(self.proj(x))
+
+
 class SwinUNet(_GridIn):
     """Hierarchical SwinV2 U-Net on patch-2 tokens (the scOT / Swin-Unet layout).
 
@@ -1364,39 +1436,74 @@ class SwinUNet(_GridIn):
     SKIP_BLOCKS = 2
 
     def __init__(self, width: int = 96, n_layers: int = 2, var_head: bool = True,
-                 extra_ch: int = 0, dropout: float = 0.0, drop_path: float = 0.1):
+                 extra_ch: int = 0, dropout: float = 0.0, drop_path: float = 0.1,
+                 window: int | None = None, bottleneck_depth: int | None = None,
+                 patch: int = 2):
         super().__init__()
-        res = [((H // 2) >> i, (W // 2) >> i) for i in range(self.STAGES)]
+        # Phase-2 ladder knobs (2026-09-14; defaults reproduce wave 1 exactly): `window` for the
+        # encoder / decoder stages (the bottleneck is always ONE global window), `bottleneck_depth`
+        # blocks at the lowest resolution (default n_layers), `patch` 1 or 2 (token grid 32x64 or
+        # 16x32). Arch names swin_unet_win16 / swin_unet_b6 / swin_unet_p1 carry them, because
+        # _fno.load_any rebuilds from (arch, width, n_layers) alone.
+        assert patch in (1, 2), f"patch must be 1 or 2, not {patch}"
+        win = self.WINDOW if window is None else int(window)
+        bd = n_layers if bottleneck_depth is None else int(bottleneck_depth)
+        res = [((H // patch) >> i, (W // patch) >> i) for i in range(self.STAGES)]
         dims = [width * 2 ** i for i in range(self.STAGES)]
         heads = [max(d // 32, 1) for d in dims]
-        n_blocks = n_layers * (2 * self.STAGES - 1)
+        n_blocks = n_layers * 2 * (self.STAGES - 1) + bd
         dpr = iter([drop_path * i / max(n_blocks - 1, 1) for i in range(n_blocks)])
 
-        def stage(i):
-            return nn.ModuleList([_SwinV2Block(dims[i], res[i], heads[i], self.WINDOW,
+        def stage(i, depth=n_layers, window=win):
+            return nn.ModuleList([_SwinV2Block(dims[i], res[i], heads[i], window,
                                                bool(j % 2), dropout, next(dpr))
-                                  for j in range(n_layers)])
+                                  for j in range(depth)])
 
-        self.embed = nn.Conv2d(CH + extra_ch + 2, width, 2, stride=2)
+        self.embed = nn.Conv2d(CH + extra_ch + 2, width, patch, stride=patch)
         self.embed_norm = nn.LayerNorm(width)
         self.enc = nn.ModuleList([stage(i) for i in range(self.STAGES - 1)])
         self.merge = nn.ModuleList([_PatchMergeV2(dims[i]) for i in range(self.STAGES - 1)])
         self.skip_blocks = nn.ModuleList([
             nn.Sequential(*[_ConvNeXtBlock(dims[i], dropout) for _ in range(self.SKIP_BLOCKS)])
             for i in range(self.STAGES - 1)])
-        self.bottleneck = stage(self.STAGES - 1)
+        self.bottleneck = stage(self.STAGES - 1, bd, max(res[-1]))
         self.expand, self.skip, self.dec = nn.ModuleList(), nn.ModuleList(), nn.ModuleList()
         for i in reversed(range(self.STAGES - 1)):
             self.expand.append(_PatchExpand(dims[i + 1], dims[i]))
             self.skip.append(nn.Linear(2 * dims[i], dims[i]))
             self.dec.append(stage(i))
         self.out_ch = max(width // 2, 32)
-        self.final = _PatchExpand(width, self.out_ch)
+        self.final = (_PatchExpand(width, self.out_ch) if patch == 2
+                      else _TokenProj(width, self.out_ch))
         self.refine = nn.Sequential(nn.GELU(), nn.Conv2d(self.out_ch, self.out_ch, 3, padding=1))
         self.apply(_trunc_init)
         self.head_field, self.head_logstd = _heads(self.out_ch, var_head)
+        # prepare_inference(fp32_max_batch=k): batches of <= k windows run fp32 under autocast.
+        self.fp32_max_batch = 0
+
+    @torch.no_grad()
+    def prepare_inference(self, fp32_max_batch: int = 0):
+        """Track-2 speedups (2026-09-14), both EXACT against the as-trained forward:
+        (1) every window attention freezes its logit scale, position bias and per-(batch, dtype)
+            mask (`_WindowAttnV2.freeze_cache`) -- the CPB MLP and mask arithmetic leave the step;
+        (2) batches of at most `fp32_max_batch` windows run in fp32 even under autocast: at batch 1
+            autocast's fp16 <-> fp32 casts around LayerNorm and normalize cost more than fp16 saves.
+        Call after loading the weights; .train() drops the frozen tensors."""
+        self.eval()
+        for m in self.modules():
+            if isinstance(m, _WindowAttnV2):
+                m.freeze_cache()
+        self.fp32_max_batch = int(fp32_max_batch)
+        return self
 
     def forward(self, prev: torch.Tensor, detach_var: bool = False):
+        if (self.fp32_max_batch and len(prev) <= self.fp32_max_batch and prev.is_cuda
+                and torch.is_autocast_enabled()):
+            with torch.autocast(device_type="cuda", enabled=False):
+                return self._forward(prev.float(), detach_var)
+        return self._forward(prev, detach_var)
+
+    def _forward(self, prev: torch.Tensor, detach_var: bool = False):
         x = self.embed_norm(self.embed(self.cat(prev)).permute(0, 2, 3, 1))
         skips = []
         for blocks, merge, sblk in zip(self.enc, self.merge, self.skip_blocks):
@@ -1665,8 +1772,14 @@ class STViT(_GridIn):
 
 
 def build_wave1(arch: str, width: int, var_head: bool, extra_ch: int, modes_y: int,
-                modes_x: int, n_layers: int, dropout: float = 0.0):
-    """Wave-1 factory, reached from `build`. Only (width, n_layers, modes_y, modes_x) vary."""
+                modes_x: int, n_layers: int, dropout: float = 0.0,
+                drop_path: float | None = None):
+    """Wave-1 / Phase-2 factory, reached from `build`. Only (width, n_layers, modes_y, modes_x)
+    vary per checkpoint; `drop_path` (train2 --drop-path) is a training-time rate that leaves no
+    trace in the state_dict, so a loader passing None rebuilds every checkpoint unchanged."""
+    kw = {} if drop_path is None else {"drop_path": float(drop_path)}
+    if kw and not (arch.startswith("swin_unet") or arch in ("simvp", "stvit")):
+        raise ValueError(f"drop_path is not a knob of {arch}")
     if arch == "cnext_unet":
         return CNeXtUNet(width, n_layers, var_head, extra_ch, dropout)
     if arch == "unet_mod":
@@ -1675,9 +1788,30 @@ def build_wave1(arch: str, width: int, var_head: bool, extra_ch: int, modes_y: i
         return FFNO2d(width, modes_y, modes_x, n_layers, var_head, extra_ch, dropout,
                       ff=(arch == "ffno"))
     if arch == "swin_unet":
-        return SwinUNet(width, n_layers, var_head, extra_ch, dropout)
+        return SwinUNet(width, n_layers, var_head, extra_ch, dropout, **kw)
+    if arch == "swin_unet_b6":
+        return SwinUNet(width, n_layers, var_head, extra_ch, dropout, bottleneck_depth=6, **kw)
+    if arch == "swin_unet_win16":
+        return SwinUNet(width, n_layers, var_head, extra_ch, dropout, window=16, **kw)
+    if arch == "swin_unet_p1":
+        return SwinUNet(width, n_layers, var_head, extra_ch, dropout, patch=1, **kw)
     if arch == "simvp":
-        return SimVP2(width, n_layers, var_head, extra_ch, dropout)
+        return SimVP2(width, n_layers, var_head, extra_ch, dropout, **kw)
     if arch == "stvit":
-        return STViT(width, n_layers, var_head, extra_ch, dropout)
+        return STViT(width, n_layers, var_head, extra_ch, dropout, **kw)
     raise ValueError(arch)
+
+
+
+# --oracle-cond condition features (2026-09-14 wave 2 diagnostic). FIXED affine maps of log Re and
+# AoA -- no statistic of any split enters -- shared by train2.py and Track_1/screen_oracle.py.
+ORACLE_LOGRE_MU, ORACLE_LOGRE_SD = 9.3, 0.6          # log Re spans 8.23 (3750) to 10.19 (26700)
+ORACLE_AOA_MU, ORACLE_AOA_SD = 10.0, 7.0710678       # AoA 0, 5, 10, 15, 20
+
+
+def oracle_cond_features(re, aoa) -> np.ndarray:
+    """(N,) Reynolds numbers and (N,) angles of attack in degrees -> (N, 2) float32 features."""
+    re = np.asarray(re, dtype=np.float64)
+    aoa = np.asarray(aoa, dtype=np.float64)
+    return np.stack([(np.log(re) - ORACLE_LOGRE_MU) / ORACLE_LOGRE_SD,
+                     (aoa - ORACLE_AOA_MU) / ORACLE_AOA_SD], -1).astype(np.float32)
