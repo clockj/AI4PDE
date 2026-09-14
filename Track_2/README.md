@@ -89,6 +89,13 @@ batch.
   and did not pay for the second ViT's FLOPs. xfam5fp16 against T2R12 is the next read.
 * **`SPEC_PATH = "bmm"`:** the complex einsum's strided weight copy was 28 % of the step. A
   batched real 2×2-block matmul removes it: −16.6 %, 2e-6 relative, replicated three times.
+* **Where a graphed step goes** (`step_breakdown.py`, T2R12's archive, batch 1, 2026-09-14, on a
+  shared node): `ttt_step` 3.9 ms = graph replay 3.7 + input copy 0.07 + outputs back 0.15 (CPU
+  input; 0.02 / 0.04 with a CUDA input). Inside the replay: StackedFNO(4) 2.4 ms, StackedViT(2)
+  1.5, average + compose + band 0.1. Eager, the same step is 12.2 ms over 653 kernels, so a launch
+  costs ~15–22 µs and the graph removes all of it. What remains scales with FLOPs (graph b4/b1:
+  FNO 1.73, ViT 1.32, post ~1.1). fp16 cuts the ViT stack 3.4× (5.0 → 1.5 ms) but makes the FNO
+  stack slower at batch 1 (2.1 → 2.4 ms); FNO fp32 + ViT fp16 would be ~3.5 ms against 3.8.
 * **Round 13's anatomy** (width-24 members) is why fusion and the graph exist:
 
 | members | invocations | eager ms | **CUDA-graph ms** | graph `time_score` |

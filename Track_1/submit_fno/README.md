@@ -43,6 +43,7 @@ The evaluator's process never sees our shell, so anything that ships is a consta
 | `ALPHA` | `0.60` | fluctuation rescaling; changing it requires refitting the band |
 | `FUSE` | `True` | `False` only for the invocation-cost measurement (R23) |
 | `AMP` | `None` (R24) · `"fp16"` (R25: ran on the board, 37 % of the local cut kept) · `None` in the tree | autocast behind a load-time check against fp32; `AMP_ACTIVE` and `AMP_PROBE_DIFF` record what ran |
+| `GRAPH` | `False` (R25) · `True` in the round-26 build · `False` in the tree | `predict()`'s device-side chunk as one CUDA graph at `_pick_batch`'s size, captured at import and verified bit-exact against eager (`GRAPH_ACTIVE`, `GRAPH_PROBE_DIFF`); a tail shorter than a chunk runs eager, because fp16 kernels differ by batch size; the graph path scales the band by `1 + GRAPH_FP`, so the board's sps shows which path ran. Build knob `RPDE_SHIP_GRAPH=True`; gate `verify/graph_path.py` |
 | `SPEC_PATH` | `"bmm"` | real 2×2-block spectral matmul |
 | `HOST_WRITE` | `"torch"` | threaded output write, bit-identical to the numpy one |
 | `BLEND_BETA` | `0.0` | R14's gated mean-blend, off since the hidden set proved to be in range |

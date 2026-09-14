@@ -85,6 +85,15 @@ sed -i "s/^FUSE = .*/FUSE = ${RPDE_FUSE:-True}/" Track_1/submit_fno/submission.p
 # literal, so pass the quotes: RPDE_SHIP_AMP='"fp16"'. A job that sets it restores `AMP = None`.
 sed -i "s/^AMP = .*/AMP = ${RPDE_SHIP_AMP:-None}/" Track_1/submit_fno/submission.py Track_2/submit/submission.py
 grep -H "^AMP = " Track_1/submit_fno/submission.py Track_2/submit/submission.py
+# GRAPH is BAKED too (round 26), and on Track 1 only: True captures predict()'s device-side chunk
+# in a CUDA graph at import, verified against eager, and scales the band by (1 + GRAPH_FP) on the
+# graph path so the board result fingerprints which path ran (`verify/graph_path.py`). Unset keeps
+# GRAPH = False, the eager path every earlier round shipped. A job that sets it restores it.
+sed -i "s/^GRAPH = .*/GRAPH = ${RPDE_SHIP_GRAPH:-False}/" Track_1/submit_fno/submission.py
+if [ -n "${RPDE_SHIP_GRAPH_FP:-}" ]; then
+  sed -i "s/^GRAPH_FP = .*/GRAPH_FP = $RPDE_SHIP_GRAPH_FP/" Track_1/submit_fno/submission.py
+fi
+grep -H "^GRAPH = \|^GRAPH_FP = " Track_1/submit_fno/submission.py
 # The gated mean-blend lives only in Track 1's predict(): Track 2's step runs inside a captured
 # CUDA graph, where a data-dependent early-out is not expressible. It fires only for windows
 # outside the training speed range, so NOTHING LOCAL EXERCISES IT -- `verify/blend_path.py` is

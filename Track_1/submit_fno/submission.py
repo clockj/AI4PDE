@@ -138,6 +138,26 @@ _AMP_DT = {"fp16": torch.float16}.get(AMP) if AMP is not None else _fno._AMP
 AMP_ACTIVE = None
 AMP_PROBE_DIFF = None
 
+# GRAPH is BAKED like AMP (round 26). The board charges Track 1 ~1.15 ms per model INVOCATION
+# (R23) -- kernel launches, not FLOPs -- and xfam6 is two invocations per chunk. Track 2 removed
+# exactly that cost with a CUDA graph. True captures the whole device-side chunk of
+# `_fno.predict_fno` -- normalization, every fused group, the member average, compose,
+# denormalization and sigma -- once at import (untimed), at `_pick_batch`'s chunk size, and
+# VERIFIES it against the shipped eager `predict_fno` on a probe: anything that raises, or any
+# disagreement at all, keeps the eager path. `GRAPH_ACTIVE` records what runs. Full chunks replay
+# the graph; a tail shorter than a chunk runs eager at its own size, so every window gets the eager
+# path's numbers bit for bit (a padded tail moved fp16 predictions by 1.5e-3, job 7281411).
+#
+# THE FINGERPRINT. A replayed graph is bit-exact, so a board result could not tell a graph that
+# ran from one that silently fell back. The graph path therefore scales the SPS band's `base`
+# by (1 + GRAPH_FP), once at import: rel_l2 / tke / mvpe cannot move, and sps moves by a small,
+# locally measured amount (`verify/graph_path.py`). Board sps identical to the eager package's
+# means the fallback ran.
+GRAPH = False
+GRAPH_FP = 1e-4
+GRAPH_ACTIVE = None
+GRAPH_PROBE_DIFF = None
+
 _BAND = os.path.join(_HERE, "band.npz")
 _BAND_LEGACY = os.path.join(_HERE, "band.npy")
 
@@ -303,6 +323,117 @@ def _pick_batch(models, dev):
         return 64
 
 
+class _Graphed:
+    """The device-side chunk of `_fno.predict_fno`, replayed as one CUDA graph at a fixed size.
+
+    `body` repeats `predict_fno`'s per-chunk arithmetic op for op (same modules, same autocast,
+    same member weighting, same compose, same affine), so a capture that verifies bit-exact
+    against the eager function on a full chunk returns the eager path's arrays.
+    """
+
+    def __init__(self, models, dev, batch, band):
+        self.models, self.batch = models, int(batch)
+        self.mean = torch.from_numpy(_fno.MEAN).to(dev)
+        self.std = torch.from_numpy(_fno.STD).to(dev)
+        B = self.batch
+        self.gx = torch.zeros((B, 20, 32, 64, 3), dtype=torch.float32, device=dev)
+        self.gy = torch.zeros((B, 20, 32, 64, 2), dtype=torch.float32, device=dev)
+        self.gs = torch.zeros((B, 1, 32, 64, 2), dtype=torch.float32, device=dev)
+        self.graph = None
+        self.band_fp = None if band is None else (band * np.float32(1.0 + GRAPH_FP)).astype(np.float32)
+
+    def body(self):
+        B = self.batch
+        xb = self.gx[..., :2].float()
+        prev = ((xb - self.mean) / self.std).permute(0, 1, 4, 2, 3).reshape(B, 40, 32, 64)
+        y = sig = None
+        total = 0
+        for m in self.models:
+            nm = getattr(m, "n_members", 1)
+            total += nm
+            if _AMP_DT is None:
+                raw, logstd = m(prev)
+            else:
+                with torch.autocast("cuda", dtype=_AMP_DT):
+                    raw, logstd = m(prev)
+                raw = raw.float()
+                logstd = None if logstd is None else logstd.float()
+            yi = raw.reshape(B, 20, 2, 32, 64).permute(0, 1, 3, 4, 2) * nm
+            y = yi if y is None else y + yi
+            if logstd is not None:
+                si = logstd.clamp(-8.0, 2.0).exp().permute(0, 2, 3, 1).unsqueeze(1) * nm
+                sig = si if sig is None else sig + si
+        if total > 1:
+            y = y / total
+            if sig is not None:
+                sig = sig / total
+        if sig is not None and ALPHA > 0:
+            m_ = y.mean(1, keepdim=True)
+            f_ = y - m_
+            s_ = y.std(1, keepdim=True, unbiased=False)
+            y = m_ + f_ * ((ALPHA * sig + (1 - ALPHA) * s_) / (s_ + 1e-6))
+        if sig is not None:
+            self.gs.copy_((sig * self.std).float())
+        self.gy.copy_((y * self.std + self.mean).float())
+
+    def run(self, x, pred, sig):
+        B, n = self.batch, len(x)
+        full = n - n % B
+        for i in range(0, full, B):
+            self.gx.copy_(torch.from_numpy(x[i:i + B]))
+            self.graph.replay()
+            if sig is not None:
+                sig[i:i + B] = self.gs.cpu().numpy()
+            torch.from_numpy(pred)[i:i + B, ..., :2].copy_(self.gy.cpu())
+        if full < n:
+            # The tail runs EAGER, at its own size, exactly as the eager path runs it. fp16 kernels
+            # are chosen per batch size, and a tail padded to the chunk size moved the prediction by
+            # 1.5e-3 (graph_path.py, job 7281411); this way every window gets the eager numbers.
+            _fno.predict_fno(self.models, x[full:], "cuda", alpha=ALPHA, batch=B, out=pred[full:],
+                             sigma_out=None if sig is None else sig[full:], amp=_AMP_DT)
+
+
+def _capture_graph(models, dev, batch, band):
+    """A verified `_Graphed`, or None. Never raises; only ever called at import."""
+    global GRAPH_PROBE_DIFF
+    if not GRAPH or dev != "cuda":
+        return None
+    try:
+        if any(getattr(m, "self_norm", False) for m in models):
+            return None
+        G = _Graphed(models, dev, batch, band)
+        s = torch.cuda.Stream()
+        s.wait_stream(torch.cuda.current_stream())
+        with torch.no_grad(), torch.cuda.stream(s):
+            for _ in range(3):
+                G.body()
+        torch.cuda.current_stream().wait_stream(s)
+        torch.cuda.synchronize()
+        g = torch.cuda.CUDAGraph()
+        with torch.no_grad(), torch.cuda.graph(g):
+            G.body()
+        G.graph = g
+        # Verify against the SHIPPED eager function, on exactly one full chunk.
+        rng = np.random.default_rng(1)
+        probe = np.zeros((G.batch, 20, 32, 64, 3), dtype=np.float32)
+        probe[..., :2] = (_fno.MEAN + _fno.STD * rng.standard_normal((G.batch, 20, 32, 64, 2))).astype(np.float32)
+        ref = np.zeros_like(probe)
+        sref = np.zeros((G.batch, 1, 32, 64, 2), dtype=np.float32)
+        with torch.no_grad():
+            _fno.predict_fno(models, probe, dev, alpha=ALPHA, batch=G.batch, out=ref, sigma_out=sref,
+                             amp=_AMP_DT)
+        outp = np.zeros_like(probe)
+        outs = np.zeros_like(sref)
+        with torch.no_grad():
+            G.run(probe, outp, outs)
+        torch.cuda.synchronize()
+        d = max(float(np.abs(outp - ref).max()), float(np.abs(outs - sref).max()))
+        GRAPH_PROBE_DIFF = d
+        return G if d == 0.0 else None
+    except Exception:
+        return None
+
+
 def _load():
     """Load once at import, so the evaluator's timing of predict() excludes it."""
     dev = "cuda" if torch.cuda.is_available() else "cpu"
@@ -354,7 +485,13 @@ def _load():
     global _AMP_DT, AMP_ACTIVE
     _AMP_DT = _amp_verified(models, dev)
     AMP_ACTIVE = None if _AMP_DT is None else str(_AMP_DT).replace("torch.", "")
-    return models, dev, band, ref, p, _pick_batch(models, dev)
+    batch = _pick_batch(models, dev)
+    # Captured AFTER the batch is chosen and AFTER AMP is decided, so the graph records the
+    # chunk size and the precision that will run.
+    global GRAPH_ACTIVE
+    graphed = _capture_graph(models, dev, batch, band)
+    GRAPH_ACTIVE = (graphed is not None) if GRAPH else None
+    return models, dev, band, ref, p, batch, graphed
 
 
 try:
@@ -368,7 +505,8 @@ def predict(input_array, metadata=None):
     global _state
     if _state is None:
         _state = _load()
-    models, dev, band, ref, p, batch = _state
+    models, dev, band, ref, p, batch = _state[:6]
+    graphed = _state[6] if len(_state) > 6 else None
 
     x = np.ascontiguousarray(input_array, dtype=np.float32)
     # Allocate the output once, zero-filled, and let the model write u,v into it. The pressure
@@ -378,7 +516,12 @@ def predict(input_array, metadata=None):
     # (N, 1, 32, 64, 2), 5.5 MB at N = 336 against the field's 165 MB -- cheap enough to ask
     # for inside a timed call, and only requested when the band actually uses it.
     sig = np.empty((len(x), 1, 32, 64, 2), dtype=np.float32) if p else None
-    _fno.predict_fno(models, x, dev, alpha=ALPHA, batch=batch, out=pred, sigma_out=sig, amp=_AMP_DT)
+    if graphed is not None:
+        with torch.no_grad():
+            graphed.run(x, pred, sig)
+        band = graphed.band_fp            # the fingerprint: base * (1 + GRAPH_FP)
+    else:
+        _fno.predict_fno(models, x, dev, alpha=ALPHA, batch=batch, out=pred, sigma_out=sig, amp=_AMP_DT)
     # Before the band: the interval has to bracket what is actually returned.
     _apply_blend(pred, x)
 
