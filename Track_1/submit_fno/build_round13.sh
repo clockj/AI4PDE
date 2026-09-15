@@ -138,6 +138,10 @@ FP16=""; [ "${RPDE_FP16:-0}" = "1" ] && FP16="--fp16"
 # -0.001 / -0.005 / -0.004 for tensor / row / fp16). Unset keeps "tensor", the smallest and the
 # one on the board, so an uploaded archive still rebuilds byte for byte.
 [ -n "${RPDE_LINEAR:-}" ] && FP16="$FP16 --linear $RPDE_LINEAR"
+# RPDE_LINEAR_ARCH="swin_unet=fp16" overrides RPDE_LINEAR per member family, matched on each blob's `arch`
+# (09-14): Swin members ship fp16 Linears (verify/fuse_swin.py section 5) while the ViTs keep "tensor",
+# tensor-identical to R25's. Unset, every member packs as before.
+[ -n "${RPDE_LINEAR_ARCH:-}" ] && FP16="$FP16 --linear-arch $RPDE_LINEAR_ARCH"
 echo "packing flags: ${FP16:-(fp32)}"
 echo "=== 3/5  Track 1: build + strict gate ==================================="
 $PY Track_1/submit_fno/validate_strict.py --band Track_2/submit/band8.npz $FP16 \

@@ -28,6 +28,20 @@ SIZE_CAP_MB = 256
 DEFAULT_CKPT = os.path.join(TRACK1, "unet", "fno_grad.pth")
 
 
+def _linear_for(blob: dict, default: str, overrides) -> str:
+    """The --linear mode for ONE member: the first --linear-arch ARCH=MODE whose ARCH prefixes the
+    blob's own `arch` field (a blob without one is an FNO), else `default`. With no overrides every
+    member packs exactly as before. 09-14: Swin members ship fp16 Linears, the ViTs keep 'tensor'."""
+    arch = str(blob.get("arch", "fno"))
+    for item in overrides or ():
+        key, _, mode = item.partition("=")
+        if not key or mode not in ("tensor", "row", "fp16"):
+            raise SystemExit(f"--linear-arch {item!r}: expected ARCH=tensor|row|fp16")
+        if arch.startswith(key):
+            return mode
+    return default
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--band", default=os.path.join(HERE, "band.npz"),
@@ -74,6 +88,10 @@ def main() -> None:
                          "'row' is a scale per output row, 'fp16' leaves Linears in fp16. See "
                          "_fno.pack_state_dict. SCORED, all three are free (r24e: d sps "
                          "-0.001 / -0.005 / -0.004 on R21's own twins), so the default stays.")
+    ap.add_argument("--linear-arch", nargs="+", default=[], metavar="ARCH=MODE",
+                    help="per-family override of --linear, matched as a prefix of each blob's own "
+                         "`arch` (swin_unet=fp16 also covers swin_unet_b6). Members matching no "
+                         "entry use --linear, so without this flag every archive packs as before.")
     args = ap.parse_args()
     # The packer and the unpacker are the same file, loaded by path so this script keeps
     # working from any cwd and so the int8 format cannot drift between the two.
@@ -108,7 +126,7 @@ def main() -> None:
             blob = torch.load(src, map_location="cpu")
             blob["model_state_dict"] = _pack(blob["model_state_dict"],
                                              fp16=args.fp16 or args.int8, int8=args.int8,
-                                             linear=args.linear)
+                                             linear=_linear_for(blob, args.linear, args.linear_arch))
             torch.save(blob, os.path.join(STAGE, name))
         else:
             shutil.copy2(src, os.path.join(STAGE, name))

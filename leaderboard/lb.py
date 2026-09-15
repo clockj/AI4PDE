@@ -81,9 +81,20 @@ _FAMILY_ALIAS = {
 
 
 def family_key(name):
-    """Canonical family of a free-text family name, or None when it has no slot."""
+    """Canonical family of a free-text family or arch name, or None when it has no slot.
+
+    Exact alias first; otherwise the longest alias the name STARTS with, so Phase-2 variants such as
+    `swin_unet_b6`, `swin_unet_win16` or `ffno_w64` keep their family's colour.
+    """
     k = "".join(ch for ch in str(name or "").lower() if ch.isalnum())
-    return _FAMILY_ALIAS.get(k)
+    if not k:
+        return None
+    if k in _FAMILY_ALIAS:
+        return _FAMILY_ALIAS[k]
+    for a in sorted(_FAMILY_ALIAS, key=len, reverse=True):
+        if k.startswith(a):
+            return _FAMILY_ALIAS[a]
+    return None
 
 
 def fam_var(name):
@@ -140,7 +151,7 @@ def load_screen(name="screen.jsonl"):
     return list(by.values()), (f"{bad} unreadable" if bad else "")
 
 
-ROLE_ZH = {"standalone": "单独", "partner": "作伙伴", "replace": "替换 ViT 对"}
+ROLE_ZH = {"standalone": "单独", "partner": "作伙伴", "replace": "替换 ViT 对", "p2_l8": "P2-L8"}
 
 
 def _extrapolated(r, role):
@@ -152,10 +163,15 @@ def _extrapolated(r, role):
 
 def best_proj(r):
     """(value, role) of an arm's best Track-1 projection -- standalone (X x4 fused, one invocation),
-    partner (the package plus X) or replacing the ViT pair -- never an extrapolated figure."""
+    partner (the package plus X), replacing the ViT pair, or for F-FNO the P2-L8 package -- never an
+    extrapolated figure. An F-FNO row's `standalone` field is the K=1 single-model swap read (main 09-14),
+    so for F-FNO it is shown relabelled and never plotted."""
+    ffno = arm_family(r) == "F-FNO"
     c = []
     for k, role in (("proj_dfinal_t1_standalone", "standalone"), ("proj_dfinal_t1_partner", "partner"),
-                    ("proj_dfinal_t1_replace_vits", "replace")):
+                    ("proj_dfinal_t1_replace_vits", "replace"), ("proj_dfinal_t1_p2_l8", "p2_l8")):
+        if (role == "standalone" and ffno) or (role == "p2_l8" and not ffno):
+            continue
         v = _num(r.get(k))
         if v is not None and not _extrapolated(r, role):
             c.append((v, role))
@@ -168,9 +184,12 @@ def arm_family(r):
     fam = r.get("family")
     if family_key(fam):
         return family_key(fam)
-    bb = str(r.get("backbone") or "").split()
-    k = family_key(bb[0]) if bb else None
-    return k or (str(fam) if fam else "?")
+    for src in (r.get("arch"), r.get("backbone")):
+        words = str(src or "").split()
+        k = family_key(words[0]) if words else None
+        if k:
+            return k
+    return str(fam) if fam else "?"
 
 
 def screen_order(r):
@@ -999,7 +1018,8 @@ def _curve_section(B):
 
 SCREEN_VERDICTS = {"advance": ("advance", "晋级"), "replicate": ("replicate", "复现"),
                    "pending": ("pending", "待定"), "drop": ("drop", "淘汰")}
-SCREEN_STATUS = {"queued": "排队", "running": "运行中", "done": "完成", "failed": "失败"}
+SCREEN_STATUS = {"queued": "排队", "running": "运行中", "training": "训练中", "trained": "已训练",
+                 "done": "完成", "failed": "失败"}
 
 
 def _screen_mark(x, y, r):
@@ -1097,9 +1117,12 @@ def _screen_svg(S):
         if _num(r.get("ms_b64_fp16")) is not None:
             lat.append(f"{_num(r.get('ms_b64_fp16')):.3f} ms b64 fp16")
         pr_en, pr_zh = [], []
-        for k, en, zh in (("proj_dfinal_t1_standalone", "T1 standalone", "T1 单独"),
+        k1swap = arm_family(r) == "F-FNO"      # its `standalone` field is the K=1 single-model swap read
+        for k, en, zh in (("proj_dfinal_t1_standalone", "T1 K=1 swap" if k1swap else "T1 standalone",
+                           "T1 K=1 替换" if k1swap else "T1 单独"),
                           ("proj_dfinal_t1_partner", "T1 partner", "T1 作伙伴"),
                           ("proj_dfinal_t1_replace_vits", "T1 replace ViTs", "T1 替换 ViT 对"),
+                          ("proj_dfinal_t1_p2_l8", "T1 P2-L8", "T1 P2-L8"),
                           ("proj_dfinal_t2_partner", "T2 partner", "T2 作伙伴")):
             v = _num(r.get(k))
             if v is not None:
@@ -1164,12 +1187,12 @@ def _screen_table(S):
             d = r.get(block) if isinstance(r.get(block), dict) else {}
             return f"<td>{_fmt(d.get(k), fmt)}</td>"
 
-        def proj(k, r=r):
+        def proj(k, r=r, note=""):
             x = _num(r.get(k))
             if x is None:
                 return '<td><span class="d">&mdash;</span></td>'
             cls = ' class="g"' if x >= 0.10 else (' class="b"' if x < 0 else "")
-            return f"<td{cls}>{x:+.3f}</td>"
+            return f"<td{cls}>{x:+.3f}{note}</td>"
         sq = " sq" if fam_square(fam) else ""
         stc = f' class="st-{_esc(st)}"' if st in ("failed", "running") else ""
         o.append(
@@ -1185,7 +1208,9 @@ def _screen_table(S):
             f'<td>{_fmt(r.get("ms_ratio_fno"), "%.2f")}</td>'
             + "".join(metric(b, k, f) for b in ("single_full", "single_aoa1520")
                       for k, f in (("rel", "%.4f"), ("tke", "%.4f"), ("mvpe", "%.4f"), ("sps", "%.2f")))
-            + proj("proj_dfinal_t1_standalone") + proj("proj_dfinal_t1_partner")
+            + proj("proj_dfinal_t1_standalone",
+                   note=(f'<br><span class="d">{t("K=1 swap", "K=1 替换")}</span>' if fam == "F-FNO" else ""))
+            + proj("proj_dfinal_t1_partner")
             + proj("proj_dfinal_t1_replace_vits") + proj("proj_dfinal_t2_partner")
             + k1cell(r)
             + f'<td class="l"><span class="chip v-{_esc(v)}">{t(_esc(ven), _esc(vzh))}</span></td>'

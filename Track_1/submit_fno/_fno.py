@@ -977,12 +977,1026 @@ class StackedViT(nn.Module):
         return field, logstd
 
 
+# ---------------------------------------------------------------------------------------------
+# Swin U-Net members (backbone campaign, 2026-09-14): a vendored SwinUNet and its fused stack
+# ---------------------------------------------------------------------------------------------
+_F = torch.nn.functional
+
+# `arch` -> SwinUNet keyword overrides, mirroring `models_alt.build_wave1`. The Phase-2 ladder
+# names each structural variant in the checkpoint's own `arch` field, because `load_any`
+# rebuilds a member from (arch, width, n_layers, var_head) alone.
+SWIN_VARIANTS = {"swin_unet": {}, "swin_unet_b6": {"bottleneck_depth": 6},
+                 "swin_unet_win16": {"window": 16}, "swin_unet_p1": {"patch": 1}}
+
+# Which SwinUNet class `load_any` builds for a `swin_unet*` checkpoint.
+#   "auto"        the training definition -- exactly the `models_alt.build` call `load_any` made
+#                 before this existed -- when this file sits in the repo next to
+#                 `../unet/models_alt.py` (every local instrument, so screens are untouched),
+#                 and the vendored copy below everywhere else, i.e. inside every archive.
+#                 Decided by the FILE's location, not by what is importable: a process that has
+#                 already imported models_alt still gets the vendored class from a package dir.
+#   "vendored"    the copy below, always.
+#   "models_alt"  the training definition, always (raises outside the repo).
+# `verify/fuse_swin.py` checks the two classes bitwise against each other on real checkpoints.
+SWIN_IMPL = "auto"
+_UNET_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "unet")
+
+
+def _win_part(x: torch.Tensor, wh: int, ww: int) -> torch.Tensor:
+    b, h, w, c = x.shape
+    x = x.reshape(b, h // wh, wh, w // ww, ww, c).permute(0, 1, 3, 2, 4, 5)
+    return x.reshape(-1, wh * ww, c)
+
+
+def _win_merge(win: torch.Tensor, wh: int, ww: int, h: int, w: int) -> torch.Tensor:
+    c = win.shape[-1]
+    b = win.shape[0] // ((h // wh) * (w // ww))
+    x = win.reshape(b, h // wh, w // ww, wh, ww, c).permute(0, 1, 3, 2, 4, 5)
+    return x.reshape(b, h, w, c)
+
+
+class _WindowAttnV2(nn.Module):
+    """Copy of `models_alt._WindowAttnV2`: SwinV2 scaled cosine attention (temperature clamped at
+    100), a continuous position bias (2 -> 512 -> heads MLP over log-spaced offsets), and the
+    shifted-window mask, through SDPA with scale 1. Dropout is training-only and omitted."""
+
+    def __init__(self, dim: int, window: tuple[int, int], heads: int):
+        super().__init__()
+        wh, ww = window
+        assert dim % heads == 0
+        self.heads = heads
+        self.qkv = nn.Linear(dim, 3 * dim)
+        self.proj = nn.Linear(dim, dim)
+        self.logit_scale = nn.Parameter(torch.log(10.0 * torch.ones(heads, 1, 1)))
+        self.cpb = nn.Sequential(nn.Linear(2, 512), nn.ReLU(), nn.Linear(512, heads))
+        dy = torch.arange(-(wh - 1), wh, dtype=torch.float32) / max(wh - 1, 1)
+        dx = torch.arange(-(ww - 1), ww, dtype=torch.float32) / max(ww - 1, 1)
+        tab = torch.stack(torch.meshgrid(dy, dx, indexing="ij"), -1) * 8.0
+        tab = torch.sign(tab) * torch.log2(tab.abs() + 1.0) / math.log2(8.0)
+        self.register_buffer("coords", tab.reshape(-1, 2), persistent=False)
+        cy, cx = torch.meshgrid(torch.arange(wh), torch.arange(ww), indexing="ij")
+        c = torch.stack([cy.flatten(), cx.flatten()])
+        rel = (c[:, :, None] - c[:, None, :]).permute(1, 2, 0)
+        idx = (rel[..., 0] + wh - 1) * (2 * ww - 1) + (rel[..., 1] + ww - 1)
+        self.register_buffer("rel_index", idx.reshape(-1), persistent=False)
+        self._frozen = None
+
+    @torch.no_grad()
+    def freeze_cache(self) -> None:
+        """`models_alt`'s inference cache: logit scale and position bias computed once, in fp32."""
+        n = int(round(self.rel_index.numel() ** 0.5))
+        with torch.autocast(device_type=self.coords.device.type, enabled=False):
+            scale = torch.clamp(self.logit_scale, max=math.log(100.0)).exp()
+            bias = (self.cpb(self.coords)[self.rel_index]
+                    .reshape(n, n, self.heads).permute(2, 0, 1))
+        self._frozen = {"scale": scale, "bias": bias, "am": {}}
+
+    def train(self, mode: bool = True):
+        if mode:
+            self._frozen = None
+        return super().train(mode)
+
+    def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
+        bw, n, c = x.shape
+        q, k, v = (self.qkv(x).reshape(bw, n, 3, self.heads, c // self.heads)
+                   .permute(2, 0, 3, 1, 4).unbind(0))
+        fz = None if self.training else self._frozen
+        scale = (torch.clamp(self.logit_scale, max=math.log(100.0)).exp() if fz is None
+                 else fz["scale"])
+        q = _F.normalize(q, dim=-1) * scale
+        k = _F.normalize(k, dim=-1)
+        dt = v.dtype
+        key = (bw, dt, mask is not None)
+        if fz is not None and key in fz["am"]:
+            am = fz["am"][key]
+        else:
+            bias = ((self.cpb(self.coords)[self.rel_index]
+                     .reshape(n, n, self.heads).permute(2, 0, 1)) if fz is None
+                    else fz["bias"])
+            if mask is None:
+                am = bias.unsqueeze(0)
+            else:
+                nw = mask.shape[0]
+                am = ((bias[None, None] + mask[None]).expand(bw // nw, nw, self.heads, n, n)
+                      .reshape(bw, self.heads, n, n))
+            am = am.to(dt)
+            if fz is not None:
+                fz["am"][key] = am
+        o = _F.scaled_dot_product_attention(q.to(dt), k.to(dt), v, attn_mask=am, dropout_p=0.0,
+                                            scale=1.0)
+        return self.proj(o.transpose(1, 2).reshape(bw, n, c))
+
+
+class _SwinV2Block(nn.Module):
+    """Copy of `models_alt._SwinV2Block` (res-post-norm; shifted windows with Swin's -100 mask).
+    Drop-path and dropout are identity in eval and omitted; the MLP keeps its indices."""
+
+    def __init__(self, dim: int, res: tuple[int, int], heads: int, window: int, shift: bool):
+        super().__init__()
+        h, w = res
+        wh, ww = min(window, h), min(window, w)
+        sy = wh // 2 if (shift and wh < h) else 0
+        sx = ww // 2 if (shift and ww < w) else 0
+        self.win, self.shift = (wh, ww), (sy, sx)
+        self.attn = _WindowAttnV2(dim, (wh, ww), heads)
+        self.norm1 = nn.LayerNorm(dim)
+        self.mlp = nn.Sequential(nn.Linear(dim, 4 * dim), nn.GELU(), nn.Identity(),
+                                 nn.Linear(4 * dim, dim), nn.Identity())
+        self.norm2 = nn.LayerNorm(dim)
+        mask = None
+        if sy or sx:
+            img = torch.zeros(1, h, w, 1)
+            ys = (slice(0, -wh), slice(-wh, -sy), slice(-sy, None)) if sy else (slice(None),)
+            xs = (slice(0, -ww), slice(-ww, -sx), slice(-sx, None)) if sx else (slice(None),)
+            cnt = 0
+            for a in ys:
+                for b_ in xs:
+                    img[:, a, b_, :] = cnt
+                    cnt += 1
+            mw = _win_part(img, wh, ww).squeeze(-1)
+            d = mw[:, None, :] - mw[:, :, None]
+            mask = torch.zeros_like(d).masked_fill(d != 0, -100.0).unsqueeze(1)
+        self.register_buffer("mask", mask, persistent=False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        _, h, w, _ = x.shape
+        sy, sx = self.shift
+        y = torch.roll(x, (-sy, -sx), (1, 2)) if (sy or sx) else x
+        y = _win_merge(self.attn(_win_part(y, *self.win), self.mask), *self.win, h, w)
+        if sy or sx:
+            y = torch.roll(y, (sy, sx), (1, 2))
+        x = x + self.norm1(y)
+        return x + self.norm2(self.mlp(x))
+
+
+class _PatchMergeV2(nn.Module):
+    """2x2 token merge (B, H, W, C) -> (B, H/2, W/2, 2C): concat, Linear 4C -> 2C, LN."""
+
+    def __init__(self, dim: int):
+        super().__init__()
+        self.reduction = nn.Linear(4 * dim, 2 * dim, bias=False)
+        self.norm = nn.LayerNorm(2 * dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = torch.cat([x[:, 0::2, 0::2], x[:, 1::2, 0::2], x[:, 0::2, 1::2], x[:, 1::2, 1::2]],
+                      -1)
+        return self.norm(self.reduction(x))
+
+
+class _PatchExpand(nn.Module):
+    """(B, H, W, C) -> (B, 2H, 2W, out): Linear C -> 4*out, depth-to-space, LN."""
+
+    def __init__(self, dim: int, out_dim: int):
+        super().__init__()
+        self.expand = nn.Linear(dim, 4 * out_dim, bias=False)
+        self.norm = nn.LayerNorm(out_dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        b, h, w, _ = x.shape
+        x = (self.expand(x).reshape(b, h, w, 2, 2, -1).permute(0, 1, 3, 2, 4, 5)
+             .reshape(b, 2 * h, 2 * w, -1))
+        return self.norm(x)
+
+
+class _TokenProj(nn.Module):
+    """(B, H, W, C) -> (B, H, W, out): Linear + LN, the patch-1 stand-in for _PatchExpand."""
+
+    def __init__(self, dim: int, out_dim: int):
+        super().__init__()
+        self.proj = nn.Linear(dim, out_dim, bias=False)
+        self.norm = nn.LayerNorm(out_dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.norm(self.proj(x))
+
+
+class _ConvNeXtBlock(nn.Module):
+    """Copy of `models_alt._ConvNeXtBlock` (dw 7x7 -> LN -> 4x MLP -> layer scale -> residual)."""
+
+    def __init__(self, dim: int):
+        super().__init__()
+        self.dw = nn.Conv2d(dim, dim, 7, padding=3, groups=dim)
+        self.norm = nn.LayerNorm(dim, eps=1e-6)
+        self.pw1 = nn.Linear(dim, 4 * dim)
+        self.pw2 = nn.Linear(4 * dim, dim)
+        self.gamma = nn.Parameter(torch.full((dim,), 1e-6))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        h = self.pw2(_F.gelu(self.pw1(self.norm(self.dw(x).permute(0, 2, 3, 1)))))
+        h = h * self.gamma.to(h.dtype)
+        return x + h.permute(0, 3, 1, 2)
+
+
+class SwinUNet(nn.Module):
+    """Copy of `Track_1/unet/models_alt.py:SwinUNet` -- the SwinV2 U-Net of the backbone campaign.
+
+    2x2 (or 1x1) patch embedding + LN; encoder levels of `n_layers` blocks alternating regular
+    and shifted windows, each followed by a V2 patch merge; a bottleneck of one global window;
+    every skip through two ConvNeXt blocks; decoder patch expand + concat + Linear + blocks; a
+    final expand to 32x64, one residual 3x3 conv, the shared MLP heads. Module names and
+    registration order are the training definition's, so its checkpoints load with strict=True.
+    Only the inference path is reproduced (no dropout, no drop-path, no initialization).
+    """
+
+    WINDOW = 8
+    STAGES = 3
+    SKIP_BLOCKS = 2
+
+    def __init__(self, width: int = 96, n_layers: int = 2, var_head: bool = True,
+                 window: int | None = None, bottleneck_depth: int | None = None,
+                 patch: int = 2):
+        super().__init__()
+        assert patch in (1, 2), f"patch must be 1 or 2, not {patch}"
+        yy, xx = torch.meshgrid(torch.linspace(-1, 1, H), torch.linspace(-1, 1, W),
+                                indexing="ij")
+        self.register_buffer("grid", torch.stack([xx, yy])[None])
+        win = self.WINDOW if window is None else int(window)
+        bd = n_layers if bottleneck_depth is None else int(bottleneck_depth)
+        res = [((H // patch) >> i, (W // patch) >> i) for i in range(self.STAGES)]
+        dims = [width * 2 ** i for i in range(self.STAGES)]
+        heads = [max(d // 32, 1) for d in dims]
+
+        def stage(i, depth=n_layers, window=win):
+            return nn.ModuleList([_SwinV2Block(dims[i], res[i], heads[i], window, bool(j % 2))
+                                  for j in range(depth)])
+
+        self.embed = nn.Conv2d(CH + 2, width, patch, stride=patch)
+        self.embed_norm = nn.LayerNorm(width)
+        self.enc = nn.ModuleList([stage(i) for i in range(self.STAGES - 1)])
+        self.merge = nn.ModuleList([_PatchMergeV2(dims[i]) for i in range(self.STAGES - 1)])
+        self.skip_blocks = nn.ModuleList([
+            nn.Sequential(*[_ConvNeXtBlock(dims[i]) for _ in range(self.SKIP_BLOCKS)])
+            for i in range(self.STAGES - 1)])
+        self.bottleneck = stage(self.STAGES - 1, bd, max(res[-1]))
+        self.expand, self.skip, self.dec = nn.ModuleList(), nn.ModuleList(), nn.ModuleList()
+        for i in reversed(range(self.STAGES - 1)):
+            self.expand.append(_PatchExpand(dims[i + 1], dims[i]))
+            self.skip.append(nn.Linear(2 * dims[i], dims[i]))
+            self.dec.append(stage(i))
+        self.out_ch = max(width // 2, 32)
+        self.final = (_PatchExpand(width, self.out_ch) if patch == 2
+                      else _TokenProj(width, self.out_ch))
+        self.refine = nn.Sequential(nn.GELU(), nn.Conv2d(self.out_ch, self.out_ch, 3, padding=1))
+        self.head_field = nn.Sequential(nn.Conv2d(self.out_ch, 128, 1), nn.GELU(),
+                                        nn.Conv2d(128, CH, 1))
+        self.head_logstd = None
+        if var_head:
+            self.head_logstd = nn.Sequential(nn.Conv2d(self.out_ch, 128, 1), nn.GELU(),
+                                             nn.Conv2d(128, C, 1))
+        self.fp32_max_batch = 0
+
+    @torch.no_grad()
+    def prepare_inference(self, fp32_max_batch: int = 0):
+        """`models_alt.SwinUNet.prepare_inference`: freeze every attention's scale, bias and
+        masks; batches of at most `fp32_max_batch` windows run fp32 even under autocast."""
+        self.eval()
+        for m in self.modules():
+            if isinstance(m, _WindowAttnV2):
+                m.freeze_cache()
+        self.fp32_max_batch = int(fp32_max_batch)
+        return self
+
+    def forward(self, prev: torch.Tensor, detach_var: bool = False):
+        if (self.fp32_max_batch and len(prev) <= self.fp32_max_batch and prev.is_cuda
+                and torch.is_autocast_enabled()):
+            with torch.autocast(device_type="cuda", enabled=False):
+                return self._forward(prev.float(), detach_var)
+        return self._forward(prev, detach_var)
+
+    def _forward(self, prev: torch.Tensor, detach_var: bool = False):
+        x = torch.cat([prev, self.grid.expand(len(prev), -1, -1, -1)], 1)
+        x = self.embed_norm(self.embed(x).permute(0, 2, 3, 1))
+        skips = []
+        for blocks, merge, sblk in zip(self.enc, self.merge, self.skip_blocks):
+            for blk in blocks:
+                x = blk(x)
+            skips.append(sblk(x.permute(0, 3, 1, 2)).permute(0, 2, 3, 1))
+            x = merge(x)
+        for blk in self.bottleneck:
+            x = blk(x)
+        for expand, skip, blocks, s in zip(self.expand, self.skip, self.dec, reversed(skips)):
+            x = skip(torch.cat([expand(x), s], -1))
+            for blk in blocks:
+                x = blk(x)
+        h = self.final(x).permute(0, 3, 1, 2)
+        h = h + self.refine(h)
+        logstd = None
+        if self.head_logstd is not None:
+            logstd = self.head_logstd(h.detach() if detach_var else h)
+        return self.head_field(h), logstd
+
+
+def _is_swin(m) -> bool:
+    """A SwinUNet member of either definition (vendored above, or models_alt's)."""
+    return type(m).__name__ == "SwinUNet" and all(
+        hasattr(m, a) for a in ("enc", "merge", "skip_blocks", "bottleneck", "expand", "skip",
+                                "dec", "final", "refine", "embed", "grid"))
+
+
+def _swin_signature(m):
+    """Structure a state_dict does not show, or None for every other family.
+
+    `swin_unet_win16` has swin_unet's exact parameter shapes (window size lives only in the
+    non-persistent position tables), so shapes alone would fold the two into one stack."""
+    if not _is_swin(m):
+        return None
+    blocks = [blk for stage in list(m.enc) + [m.bottleneck] + list(m.dec) for blk in stage]
+    return (tuple(m.embed.stride), "expand" if hasattr(m.final, "expand") else "proj",
+            tuple((tuple(b.win), tuple(b.shift), int(b.attn.heads)) for b in blocks),
+            tuple(len(s) for s in m.skip_blocks))
+
+
+def _swin_member(blob: dict, device: str):
+    """The vendored SwinUNet for a `swin_unet*` blob, or None when `SWIN_IMPL` resolves to the
+    training definition -- `load_any` then runs its models_alt branch exactly as before."""
+    impl = SWIN_IMPL
+    if impl not in ("auto", "vendored", "models_alt"):
+        raise ValueError(f"SWIN_IMPL must be 'auto', 'vendored' or 'models_alt', not {impl!r}")
+    if impl == "models_alt" or (
+            impl == "auto" and os.path.exists(os.path.join(_UNET_DIR, "models_alt.py"))):
+        return None
+    arch = blob.get("arch")
+    if arch not in SWIN_VARIANTS:
+        raise ValueError(f"{arch}: no vendored Swin variant (have {', '.join(SWIN_VARIANTS)}); "
+                         "add it to SWIN_VARIANTS once verify/fuse_swin.py passes on it")
+    cfg = blob.get("config", {})
+    return SwinUNet(blob.get("width", cfg.get("width", 96)), blob.get("n_layers", 4),
+                    blob.get("var_head", True), **SWIN_VARIANTS[arch]).to(device)
+
+
+class _StkLN(nn.Module):
+    """K LayerNorms over the last axis of a member-major (K, B, h, w, c) tensor.
+
+    LayerNorm mixes nothing across tokens or members, so the normalization runs once and only
+    the affine is per member -- the kernel's own arithmetic, ((x - mu) * rsqrt) * w + b, in two
+    calls instead of one."""
+
+    def __init__(self, norms):
+        super().__init__()
+        self.eps = float(norms[0].eps)
+        assert all(float(n.eps) == self.eps for n in norms), "LayerNorm eps differs"
+        k, c = len(norms), norms[0].weight.shape[0]
+        self.register_buffer("w", torch.stack([n.weight.detach() for n in norms])
+                             .reshape(k, 1, 1, 1, c).clone(), persistent=False)
+        self.register_buffer("b", torch.stack([n.bias.detach() for n in norms])
+                             .reshape(k, 1, 1, 1, c).clone(), persistent=False)
+
+    def forward(self, x):
+        return torch.addcmul(self.b, _F.layer_norm(x, x.shape[-1:], eps=self.eps), self.w)
+
+
+class _StkLinear(nn.Module):
+    """K Linears as ONE batched matmul over a member-major (K, ..., in) tensor."""
+
+    def __init__(self, lins):
+        super().__init__()
+        self.register_buffer("w", torch.stack([lin.weight.detach() for lin in lins]).clone(),
+                             persistent=False)
+        has_b = [lin.bias is not None for lin in lins]
+        assert all(has_b) or not any(has_b), "bias present on some members only"
+        self.register_buffer("b", torch.stack([lin.bias.detach() for lin in lins])[:, None, :]
+                             .clone() if has_b[0] else None, persistent=False)
+
+    def forward(self, x):
+        k, o, i = self.w.shape
+        t = x.reshape(k, -1, i)
+        wt = self.w.transpose(1, 2)
+        y = torch.bmm(t, wt) if self.b is None else torch.baddbmm(self.b, t, wt)
+        return y.view(tuple(x.shape[:-1]) + (o,))
+
+
+class _StkPoint(_StkLinear):
+    """K same-shape 1x1 Conv2d (bias, groups 1) as ONE batched matmul on member-major tokens
+    (K, B, H, W, in) -- a Linear in all but name. Job 7287329: as grouped 1x1 convs the Swin heads
+    fell onto a slow cuDNN kernel under fp16 (34.7 of the stack's 55.7 device ms at batch 64)."""
+
+    def __init__(self, convs):
+        nn.Module.__init__(self)
+        assert all(tuple(c.kernel_size) == (1, 1) and tuple(c.stride) == (1, 1) and c.groups == 1
+                   and tuple(c.padding) == (0, 0) and c.bias is not None for c in convs), \
+            "not a plain 1x1 conv"
+        self.register_buffer("w", torch.stack([c.weight.detach()[:, :, 0, 0] for c in convs])
+                             .contiguous(), persistent=False)
+        self.register_buffer("b", torch.stack([c.bias.detach() for c in convs])[:, None, :].clone(),
+                             persistent=False)
+
+
+class _StkConv(nn.Module):
+    """K same-shape Conv2d as one: over a SHARED input (the embedding: K*out channels, the
+    member's own groups) or over member-major channels (groups multiplied by K)."""
+
+    def __init__(self, convs, shared_input: bool = False):
+        super().__init__()
+        c0 = convs[0]
+        assert isinstance(c0.padding, tuple), "string padding is not supported"
+        self.stride, self.padding, self.dilation = c0.stride, c0.padding, c0.dilation
+        self.groups = c0.groups if shared_input else len(convs) * c0.groups
+        self.register_buffer("w", torch.cat([c.weight.detach() for c in convs], 0).contiguous(),
+                             persistent=False)
+        self.register_buffer("b", None if c0.bias is None else
+                             torch.cat([c.bias.detach() for c in convs], 0).contiguous(),
+                             persistent=False)
+
+    def forward(self, x):
+        return _F.conv2d(x, self.w, self.b, self.stride, self.padding, self.dilation, self.groups)
+
+
+class _StkSwinBlock(nn.Module):
+    """K `_SwinV2Block`s on member-major tokens (K, B, h, w, c).
+
+    ATTENTION LAYOUT. Members and windows are pure batch axes to attention, so they fold into
+    SDPA's batch: q, k, v are (K*B*nW, heads, N, d) -- the member's own layout with a leading K --
+    and the additive mask (member k's position bias plus window w's shift mask) is expanded to
+    that batch once per (batch size, dtype) and cached. Job 7287329 measured this 5-8 % faster
+    than folding members and windows into the head axis with a batch-free mask; the price is
+    memory, ~58 MB of fp16 mask per stage-1 block at K = 4 and batch 112. The logit scale and
+    position bias are computed ONCE here, in fp32, by the exact ops `_WindowAttnV2.freeze_cache`
+    runs, so the stack matches a `prepare_inference()` member (bitwise equal to an as-trained one
+    in fp32; under fp16 autocast the as-trained member recomputes its bias in fp16).
+    """
+
+    def __init__(self, blocks, res):
+        super().__init__()
+        b0, k = blocks[0], len(blocks)
+        self.win, self.shift, self.heads = tuple(b0.win), tuple(b0.shift), int(b0.attn.heads)
+        hh, wd = res
+        wh, ww = self.win
+        assert hh % wh == 0 and wd % ww == 0, f"window {self.win} does not tile {res}"
+        nw, n, h = (hh // wh) * (wd // ww), wh * ww, self.heads
+        self.qkv = _StkLinear([b.attn.qkv for b in blocks])
+        self.proj = _StkLinear([b.attn.proj for b in blocks])
+        self.norm1 = _StkLN([b.norm1 for b in blocks])
+        self.fc1 = _StkLinear([b.mlp[0] for b in blocks])
+        self.fc2 = _StkLinear([b.mlp[3] for b in blocks])
+        self.norm2 = _StkLN([b.norm2 for b in blocks])
+        dev = b0.attn.logit_scale.device
+        with torch.no_grad(), torch.autocast(device_type=dev.type, enabled=False):
+            scale = torch.stack([torch.clamp(b.attn.logit_scale, max=math.log(100.0)).exp()
+                                 for b in blocks])                               # (K, h, 1, 1)
+            bias = torch.stack([b.attn.cpb(b.attn.coords)[b.attn.rel_index]
+                                .reshape(n, n, h).permute(2, 0, 1) for b in blocks])  # (K,h,N,N)
+            if b0.mask is None:
+                am = bias[:, None].expand(k, nw, h, n, n)
+            else:
+                assert b0.mask.shape[0] == nw, f"mask has {b0.mask.shape[0]} windows, not {nw}"
+                assert all(torch.equal(b.mask, b0.mask) for b in blocks), "shift masks differ"
+                am = bias[:, None] + b0.mask[None]                                # (K,nW,h,N,N)
+        self.register_buffer("scale", scale.reshape(k, 1, h, 1, 1).contiguous(), persistent=False)
+        self.register_buffer("am", am.contiguous(), persistent=False)
+        self._am = {}
+
+    def _mask(self, b, dt):
+        key = (b, dt, self.am.device)
+        if key not in self._am:
+            k, nw, h, n, _ = self.am.shape
+            self._am[key] = (self.am.to(dt)[:, None].expand(k, b, nw, h, n, n)
+                             .reshape(k * b * nw, h, n, n))
+        return self._am[key]
+
+    def forward(self, x):
+        k, b, hh, wd, c = x.shape
+        (wh, ww), (sy, sx), h = self.win, self.shift, self.heads
+        ny, nx = hh // wh, wd // ww
+        nw, n, d = ny * nx, wh * ww, c // h
+        y = torch.roll(x, (-sy, -sx), (2, 3)) if (sy or sx) else x
+        t = y.reshape(k, b, ny, wh, nx, ww, c).permute(0, 1, 2, 4, 3, 5, 6).reshape(k, -1, c)
+        q, kk, v = self.qkv(t).view(k * b * nw, n, 3, h, d).permute(2, 0, 3, 1, 4).unbind(0)
+        q = (_F.normalize(q, dim=-1).reshape(k, b * nw, h, n, d) * self.scale).reshape(k * b * nw, h, n, d)
+        kk = _F.normalize(kk, dim=-1)
+        dt = v.dtype
+        o = _F.scaled_dot_product_attention(q.to(dt), kk.to(dt), v, attn_mask=self._mask(b, dt),
+                                            scale=1.0)
+        o = o.transpose(1, 2).reshape(k, -1, c)
+        y = (self.proj(o).view(k, b, ny, nx, wh, ww, c).permute(0, 1, 2, 4, 3, 5, 6)
+             .reshape(k, b, hh, wd, c))
+        if sy or sx:
+            y = torch.roll(y, (sy, sx), (2, 3))
+        x = x + self.norm1(y)
+        return x + self.norm2(self.fc2(_F.gelu(self.fc1(x))))
+
+
+def _tok_to_cl(t):
+    """Member-major tokens (K, B, h, w, c) -> member-major channels (B, K*c, h, w), CHANNELS-LAST.
+
+    Every conv of a SwinUNet member sees a permuted token tensor, i.e. channels-last memory, and
+    the kernel a backend picks depends on the memory format: laid out contiguous NCHW, the grouped
+    versions of the skip and refine convs departed from the members by up to 7e-6 on CPU;
+    laid out channels-last they reproduce them bit for bit (group count does not matter)."""
+    k, b, hh, wd, c = t.shape
+    return t.permute(1, 2, 3, 0, 4).reshape(b, hh, wd, k * c).permute(0, 3, 1, 2)
+
+
+def _cl_to_tok(z, k: int):
+    """The inverse of `_tok_to_cl`: channels-last (B, K*c, h, w) -> (K, B, h, w, c)."""
+    b, kc, hh, wd = z.shape
+    return z.permute(0, 2, 3, 1).reshape(b, hh, wd, k, kc // k).permute(3, 0, 1, 2, 4)
+
+
+class _StkConvNeXt(nn.Module):
+    """K `_ConvNeXtBlock`s on member-major channels laid out channels-last (`_tok_to_cl`): the
+    depthwise conv's groups already separate every channel, so K members are one conv with K*c
+    groups."""
+
+    def __init__(self, blocks):
+        super().__init__()
+        self.k, self.c = len(blocks), blocks[0].dw.in_channels
+        self.dw = _StkConv([b.dw for b in blocks])
+        self.norm = _StkLN([b.norm for b in blocks])
+        self.pw1 = _StkLinear([b.pw1 for b in blocks])
+        self.pw2 = _StkLinear([b.pw2 for b in blocks])
+        self.register_buffer("gamma", torch.stack([b.gamma.detach() for b in blocks])
+                             .reshape(self.k, 1, 1, 1, self.c).clone(), persistent=False)
+
+    def forward(self, z):
+        t = self.norm(_cl_to_tok(self.dw(z), self.k))                         # (K, B, h, w, c)
+        t = self.pw2(_F.gelu(self.pw1(t)))
+        t = t * self.gamma.to(t.dtype)
+        return z + _tok_to_cl(t)
+
+
+class _StkPatch(nn.Module):
+    """K `_PatchMergeV2` ("merge"), `_PatchExpand` ("expand") or `_TokenProj` ("proj")."""
+
+    def __init__(self, mods, kind: str):
+        super().__init__()
+        self.kind = kind
+        self.lin = _StkLinear([getattr(m, {"merge": "reduction"}.get(kind, kind)) for m in mods])
+        self.norm = _StkLN([m.norm for m in mods])
+
+    def forward(self, x):
+        k, b, hh, wd, _ = x.shape
+        if self.kind == "merge":
+            x = torch.cat([x[:, :, 0::2, 0::2], x[:, :, 1::2, 0::2], x[:, :, 0::2, 1::2],
+                           x[:, :, 1::2, 1::2]], -1)
+            return self.norm(self.lin(x))
+        if self.kind == "expand":
+            x = (self.lin(x).reshape(k, b, hh, wd, 2, 2, -1).permute(0, 1, 2, 4, 3, 5, 6)
+                 .reshape(k, b, 2 * hh, 2 * wd, -1))
+            return self.norm(x)
+        return self.norm(self.lin(x))
+
+
+class StackedSwin(nn.Module):
+    """K identically-structured SwinUNet members evaluated in ONE invocation.
+
+    The board charges an invocation (+1.151 board ms on Track 1, +0.866 on Track 2), so a Swin
+    package of four members is only competitive fused, as StackedFNO and StackedViT made FNO and
+    ViT members. Nothing is assumed about the structure: depths, windows, shifts, heads, patch
+    size and every LayerNorm eps are read off the member modules, which `load_any` built from
+    each checkpoint's own `arch` / `width` / `n_layers`, so the Phase-2 ladder (`_b6`, `_win16`,
+    `_p1`) folds without code changes and members that differ in any of them never share a stack
+    (`fuse` keys on `_swin_signature`).
+
+    HOW THE MEMBER AXIS FOLDS. Tokens travel member-major, (K, B, h, w, c):
+      * the patch embedding reads the SAME input for every member: one conv, K*width outputs;
+      * every Linear is one `baddbmm` against a stacked (K, out, in) weight;
+      * every LayerNorm normalizes once and applies a per-member affine (`_StkLN`);
+      * window attention folds members and windows into SDPA's batch axis (`_StkSwinBlock`);
+      * the ConvNeXt skips and the refine conv run on member-major channels as grouped convs laid
+        out channels-last, the members' own memory format (`_tok_to_cl`); the 1x1 heads are
+        batched matmuls on tokens (`_StkPoint`): as grouped convs cuDNN ran them 20x slower.
+    `forward` returns the member MEAN of the field and log(mean(exp(clamped logstd))), the
+    contract StackedFNO and StackedViT obey, so `predict_fno` weights it by `n_members` with no
+    special case. Head outputs are averaged in fp32 even under autocast.
+    """
+
+    def __init__(self, members):
+        super().__init__()
+        first = members[0]
+        self.n_members = k = len(members)
+        sd0, sig0 = first.state_dict(), _swin_signature(first)
+        for m in members[1:]:
+            sd = m.state_dict()
+            assert sd.keys() == sd0.keys(), "state_dict keys differ"
+            for key, v in sd.items():
+                assert v.shape == sd0[key].shape, f"{key} shape mismatch"
+            assert _swin_signature(m) == sig0, "window / shift / patch structure differs"
+            assert torch.equal(m.grid, first.grid), "coordinate grids differ"
+        self.register_buffer("grid", first.grid.detach().clone(), persistent=False)
+        with torch.no_grad():
+            self.embed = _StkConv([m.embed for m in members], shared_input=True)
+            self.embed_norm = _StkLN([m.embed_norm for m in members])
+            py, px = first.embed.stride
+            n_down = len(first.enc)
+            res = [((H // py) >> i, (W // px) >> i) for i in range(n_down + 1)]
+            self.enc = nn.ModuleList(
+                nn.ModuleList(_StkSwinBlock([m.enc[i][j] for m in members], res[i])
+                              for j in range(len(first.enc[i]))) for i in range(n_down))
+            self.skip_blocks = nn.ModuleList(
+                nn.ModuleList(_StkConvNeXt([m.skip_blocks[i][j] for m in members])
+                              for j in range(len(first.skip_blocks[i]))) for i in range(n_down))
+            self.merge = nn.ModuleList(_StkPatch([m.merge[i] for m in members], "merge")
+                                       for i in range(n_down))
+            self.bottleneck = nn.ModuleList(
+                _StkSwinBlock([m.bottleneck[j] for m in members], res[n_down])
+                for j in range(len(first.bottleneck)))
+            self.expand = nn.ModuleList(_StkPatch([m.expand[j] for m in members], "expand")
+                                        for j in range(n_down))
+            self.skip = nn.ModuleList(_StkLinear([m.skip[j] for m in members])
+                                      for j in range(n_down))
+            self.dec = nn.ModuleList(
+                nn.ModuleList(_StkSwinBlock([m.dec[j][t] for m in members], res[n_down - 1 - j])
+                              for t in range(len(first.dec[j]))) for j in range(n_down))
+            self.final = _StkPatch([m.final for m in members],
+                                   "expand" if hasattr(first.final, "expand") else "proj")
+            assert isinstance(first.refine[0], nn.GELU) and len(first.refine) == 2
+            self.refine = _StkConv([m.refine[1] for m in members])
+            self.hf = nn.ModuleList([_StkPoint([m.head_field[0] for m in members]),
+                                     _StkPoint([m.head_field[2] for m in members])])
+            self.hl = None
+            if first.head_logstd is not None:
+                self.hl = nn.ModuleList([_StkPoint([m.head_logstd[0] for m in members]),
+                                         _StkPoint([m.head_logstd[2] for m in members])])
+        self.fp32_max_batch = int(getattr(first, "fp32_max_batch", 0) or 0)
+        self.self_norm = bool(getattr(first, "self_norm", False))
+
+    def forward(self, prev: torch.Tensor, detach_var: bool = False):
+        if (self.fp32_max_batch and len(prev) <= self.fp32_max_batch and prev.is_cuda
+                and torch.is_autocast_enabled()):
+            with torch.autocast(device_type="cuda", enabled=False):
+                return self._forward(prev.float())
+        return self._forward(prev)
+
+    def _forward(self, prev: torch.Tensor):
+        b, k = len(prev), self.n_members
+        x = self.embed(torch.cat([prev, self.grid.expand(b, -1, -1, -1)], 1))
+        _, kc, hh, wd = x.shape
+        x = self.embed_norm(x.view(b, k, kc // k, hh, wd).permute(1, 0, 3, 4, 2))
+        skips = []
+        for blocks, sblk, merge in zip(self.enc, self.skip_blocks, self.merge):
+            for blk in blocks:
+                x = blk(x)
+            z = _tok_to_cl(x)
+            for cb in sblk:
+                z = cb(z)
+            skips.append(_cl_to_tok(z, k))
+            x = merge(x)
+        for blk in self.bottleneck:
+            x = blk(x)
+        for expand, skip, blocks, s in zip(self.expand, self.skip, self.dec, reversed(skips)):
+            x = skip(torch.cat([expand(x), s], -1))
+            for blk in blocks:
+                x = blk(x)
+        z = _tok_to_cl(self.final(x))
+        t = _cl_to_tok(z + self.refine(_F.gelu(z)), k)                         # (K, B, H, W, out)
+        # the 1x1 heads as batched matmuls on tokens; member mean in fp32 -> (B, out, H, W)
+        field = self.hf[1](_F.gelu(self.hf[0](t))).float().mean(0).permute(0, 3, 1, 2)
+        logstd = None
+        if self.hl is not None:
+            ls = self.hl[1](_F.gelu(self.hl[0](t))).float()
+            logstd = ls.clamp(-8.0, 2.0).exp().mean(0).log().permute(0, 3, 1, 2)
+        return field, logstd
+
+
+# ---------------------------------------------------------------------------------------------
+# F-FNO members (backbone campaign, 2026-09-14): a vendored FFNO2d and its fused stack
+# ---------------------------------------------------------------------------------------------
+# `arch` -> FFNO2d keyword overrides, mirroring `models_alt.build_wave1`.
+FFNO_VARIANTS = {"ffno": {"ff": True}, "ffno_nff": {"ff": False}}
+# Which FFNO2d class `load_any` builds -- the contract of SWIN_IMPL: "auto" = the training definition
+# inside the repo (every local instrument unchanged) and the vendored copy below inside an archive.
+FFNO_IMPL = "auto"
+# The spectral path `load_any` gives every F-FNO member: None keeps the as-built one (the as-trained
+# FFTs); "dense" (1-D FFTs as matmuls on a precomputed real basis, fp16-native) or "fft". A package
+# bakes it per track, as SPEC_PATH is baked: dense for Track 1's batch, fft for Track 2's batch 1.
+FFNO_PATH = None
+
+
+class _FFNOLayer(nn.Module):
+    """Copy of `models_alt._FFNOLayer`: the separable Fourier operator (rfft along y, one complex
+    matrix per retained ky, irfft; the same along x; summed), then x + LN(FF(K x)) (`ffno`) or
+    x + GELU(GN(K x + W x)) (`ffno_nff`). Dropout is training-only and omitted."""
+
+    def __init__(self, width: int, modes_y: int, modes_x: int, ff: bool = True, factor: int = 2,
+                 grid: tuple[int, int] = (H, W)):
+        super().__init__()
+        self.my, self.mx = min(modes_y, grid[0] // 2 + 1), min(modes_x, grid[1] // 2 + 1)
+        self.wy = nn.Parameter(torch.zeros(width, width, self.my, 2))
+        self.wx = nn.Parameter(torch.zeros(width, width, self.mx, 2))
+        self.use_ff = bool(ff)
+        if self.use_ff:
+            self.ff = nn.Sequential(nn.Linear(width, factor * width), nn.GELU(),
+                                    nn.Linear(factor * width, width))
+            self.norm = nn.LayerNorm(width)
+        else:
+            self.point = nn.Conv2d(width, width, 1)
+            self.norm = nn.GroupNorm(8, width)
+        self.dense = False
+        self._bases: dict = {}
+
+    @staticmethod
+    def _dense_basis(n: int, m: int, device) -> tuple[torch.Tensor, torch.Tensor]:
+        """Real (n, 2m) analysis and (2m, n) synthesis matrices reproducing rfft(norm="ortho")[:m]
+        and irfft(n=n, norm="ortho"), extracted in float64 by applying those very ops to unit
+        vectors (models_alt's derivation, verbatim)."""
+        a = torch.fft.rfft(torch.eye(n, dtype=torch.float64), dim=-1, norm="ortho")[:, :m]
+        e = torch.eye(m, dtype=torch.complex128)
+        s_re = torch.fft.irfft(e, n=n, dim=-1, norm="ortho")
+        s_im = torch.fft.irfft(1j * e, n=n, dim=-1, norm="ortho")
+        return (torch.cat([a.real, a.imag], 1).to(device=device, dtype=torch.float32),
+                torch.cat([s_re, s_im], 0).to(device=device, dtype=torch.float32))
+
+    @staticmethod
+    def _w2(wt: torch.Tensor) -> torch.Tensor:
+        """(in, out, m, 2) complex weights -> (m, 2*out, 2*in) real 2x2-block matrices."""
+        wr = wt[..., 0].permute(2, 1, 0)
+        wi = wt[..., 1].permute(2, 1, 0)
+        return torch.cat([torch.cat([wr, -wi], 2), torch.cat([wi, wr], 2)], 1)
+
+    def _spectral_dense(self, x: torch.Tensor) -> torch.Tensor:
+        b, c, h, w = x.shape
+        key = (x.device, h, w)
+        if key not in self._bases:
+            self._bases[key] = (self._dense_basis(h, self.my, x.device),
+                                self._dense_basis(w, self.mx, x.device))
+        (py, sy), (px, sx) = self._bases[key]
+        my, mx = self.my, self.mx
+        cy = torch.matmul(x.transpose(-1, -2), py)
+        cy = cy.reshape(b, c, w, 2, my).permute(4, 0, 2, 3, 1).reshape(my, b * w, 2 * c)
+        dy = torch.bmm(cy, self._w2(self.wy).transpose(1, 2))
+        co = dy.shape[-1] // 2
+        dy = dy.reshape(my, b, w, 2, co).permute(1, 4, 2, 3, 0).reshape(b, co, w, 2 * my)
+        yy = torch.matmul(dy, sy).transpose(-1, -2)
+        cx = torch.matmul(x, px)
+        cx = cx.reshape(b, c, h, 2, mx).permute(4, 0, 2, 3, 1).reshape(mx, b * h, 2 * c)
+        dx = torch.bmm(cx, self._w2(self.wx).transpose(1, 2))
+        dx = dx.reshape(mx, b, h, 2, co).permute(1, 4, 2, 3, 0).reshape(b, co, h, 2 * mx)
+        xx = torch.matmul(dx, sx)
+        return yy + xx
+
+    def _spectral(self, x: torch.Tensor) -> torch.Tensor:
+        h, w = x.shape[-2:]
+        fy = torch.fft.rfft(x, dim=-2, norm="ortho")[:, :, :self.my]
+        yy = torch.fft.irfft(torch.einsum("biyx,ioy->boyx", fy, torch.view_as_complex(self.wy)),
+                             n=h, dim=-2, norm="ortho")
+        fx = torch.fft.rfft(x, dim=-1, norm="ortho")[..., :self.mx]
+        xx = torch.fft.irfft(torch.einsum("biyx,iox->boyx", fx, torch.view_as_complex(self.wx)),
+                             n=w, dim=-1, norm="ortho")
+        return yy + xx
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.dense:
+            s = self._spectral_dense(x)
+        else:
+            with torch.autocast(device_type=x.device.type, enabled=False):
+                s = self._spectral(x.float())
+        if self.use_ff:
+            b = self.norm(self.ff(s.permute(0, 2, 3, 1))).permute(0, 3, 1, 2)
+        else:
+            b = _F.gelu(self.norm(s + self.point(x)))
+        return x + b
+
+
+class _LayerNorm2d(nn.LayerNorm):
+    """LayerNorm over the CHANNEL axis of an NCHW map (models_alt's)."""
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return super().forward(x.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+
+
+class FFNO2d(nn.Module):
+    """Copy of `Track_1/unet/models_alt.py:FFNO2d` (Tran et al., ICLR 2023): lift MLP (42 -> 128
+    -> w), zero-pad the far side of both axes by PAD, `n_layers` F-FNO layers, crop, LayerNorm, the
+    shared MLP heads. Module names and registration order are the training definition's."""
+
+    PAD = (4, 8)
+    FF_FACTOR = 2
+
+    def __init__(self, width: int = 64, modes_y: int = 16, modes_x: int = 32, n_layers: int = 12,
+                 var_head: bool = True, ff: bool = True):
+        super().__init__()
+        yy, xx = torch.meshgrid(torch.linspace(-1, 1, H), torch.linspace(-1, 1, W),
+                                indexing="ij")
+        self.register_buffer("grid", torch.stack([xx, yy])[None])
+        self.lift = nn.Sequential(nn.Conv2d(CH + 2, 128, 1), nn.GELU(), nn.Conv2d(128, width, 1))
+        grid = (H + self.PAD[0], W + self.PAD[1])
+        self.layers = nn.ModuleList([_FFNOLayer(width, modes_y, modes_x, ff, self.FF_FACTOR, grid)
+                                     for _ in range(n_layers)])
+        self.norm_out = _LayerNorm2d(width)
+        self.head_field = nn.Sequential(nn.Conv2d(width, 128, 1), nn.GELU(), nn.Conv2d(128, CH, 1))
+        self.head_logstd = None
+        if var_head:
+            self.head_logstd = nn.Sequential(nn.Conv2d(width, 128, 1), nn.GELU(),
+                                             nn.Conv2d(128, C, 1))
+
+    def set_spectral_path(self, path: str = "fft"):
+        if path not in ("fft", "dense"):
+            raise ValueError(f"spectral path must be 'fft' or 'dense', not {path!r}")
+        for layer in self.layers:
+            layer.dense = path == "dense"
+        return self
+
+    def forward(self, prev: torch.Tensor, detach_var: bool = False):
+        x = torch.cat([prev, self.grid.expand(len(prev), -1, -1, -1)], 1)
+        h = _F.pad(self.lift(x), (0, self.PAD[1], 0, self.PAD[0]))
+        for layer in self.layers:
+            h = layer(h)
+        h = self.norm_out(h[..., :H, :W])
+        logstd = None
+        if self.head_logstd is not None:
+            logstd = self.head_logstd(h.detach() if detach_var else h)
+        return self.head_field(h), logstd
+
+
+def _is_ffno(m) -> bool:
+    """An FFNO2d member of either definition (vendored above, or models_alt's)."""
+    return type(m).__name__ == "FFNO2d" and all(
+        hasattr(m, a) for a in ("lift", "layers", "norm_out", "PAD", "grid", "head_field"))
+
+
+def _ffno_signature(m):
+    """Structure a state_dict does not show (padding, spectral path), or None for other families."""
+    if not _is_ffno(m):
+        return None
+    return (tuple(m.PAD), tuple((int(l.my), int(l.mx), bool(l.use_ff), bool(l.dense))
+                                for l in m.layers))
+
+
+def _ffno_member(blob: dict, device: str):
+    """The vendored FFNO2d for an `ffno*` blob, or None when FFNO_IMPL resolves to the training
+    definition -- `load_any` then runs its models_alt branch exactly as before."""
+    impl = FFNO_IMPL
+    if impl not in ("auto", "vendored", "models_alt"):
+        raise ValueError(f"FFNO_IMPL must be 'auto', 'vendored' or 'models_alt', not {impl!r}")
+    if impl == "models_alt" or (
+            impl == "auto" and os.path.exists(os.path.join(_UNET_DIR, "models_alt.py"))):
+        return None
+    arch = blob.get("arch")
+    cfg = blob.get("config", {})
+    return FFNO2d(blob.get("width", cfg.get("width", 96)), blob.get("modes_y", 8),
+                  blob.get("modes_x", 12), blob.get("n_layers", 4), blob.get("var_head", True),
+                  **FFNO_VARIANTS[arch]).to(device)
+
+
+class _StkFFNOLayer(nn.Module):
+    """K `_FFNOLayer`s on member-major channels (B, K*w, h, w).
+
+    FFT path: ONE rfft / irfft per axis over every member's channels (the transforms act on the
+    spatial axes only), the complex mixing as one einsum against stacked (K, in, out, m) weights,
+    pinned to fp32 as the member pins it. Dense path: the basis projections are shared by all
+    members, and the per-mode real 2x2-block mixing is one bmm over (m*K) matrices -- each member's
+    `_w2` precomputed once. The feed-forward runs on member-major tokens (_StkLinear, _StkLN); the
+    `ffno_nff` point conv and GroupNorm fold the member axis the way StackedFNO folds them."""
+
+    def __init__(self, layers):
+        super().__init__()
+        l0, k = layers[0], len(layers)
+        self.k, self.my, self.mx, self.use_ff = k, int(l0.my), int(l0.mx), bool(l0.use_ff)
+        self.ci, self.co = int(l0.wy.shape[0]), int(l0.wy.shape[1])
+        with torch.no_grad():
+            self.register_buffer("wy", torch.stack([l.wy.detach() for l in layers]).contiguous(),
+                                 persistent=False)
+            self.register_buffer("wx", torch.stack([l.wx.detach() for l in layers]).contiguous(),
+                                 persistent=False)
+            self.register_buffer("w2y", torch.stack([_FFNOLayer._w2(l.wy.detach()) for l in layers], 1)
+                                 .reshape(self.my * k, 2 * self.co, 2 * self.ci).contiguous(),
+                                 persistent=False)
+            self.register_buffer("w2x", torch.stack([_FFNOLayer._w2(l.wx.detach()) for l in layers], 1)
+                                 .reshape(self.mx * k, 2 * self.co, 2 * self.ci).contiguous(),
+                                 persistent=False)
+        if self.use_ff:
+            self.ff0 = _StkLinear([l.ff[0] for l in layers])
+            self.ff2 = _StkLinear([l.ff[2] for l in layers])
+            self.norm = _StkLN([l.norm for l in layers])
+        else:
+            n0 = l0.norm
+            assert all(l.norm.num_groups == n0.num_groups and l.norm.eps == n0.eps for l in layers)
+            self.point = _StkConv([l.point for l in layers])
+            self.gn_groups, self.gn_eps = n0.num_groups * k, float(n0.eps)
+            self.register_buffer("gn_w", torch.cat([l.norm.weight.detach() for l in layers]).clone(),
+                                 persistent=False)
+            self.register_buffer("gn_b", torch.cat([l.norm.bias.detach() for l in layers]).clone(),
+                                 persistent=False)
+        self.dense = bool(l0.dense)
+        self._bases: dict = {}
+
+    def _spectral_fft(self, x):
+        b, _, h, w = x.shape
+        k, my, mx, ci, co = self.k, self.my, self.mx, self.ci, self.co
+        fy = torch.fft.rfft(x, dim=-2, norm="ortho")[:, :, :my].reshape(b, k, ci, my, w)
+        yy = torch.fft.irfft(torch.einsum("bkiyx,kioy->bkoyx", fy, torch.view_as_complex(self.wy)),
+                             n=h, dim=-2, norm="ortho")
+        fx = torch.fft.rfft(x, dim=-1, norm="ortho")[..., :mx].reshape(b, k, ci, h, mx)
+        xx = torch.fft.irfft(torch.einsum("bkiyx,kiox->bkoyx", fx, torch.view_as_complex(self.wx)),
+                             n=w, dim=-1, norm="ortho")
+        return (yy + xx).reshape(b, k * co, h, w)
+
+    def _spectral_dense(self, x):
+        b, _, h, w = x.shape
+        k, my, mx, ci, co = self.k, self.my, self.mx, self.ci, self.co
+        key = (x.device, h, w)
+        if key not in self._bases:
+            self._bases[key] = (_FFNOLayer._dense_basis(h, my, x.device),
+                                _FFNOLayer._dense_basis(w, mx, x.device))
+        (py, sy), (px, sx) = self._bases[key]
+        cy = torch.matmul(x.transpose(-1, -2), py)                            # (B, K*in, W, 2my)
+        cy = cy.reshape(b, k, ci, w, 2, my).permute(5, 1, 0, 3, 4, 2).reshape(my * k, b * w, 2 * ci)
+        dy = torch.bmm(cy, self.w2y.transpose(1, 2))                           # (my*K, B*W, 2out)
+        dy = dy.reshape(my, k, b, w, 2, co).permute(2, 1, 5, 3, 4, 0).reshape(b, k * co, w, 2 * my)
+        yy = torch.matmul(dy, sy).transpose(-1, -2)                            # (B, K*out, H, W)
+        cx = torch.matmul(x, px)                                               # (B, K*in, H, 2mx)
+        cx = cx.reshape(b, k, ci, h, 2, mx).permute(5, 1, 0, 3, 4, 2).reshape(mx * k, b * h, 2 * ci)
+        dx = torch.bmm(cx, self.w2x.transpose(1, 2))
+        dx = dx.reshape(mx, k, b, h, 2, co).permute(2, 1, 5, 3, 4, 0).reshape(b, k * co, h, 2 * mx)
+        xx = torch.matmul(dx, sx)
+        return yy + xx
+
+    def forward(self, x):
+        if self.dense:
+            # One cast for both analysis matmuls: under autocast each would cast x (an activation, which
+            # autocast does not cache) to fp16 again -- a full-size copy per layer (layout A/B, 09-14).
+            xs = x.to(torch.get_autocast_gpu_dtype()) if (x.is_cuda and torch.is_autocast_enabled()) else x
+            s = self._spectral_dense(xs)
+        else:
+            with torch.autocast(device_type=x.device.type, enabled=False):
+                s = self._spectral_fft(x.float())
+        if self.use_ff:
+            b, kc, h, w = s.shape
+            t = s.reshape(b, self.k, kc // self.k, h, w).permute(1, 0, 3, 4, 2)   # (K, B, h, w, c)
+            t = self.norm(self.ff2(_F.gelu(self.ff0(t))))
+            # The residual is written straight into x's own layout, (B, K, c, h, w), so the next layer reads it
+            # as (B, K*c, h, w) without a copy. `x + t.permute(...).reshape(...)` made a full-size fp32 copy
+            # per layer -- the one copy the member loop never makes, and the whole of the stack's b64 deficit
+            # (copy_ 40.3 against the loop's 16.2 device ms; layout A/B, scribe 09-14). Same sums, same order.
+            out = torch.empty((b, self.k, kc // self.k, h, w), device=x.device,
+                              dtype=torch.promote_types(x.dtype, t.dtype))
+            torch.add(x.reshape(b, self.k, kc // self.k, h, w), t.permute(1, 0, 4, 2, 3), out=out)
+            return out.view(b, kc, h, w)
+        z = _F.group_norm(s + self.point(x), self.gn_groups, self.gn_w, self.gn_b, self.gn_eps)
+        return x + _F.gelu(z)
+
+
+class StackedFFNO(nn.Module):
+    """K identically-structured FFNO2d members evaluated in ONE invocation.
+
+    The P2-L8 package line (F-FNO L8 x4 + ViT x2) projects best on Track 1 only if the four F-FNOs
+    cost one invocation (+1.151 board ms each otherwise). Structure is read off the members (modes,
+    padding, feed-forward or point/GroupNorm, depth) and the spectral path is the members' own
+    (`set_spectral_path` switches the whole stack): dense for Track 1's batch, fft for Track 2's
+    batch 1. Channels are member-major throughout: the lift's first conv reads the shared input
+    once (K*128 outputs), every later conv is grouped by K, the LayerNorms normalize once with a
+    per-member affine, and the 1x1 heads are batched matmuls on tokens (`_StkPoint`).
+    `forward` returns the member mean of the field and log(mean(exp(clamped logstd))), the
+    StackedFNO contract, so `predict_fno` weights it by `n_members` with no special case."""
+
+    def __init__(self, members):
+        super().__init__()
+        first = members[0]
+        self.n_members = k = len(members)
+        sd0, sig0 = first.state_dict(), _ffno_signature(first)
+        for m in members[1:]:
+            sd = m.state_dict()
+            assert sd.keys() == sd0.keys(), "state_dict keys differ"
+            for key, v in sd.items():
+                assert v.shape == sd0[key].shape, f"{key} shape mismatch"
+            assert _ffno_signature(m) == sig0, "padding / modes / spectral path differ"
+            assert torch.equal(m.grid, first.grid), "coordinate grids differ"
+        self.pad = tuple(first.PAD)
+        self.register_buffer("grid", first.grid.detach().clone(), persistent=False)
+        assert isinstance(first.lift[1], nn.GELU) and len(first.lift) == 3
+        with torch.no_grad():
+            self.lift0 = _StkConv([m.lift[0] for m in members], shared_input=True)
+            self.lift2 = _StkConv([m.lift[2] for m in members])
+            self.layers = nn.ModuleList(_StkFFNOLayer([m.layers[i] for m in members])
+                                        for i in range(len(first.layers)))
+            self.norm_out = _StkLN([m.norm_out for m in members])
+            self.hf = nn.ModuleList([_StkPoint([m.head_field[0] for m in members]),
+                                     _StkPoint([m.head_field[2] for m in members])])
+            self.hl = None
+            if first.head_logstd is not None:
+                self.hl = nn.ModuleList([_StkPoint([m.head_logstd[0] for m in members]),
+                                         _StkPoint([m.head_logstd[2] for m in members])])
+        self.self_norm = bool(getattr(first, "self_norm", False))
+
+    def set_spectral_path(self, path: str = "fft"):
+        if path not in ("fft", "dense"):
+            raise ValueError(f"spectral path must be 'fft' or 'dense', not {path!r}")
+        for layer in self.layers:
+            layer.dense = path == "dense"
+        return self
+
+    def forward(self, prev: torch.Tensor, detach_var: bool = False):
+        b, k = len(prev), self.n_members
+        h = self.lift2(_F.gelu(self.lift0(torch.cat([prev, self.grid.expand(b, -1, -1, -1)], 1))))
+        h = _F.pad(h, (0, self.pad[1], 0, self.pad[0]))
+        for layer in self.layers:
+            h = layer(h)
+        h = h[..., :H, :W]
+        t = self.norm_out(h.reshape(b, k, h.shape[1] // k, H, W).permute(1, 0, 3, 4, 2))
+        field = self.hf[1](_F.gelu(self.hf[0](t))).float().mean(0).permute(0, 3, 1, 2)
+        logstd = None
+        if self.hl is not None:
+            ls = self.hl[1](_F.gelu(self.hl[0](t))).float()
+            logstd = ls.clamp(-8.0, 2.0).exp().mean(0).log().permute(0, 3, 1, 2)
+        return field, logstd
+
+
 def fuse(models):
     """Group `models` by architecture and fuse each FNO group. Order-preserving by first sight.
 
     A package of 5x width-24 + w48 + m1220 + w64 goes from 8 invocations to 4, and the round-12
-    mixed package (8 FNO + 1 U-Net) from 9 to 4. FNO2d members fold through StackedFNO and
-    ViT2d members through StackedViT; every other family lands in its own group and is handed
+    mixed package (8 FNO + 1 U-Net) from 9 to 4. FNO2d members fold through StackedFNO,
+    ViT2d through StackedViT, SwinUNet through StackedSwin and FFNO2d through StackedFFNO; every other family lands in its own group and is handed
     back untouched -- `predict_fno` then calls each as one more (field, logstd) module. A
     U-Net's state_dict keys differ from every FNO's, which is what puts it in its own group.
 
@@ -1013,7 +2027,11 @@ def fuse(models):
                getattr(m, "osc_modes", 0), bool(getattr(m, "osc_global", False)),
                bool(getattr(m, "osc_zeromean", False)), getattr(m, "tbasis", 0),
                tuple((k, tuple(v.shape)) for k, v in m.state_dict().items()
-                     if not (k.endswith(".w1") or k.endswith(".w2"))))
+                     if not (k.endswith(".w1") or k.endswith(".w2"))),
+               # Window, shift and patch live outside the state_dict (swin_unet_win16 has
+               # swin_unet's exact shapes), so Swin members also key on their structure.
+               # None for every other family, which leaves their grouping unchanged.
+               _swin_signature(m), _ffno_signature(m))
         groups.setdefault(key, []).append(m)
     out = []
     for g in groups.values():
@@ -1035,6 +2053,14 @@ def fuse(models):
             # Round 23: the board is launch-bound, so a second ViT is free fused and -0.085
             # `final` unfused. StackedViT folds the member axis the same way StackedFNO does.
             out.append(StackedViT(g).to(g[0].grid.device).eval())
+        elif _is_swin(g[0]):
+            # 2026-09-14: K Swin U-Nets in one invocation. Built on the members' own
+            # device from their own modules, so every structural choice is read, not assumed.
+            out.append(StackedSwin(g).eval())
+        elif _is_ffno(g[0]):
+            # 2026-09-14: K F-FNOs in one invocation (StackedFFNO), on the members' own spectral
+            # path; padding, modes and path are keyed, so only identical structures share a stack.
+            out.append(StackedFFNO(g).eval())
         elif not isinstance(g[0], FNO2d) or g[0].head_mean is not None:
             out.extend(g)
         else:
@@ -1218,6 +2244,27 @@ def load_any(path: str, device: str):
         m.eval()
         m.self_norm = _self_norm_of(blob)
         return m
+    if arch.startswith("swin_unet"):
+        # Vendored 2026-09-14 so a Swin member ships without the repo. `_swin_member` returns
+        # None whenever SWIN_IMPL resolves to the training definition ("auto" inside the
+        # repo), and the models_alt branch below then runs exactly as it always has.
+        m = _swin_member(blob, device)
+        if m is not None:
+            m.load_state_dict(blob["model_state_dict"])
+            m.eval()
+            m.self_norm = _self_norm_of(blob)
+            return m
+    if arch in FFNO_VARIANTS:
+        # Vendored 2026-09-14 under the Swin contract: `_ffno_member` returns None whenever FFNO_IMPL
+        # resolves to the training definition, and the models_alt branch below runs as before.
+        m = _ffno_member(blob, device)
+        if m is not None:
+            m.load_state_dict(blob["model_state_dict"])
+            m.eval()
+            m.self_norm = _self_norm_of(blob)
+            if FFNO_PATH is not None:
+                m.set_spectral_path(FFNO_PATH)
+            return m
     if arch not in ("fno", "unet"):
         # ROUND-15 EXPERIMENTAL FAMILIES (afno / dilres / ufno / vit). They live in
         # `Track_1/unet/models_alt.py`, which is NOT vendored into the submission zip -- so
@@ -1236,6 +2283,8 @@ def load_any(path: str, device: str):
         m.load_state_dict(blob["model_state_dict"])
         m.eval()
         m.self_norm = _self_norm_of(blob)
+        if FFNO_PATH is not None and arch in FFNO_VARIANTS:
+            m.set_spectral_path(FFNO_PATH)
         return m
     if arch != "unet":
         return _fno_from_blob(blob, device)

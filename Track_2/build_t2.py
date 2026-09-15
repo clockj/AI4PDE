@@ -25,6 +25,21 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CAP_MB = 256
 
 
+
+def _linear_for(blob: dict, default: str, overrides) -> str:
+    """The --linear mode for ONE member: the first --linear-arch ARCH=MODE whose ARCH prefixes the
+    blob's own `arch` field (a blob without one is an FNO), else `default`. With no overrides every
+    member packs exactly as before. 09-14: Swin members ship fp16 Linears, the ViTs keep 'tensor'."""
+    arch = str(blob.get("arch", "fno"))
+    for item in overrides or ():
+        key, _, mode = item.partition("=")
+        if not key or mode not in ("tensor", "row", "fp16"):
+            raise SystemExit(f"--linear-arch {item!r}: expected ARCH=tensor|row|fp16")
+        if arch.startswith(key):
+            return mode
+    return default
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt", nargs="+", required=True)
@@ -51,6 +66,10 @@ def main():
                          "build_zip.py --linear and _fno.pack_state_dict. Must match Track 1's "
                          "setting, for the same reason --fp16 must. All three modes are "
                          "score-neutral (r24e).")
+    ap.add_argument("--linear-arch", nargs="+", default=[], metavar="ARCH=MODE",
+                    help="per-family override of --linear, matched as a prefix of each blob's own "
+                         "`arch` (swin_unet=fp16 also covers swin_unet_b6). Members matching no "
+                         "entry use --linear, so without this flag every archive packs as before.")
     a = ap.parse_args()
 
     # `_fno.py` is a symlink to Track 1's, and is resolved below -- the two tracks must ship
@@ -83,7 +102,7 @@ def main():
             blob = torch.load(src, map_location="cpu")
             blob["model_state_dict"] = _pack(blob["model_state_dict"],
                                              fp16=a.fp16 or a.int8, int8=a.int8,
-                                             linear=a.linear)
+                                             linear=_linear_for(blob, a.linear, a.linear_arch))
             torch.save(blob, os.path.join(a.stage, name))
         else:
             shutil.copy2(src, os.path.join(a.stage, name))
