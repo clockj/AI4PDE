@@ -971,6 +971,39 @@ new session does not spend a week re-deriving a negative.
 * Also null: long context, SWA, analog forecasting, input-noise augmentation, `--chan-pow`,
   `--w-mean`, `--lam-p`, `--lam-t` upward, `--point-mlp`, `--detach-var`, GNNs, KANO.
 
+**Closed by the backbone campaign, 2026-09-14** (held-out local evidence at 400 epochs; decisions in
+`Track_1/plan/plan_20260914.md` §5, ledger `leaderboard/screen.jsonl`, notes
+`Track_1/plan/screen_20260914.md`):
+
+* **The ConvNeXt U-Net family** (`cnext_unet`). w40: partner −0.09, replace −0.18. w72 (8.3M
+  params, 1.11× latency): rel +7.0 % / +8.1 %, sps 44.25 / 36.43, no better than w40. Capacity does
+  not rescue full-resolution conv (plan §5, "Closed in Phase 1"; rows `w1_cnext_unet`,
+  `w2_cnext_unet_w72`; screen §5, §6b).
+* **The PDE-Arena U-Net** (`unet_mod` w16): rel +4.6 %, sps −0.74, partner −0.12 (plan §5; row
+  `w1_unet_mod`).
+* **SimVP** (`simvp` w112, gSTA): sps −2.0; its large arm was withdrawn before it ran (plan §5; row
+  `w1_simvp`; screen §6c).
+* **Swin capacity, w96** (7.5M params, 1.10×): rel +0.8 % / +1.2 % against the control, worse than
+  w64 on both splits; sps +0.19 full / −0.19 AoA against w64; standalone −0.084 against w64's
+  +0.023. The Swin ladder stays centred on w64 (plan §5, "Capacity read"; row `w2_swin_unet_w96`).
+* **Sim co-training on Swin, as a slot of its own** (`w2_swin_unet_w64_sim`). Against the mean of
+  the three no-sim Swin seeds: sps +0.12 full / +0.08 AoA; AoA rel −0.8 % and tke −1.4 %, but mvpe
+  −0.8 % against no-sim's −3.1 %; Swin + ViT ×2 local fin +0.016 / +0.010. The FNO pattern: about
+  +0.01–0.02 for twice the training cost. Only a candidate to bundle into a later member refresh
+  (screen §6k; row verdict `drop`, by main).
+* **Re/AoA conditioning** (`w2_oracle_fno`: the FNO control's recipe and seed with FiLM on the TRUE
+  (ln Re, AoA)). Against the control: rel +0.7 %, tke +1.4 %, mvpe +1.1 % on the full split and
+  −0.1 % / +0.1 % / +0.2 % on AoA 15–20; sps 42.63 vs 44.79 and 36.87 vs 37.38. Knowing the
+  condition removes no error, because the model already reads it from the window, so metadata-style
+  conditioning and any estimator of the condition are closed (screen §6o,
+  `Track_1/plan/screen_oracle_20260914.json`; row verdict `drop`, by main).
+* **The fused F-FNO stack on Track 1** (`_fno.StackedFFNO`, dense path): 1.30× its own member loop
+  at b64 fp16 (1.102 against 0.848 ms/window in gate 7291666; 1.106 / 0.849 again in 7297052), where
+  Track 2's batch-1 graph runs 0.336×. The residual/cast fix moved only 1.156 → 1.102, a per-member
+  projection split (7292403) is slower still, and the stack's `copy_` (36 ms against the loop's 16)
+  is unexplained. P2-L8 is therefore a Track-2-only package, and a Track 1 F-FNO slot needs this
+  fixed first (plan §5, "14:40 — F-FNO speed gate"; screen §6m–6n; `Track_1/verify/fuse_ffno.py`).
+
 **Closed with held-out TRACK 2 evidence** (2026-08-31; detail and files in `Track_2/README.md`):
 
 Windows tile at stride 20 with `T_in = T_out = 20`, so window k−1's revealed target IS window

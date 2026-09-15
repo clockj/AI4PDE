@@ -2268,3 +2268,85 @@ Both slots carried `track{1,2}_r25_xfam6fp16_a060.zip`: R24's archive with `AMP 
   `RPDE_SHIP_AMP`) against T2R12. Track 1's next latency levers are a baked TF32 constant and a
   CUDA graph on the `predict` path, each read against R25. The backbone campaign
   (`Track_1/plan/plan_20260914.md`) looks for the structural gain that is left.
+
+---
+
+## CLAUDE.md detail moved here on 2026-09-15 (verbatim)
+
+`CLAUDE.md` was trimmed back under 30,000 characters on 2026-09-15, when the two 09-15 packages, the
+09-14 backbone closures, the Codabench UTC-day rule and the `debug-nextgen` note went in. The passages
+below left it word for word; `CLAUDE.md` keeps a shorter statement of each. The 09-14 closures
+themselves, with their evidence, are in `ROADMAP.md` Part 2.
+
+**Header note:**
+
+> `ROUNDS.md` opens with this file verbatim as of round 25
+> (163 k characters: every round's detail, superseded tables, struck-through claims), so older
+> pointers such as "CLAUDE.md round 14" or "Strategy item 6" resolve there.
+
+**Current state — 2026-09-14, the round-25 bullet:**
+
+* **R25 / T2R12 (read 09-14): fp16 ran on the board**; the error subscores moved by ≤ 3e-4
+  against R24, the fingerprint. Track 1 kept **37 %** of the local −21 % (5.570 → 5.076 board
+  ms, +0.033). Track 2's archive also added the second ViT: its containment (+0.041) landed, but
+  `time` 91.04 < 91.52, so fp16 did not pay for the ViT's FLOPs. Both estimates (81.356 /
+  81.223) missed only in `time`.
+
+**Scoring, the weight fit** (two sentences cut):
+
+* **The rule combining the subscores into `final_score` is unpublished. It is a free linear fit**
+  (no Σw = 1) over 32 rounds pooled across both tracks: **rel_l2 0.4775 · tke 0.1013 · mvpe
+  0.0920 · time 0.0965 · sps 0.2501** (Σw 1.018, max residual 0.0025). Five single-subscore A/Bs
+  read `w_time` directly at 0.0956–0.0962. `Track_1/final_v9.py` is the authority; work in deltas.
+  Every weight table in `ROUNDS.md` before round 17 is the superseded constrained fit.
+
+**Board latency** (provenance cut from two bullets):
+
+* **Invocation:** +1.151 board ms on Track 1, +0.866 on Track 2 (R23 shipped R20's package
+  unfused).
+* **FLOPs:** ≈ 1.75 board ms per 4060-equivalent local ms on Track 1 (R16→R17 1.76, R21→R24
+  1.74), 0.60 on Track 2 (one reading). A100 local ms × 1.850 = 4060-equivalent.
+
+**What ships, and why — inference items 3–4 and *Why this shape*:**
+
+3. `_fno.fuse()` folds same-architecture members into one invocation: `StackedFNO` (modes
+   zero-padded; `w2` pads at the FRONT) and `StackedViT`. Exact to ~1e-8 with TF32 off.
+4. Latency settings, each verified accuracy-neutral: `HOST_WRITE = "torch"` (threaded output
+   write, bit-identical, −17 % on Track 1); `SPEC_PATH = "bmm"` (real 2×2-block spectral matmul,
+   2e-6, −17 % of the Track-2 step); int8 packing (free for FNO and ViT); `AMP` (autocast checked
+   against fp32 at import, falling back on an exception, non-finite output or a diff above 2e-2;
+   `AMP_ACTIVE` records the outcome; fp16 cut compute −21 % / −46 % on R24's archive, and Track 1's board kept 37 % of it; bf16
+   crashes in `torch.complex`). TF32 is off (`RPDE_TF32` opts in for drivers only). `_pick_batch`
+   times batch sizes at import. Track 2 captures the whole device-side step in a CUDA graph at
+   load, verified bit-exact against eager.
+
+**Why this shape** (board evidence; detail in `ROADMAP.md` Part 1):
+* Regularized capacity pays through the error tail, not the rms: dropout +0.200, then w24 → w96
+  +0.166 while `rel_l2` got worse. **Attack the tail.** `rel_l2` alone would have called that a
+  regression.
+* Depth at equal FLOPs is a wash (4×L8 ≈ 8×L4), and the capacity ladder ends at w96 L8.
+* A second family *inside* an FNO package pays through containment (first ViT +0.15 of accuracy,
+  second +0.05), where U-FNO as a whole package missed by −0.45. A third ViT or AFNO does not pay
+  for its FLOPs. Member count is closed (4 → 8 FNOs with a ViT present: −0.020). Uniform member
+  averaging is optimal.
+* Sim co-training is real but small (≈ +0.01–0.02 of accuracy); the `cmb3sim` losses on top of it
+  added +0.031 / +0.049. Neither moved containment.
+* Velocity-gradient matching (`--lam-grad`, both invariants of ∇u) is the only physics loss that
+  works. In the FNO, the σ head must share the trunk and have an MLP readout (`--var-mlp`);
+  capacity at the boundaries (`--lift-mlp`) helps, and capacity in the trunk (`--point-mlp`) hurts.
+
+**Instruments — a sign, not a size** (examples cut from three bullets):
+
+* **Every local number is a sign.** The proxy over-reads error cuts about 2× (R24: rel −0.75 %
+  predicted, −0.30 % delivered). Board/proxy level ratios are ≈ rel 1.07, tke 1.14, mvpe 1.45, and
+  the delta residual is ~4 % of the error rms. Across model families the proxy has been wrong in
+  size and, for U-FNO, in sign.
+* **Screen at the ensemble size that ships.** `Track_1/compare_v9.py` scores single checkpoints,
+  each with its own band; `Track_1/ens_v9.py --aoa 15 20` scores member sets on the board-like
+  proxy; add the full split. Error that an arm removes independently per member vanishes in the
+  ensemble average (the oscillatory head: +3.84σ per model, −0.012 ensembled).
+* **Predict** with `Track_1/predict_board.py` (per-metric ratios, the 1.36 SPS tail, measured
+  latency constants; anchors named `t2*` select Track 2's), anchored on a recent round of the same
+  shape. Bracket `time` with the measured slopes, never a cross-day refit (both round-24 estimates
+  fell below their floors that way). For local `sps`, transfer through the per-sample factor is
+  the estimate and 1:1 transfer the optimistic end.
