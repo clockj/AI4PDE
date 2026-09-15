@@ -55,7 +55,8 @@ A100_TO_4060 = 1.850          # CLAUDE.md: A100 local ms x 1.850 = 4060-equivale
 UNET = os.path.join(HERE, "unet")
 SETTINGS = [("b64", False), ("b64", True), ("b1", False), ("b1", True), ("b1g", False),
             ("b1g", True)]
-BATCH = {"b64": 64, "b1": 1, "b1g": 1}
+STACK4 = [("b4g", False), ("b4g", True)]      # --stack4: batch-4 CUDA graph, ms per STEP
+BATCH = {"b64": 64, "b1": 1, "b1g": 1, "b4g": 4}
 FNO4 = [f"fno_all_w96L8cmb3sim_s{i}.pth" for i in (1, 2, 3, 4)]
 VIT2 = ["arch_vit_all_s1.pth", "arch_vit_all_cmb3sim_s3.pth"]
 
@@ -113,17 +114,34 @@ def references(dev: str):
 
 
 def candidates(specs: list[str], dev: str):
+    """arch:width:layers[:modes_y:modes_x][:variant], variant in
+    dense   FFNO2d.set_spectral_path("dense")                         (row name suffix _dense)
+    prep    SwinUNet.prepare_inference(fp32_max_batch=1): b1 fp32, larger batches fp16   (_prep)
+    prep32  SwinUNet.prepare_inference(fp32_max_batch=2**20): always fp32             (_prep32)"""
     rows = []
     for s in specs:
         p = s.split(":")
         arch, width, nl = p[0], int(p[1]), int(p[2])
-        my, mx = (int(p[3]), int(p[4])) if len(p) > 3 else (8, 12)
+        nums = [int(t) for t in p[3:] if t.isdigit()]
+        opts = [t for t in p[3:] if not t.isdigit()]
+        my, mx = (nums[0], nums[1]) if len(nums) >= 2 else (8, 12)
         torch.manual_seed(0)
         m = models_alt.build(arch, width, True, 0, my, mx, nl, dropout=0.3)
         meta = _meta_of([m])
         name = f"{arch}_w{width}L{nl}" + (f"_m{my}x{mx}" if arch.startswith("ffno") else "")
-        rows.append((name, m.to(dev).eval(), dict(arch=arch, width=width, n_layers=nl,
-                                                  modes_y=my, modes_x=mx, members=1, **meta)))
+        m = m.to(dev).eval()
+        for opt in opts:
+            if opt == "dense":
+                m.set_spectral_path("dense")
+            elif opt == "prep":
+                m.prepare_inference(fp32_max_batch=1)
+            elif opt == "prep32":
+                m.prepare_inference(fp32_max_batch=1 << 20)
+            else:
+                raise SystemExit(f"unknown variant {opt!r} in {s}")
+            name += f"_{opt}"
+        rows.append((name, m, dict(arch=arch, width=width, n_layers=nl, modes_y=my, modes_x=mx,
+                                   members=1, variant="+".join(opts) or None, **meta)))
     return rows
 
 
@@ -140,9 +158,9 @@ def forward(m, x, amp: bool):
 
 
 @torch.no_grad()
-def capture(m, amp: bool):
-    """A CUDA graph of one batch-1 forward, warmed up on a side stream (the Track-2 recipe)."""
-    static_x = torch.randn(1, 40, 32, 64, device="cuda")
+def capture(m, amp: bool, batch: int = 1):
+    """A CUDA graph of one forward, warmed up on a side stream (the Track-2 recipe)."""
+    static_x = torch.randn(batch, 40, 32, 64, device="cuda")
     s = torch.cuda.Stream()
     with torch.cuda.stream(s):
         for _ in range(3):
@@ -197,6 +215,9 @@ def main() -> None:
     ap.add_argument("--rounds", type=int, default=7)
     ap.add_argument("--target-s", type=float, default=0.08)
     ap.add_argument("--pick", default=None, help="print wave-1 sizes from a finished table")
+    ap.add_argument("--stack4", action="store_true",
+                    help="also time a batch-4 CUDA graph per row (ms per STEP): the stand-in for "
+                         "four fused members at batch 1 in the P1 / P2 / P3 Track-2 projections")
     args = ap.parse_args()
     if args.pick:
         return pick(args.pick)
@@ -208,16 +229,17 @@ def main() -> None:
     torch.backends.cudnn.allow_tf32 = False
     torch.backends.cudnn.benchmark = True
     rows = references(dev) + candidates(args.cand, dev)
+    settings = SETTINGS + (STACK4 if args.stack4 else [])
     xs = {"b64": torch.randn(64, 40, 32, 64, device=dev),
           "b1": torch.randn(1, 40, 32, 64, device=dev)}
 
     graphs, gdiff, niter, ok = {}, {}, {}, {}
-    for mode, amp in SETTINGS:
+    for mode, amp in settings:
         for name, m, _ in rows:
             k = (name, mode, amp)
             try:
-                if mode == "b1g":
-                    graphs[k], gdiff[k] = capture(m, amp)
+                if mode in ("b1g", "b4g"):
+                    graphs[k], gdiff[k] = capture(m, amp, BATCH[mode])
                     run = graphs[k].replay
                 else:
                     x = xs[mode]
@@ -240,7 +262,7 @@ def main() -> None:
                 print(f"[skip] {name} {_key(mode, amp)}: {type(e).__name__}: {str(e)[:160]}")
     acc = defaultdict(list)
     for r in range(args.rounds):
-        for mode, amp in SETTINGS:
+        for mode, amp in settings:
             for name, _, _ in rows:
                 k = (name, mode, amp)
                 if ok[k] is None:
@@ -259,10 +281,10 @@ def main() -> None:
     for name, _, meta in rows:
         rec = dict(name=name, **meta)
         rec["flops_ratio_fno"] = round(meta["gflops_b1"] / base_flops, 3)
-        for mode, amp in SETTINGS:
+        for mode, amp in settings:
             v = acc.get((name, mode, amp), [])
             v = v[1:] if len(v) > 1 else v
-            b = BATCH[mode]
+            b = BATCH[mode] if mode == "b64" else 1          # b64: per window; b1 / b1g / b4g: per step
             rec[_key(mode, amp)] = round(1e3 * float(np.median(v)) / b, 5) if v else None
             rec[_key(mode, amp) + "_iqr"] = (round(1e3 * float(np.subtract(*np.percentile(v, [75, 25]))) / b, 5)
                                              if len(v) > 2 else None)
@@ -271,7 +293,7 @@ def main() -> None:
         out.append(rec)
     base = next(r for r in out if r["name"] == "ref_fno_w96L8")
     for r in out:
-        for mode, amp in SETTINGS:
+        for mode, amp in settings:
             k = _key(mode, amp)
             r["ratio_" + k[3:]] = round(r[k] / base[k], 3) if r[k] and base[k] else None
         r["ms_ratio_fno"] = r["ratio_b64_fp16"]

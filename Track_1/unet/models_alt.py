@@ -1183,6 +1183,59 @@ class _FFNOLayer(nn.Module):
             self.point = nn.Conv2d(width, width, 1)
             self.norm = nn.GroupNorm(8, width)
         self.drop = nn.Dropout2d(dropout) if dropout > 0 else nn.Identity()
+        # FFNO2d.set_spectral_path("dense"): the FFT-free spectral path (off = the as-trained FFTs).
+        self.dense = False
+        self._bases: dict = {}
+
+    @staticmethod
+    def _dense_basis(n: int, m: int, device) -> tuple[torch.Tensor, torch.Tensor]:
+        """Real (n, 2m) analysis and (2m, n) synthesis matrices that reproduce rfft(norm="ortho")[:m]
+        and irfft(n=n, norm="ortho") of a length-m half spectrum. They are EXTRACTED, in float64,
+        by applying those very ops to unit vectors -- rows e_j through rfft give the analysis columns;
+        e_k and i*e_k through irfft give the synthesis rows of the real and imaginary parts -- so no
+        FFT sign or normalisation convention is re-derived by hand."""
+        a = torch.fft.rfft(torch.eye(n, dtype=torch.float64), dim=-1, norm="ortho")[:, :m]
+        e = torch.eye(m, dtype=torch.complex128)
+        s_re = torch.fft.irfft(e, n=n, dim=-1, norm="ortho")
+        s_im = torch.fft.irfft(1j * e, n=n, dim=-1, norm="ortho")
+        return (torch.cat([a.real, a.imag], 1).to(device=device, dtype=torch.float32),
+                torch.cat([s_re, s_im], 0).to(device=device, dtype=torch.float32))
+
+    @staticmethod
+    def _w2(wt: torch.Tensor) -> torch.Tensor:
+        """(in, out, m, 2) weights viewed as complex -> (m, 2*out, 2*in) real 2x2-block matrices
+        [[Re W, -Im W], [Im W, Re W]]: complex mixing written as a real matmul."""
+        wr = wt[..., 0].permute(2, 1, 0)
+        wi = wt[..., 1].permute(2, 1, 0)
+        return torch.cat([torch.cat([wr, -wi], 2), torch.cat([wi, wr], 2)], 1)
+
+    def _spectral_dense(self, x: torch.Tensor) -> torch.Tensor:
+        """The separable operator with every 1-D FFT replaced by a dense real projection onto the
+        precomputed cos/sin basis: analysis, 2x2-block mixing and synthesis are three matmuls per
+        axis, which autocast runs in fp16 (the FFT path is pinned to fp32, and its casts are copies).
+        Equal to `_spectral` up to float rounding (checked <= 1e-6 in fp32)."""
+        b, c, h, w = x.shape
+        key = (x.device, h, w)
+        if key not in self._bases:
+            self._bases[key] = (self._dense_basis(h, self.my, x.device),
+                                self._dense_basis(w, self.mx, x.device))
+        (py, sy), (px, sx) = self._bases[key]
+        my, mx = self.my, self.mx
+        # y axis: analysis over H, then per retained mode k one 2C -> 2C' real matmul applied to
+        # every (b, w) position at once: (my, B*W, 2C) bmm (my, 2C, 2C') -- [Re; Im] channel blocks.
+        cy = torch.matmul(x.transpose(-1, -2), py)                            # (B, C, W, 2my)
+        cy = cy.reshape(b, c, w, 2, my).permute(4, 0, 2, 3, 1).reshape(my, b * w, 2 * c)
+        dy = torch.bmm(cy, self._w2(self.wy).transpose(1, 2))                  # (my, B*W, 2C')
+        co = dy.shape[-1] // 2
+        dy = dy.reshape(my, b, w, 2, co).permute(1, 4, 2, 3, 0).reshape(b, co, w, 2 * my)
+        yy = torch.matmul(dy, sy).transpose(-1, -2)                            # (B, C', H, W)
+        # x axis: the same over W, with (b, h) positions batched per mode.
+        cx = torch.matmul(x, px)                                               # (B, C, H, 2mx)
+        cx = cx.reshape(b, c, h, 2, mx).permute(4, 0, 2, 3, 1).reshape(mx, b * h, 2 * c)
+        dx = torch.bmm(cx, self._w2(self.wx).transpose(1, 2))                  # (mx, B*H, 2C')
+        dx = dx.reshape(mx, b, h, 2, co).permute(1, 4, 2, 3, 0).reshape(b, co, h, 2 * mx)
+        xx = torch.matmul(dx, sx)                                              # (B, C', H, W)
+        return yy + xx
 
     def _spectral(self, x: torch.Tensor) -> torch.Tensor:
         h, w = x.shape[-2:]
@@ -1195,8 +1248,11 @@ class _FFNOLayer(nn.Module):
         return yy + xx
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        with torch.autocast(device_type=x.device.type, enabled=False):
-            s = self._spectral(x.float())
+        if self.dense:
+            s = self._spectral_dense(x)
+        else:
+            with torch.autocast(device_type=x.device.type, enabled=False):
+                s = self._spectral(x.float())
         if self.use_ff:
             b = self.norm(self.ff(s.permute(0, 2, 3, 1))).permute(0, 3, 1, 2)
         else:
@@ -1225,6 +1281,16 @@ class FFNO2d(_GridIn):
                                      for _ in range(n_layers)])
         self.norm_out = _LayerNorm2d(width)
         self.head_field, self.head_logstd = _heads(width, var_head)
+
+    def set_spectral_path(self, path: str = "fft"):
+        """'fft' (the default and the as-trained path) or 'dense' (`_FFNOLayer._spectral_dense`:
+        the 1-D FFTs as dense real matmuls on a precomputed basis, fp16-native). Changes no
+        parameter, so a checkpoint loads the same either way."""
+        if path not in ("fft", "dense"):
+            raise ValueError(f"spectral path must be 'fft' or 'dense', not {path!r}")
+        for layer in self.layers:
+            layer.dense = path == "dense"
+        return self
 
     def forward(self, prev: torch.Tensor, detach_var: bool = False):
         h = F.pad(self.lift(self.cat(prev)), (0, self.PAD[1], 0, self.PAD[0]))
