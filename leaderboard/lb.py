@@ -1017,9 +1017,10 @@ def _curve_section(B):
 
 
 SCREEN_VERDICTS = {"advance": ("advance", "晋级"), "replicate": ("replicate", "复现"),
-                   "pending": ("pending", "待定"), "drop": ("drop", "淘汰")}
+                   "pending": ("pending", "待定"), "drop": ("drop", "淘汰"),
+                   "control": ("control", "对照"), "validation": ("validation", "验证")}
 SCREEN_STATUS = {"queued": "排队", "running": "运行中", "training": "训练中", "trained": "已训练",
-                 "done": "完成", "failed": "失败"}
+                 "done": "完成", "failed": "失败", "skipped": "已跳过"}
 
 
 def _screen_mark(x, y, r):
