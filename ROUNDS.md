@@ -2335,6 +2335,23 @@ themselves, with their evidence, are in `ROADMAP.md` Part 2.
   works. In the FNO, the σ head must share the trunk and have an MLP readout (`--var-mlp`);
   capacity at the boundaries (`--lift-mlp`) helps, and capacity in the trunk (`--point-mlp`) hurts.
 
+**Moved 2026-09-16, when the 09-16 results went in.** From *Current state*, the round-26 pair and the
+round-25 read, both compressed out of the manual:
+
+* **The round-26 pair, staged 09-14: upload status unknown.** Track 2 xfam5fp16 (T2R9 + fp16),
+  est. 81.166 vs T2R12 (81.113-81.210, likely a tie); Track 1 R25 + a CUDA graph on `predict`,
+  est. 81.428 vs R25 (81.345-81.527), fingerprinted by sps -1e-4.
+* **R25 / T2R12: fp16 ran on the board** (errors moved <= 3e-4 against R24). Track 1 kept 37 % of
+  the local cut; on Track 2 it did not pay for the second ViT's FLOPs. Both estimates missed only
+  in `time` (`ROUNDS.md`, round 25).
+
+From *Scoring*, the containment ledger, which `CLAUDE.md` now points here for:
+
+  Board steps that moved containment: band +1.41 . capacity w24->w96 +0.99 / +0.96 . members 3->8
+  +0.67 . U-FNO in/out +0.46 / -0.44 . first ViT +0.18 / +0.16 . second ViT +0.05 / +0.04.
+  Everything else (sim, depth at equal FLOPs, auxiliary losses, latency rebuilds, 4->8 members with
+  a ViT present) landed within +-0.05. 2026-09-16 adds Swin +0.128 (R26) and F-FNO +0.302 (T2R13).
+
 **Instruments — a sign, not a size** (examples cut from three bullets):
 
 * **Every local number is a sign.** The proxy over-reads error cuts about 2× (R24: rel −0.75 %

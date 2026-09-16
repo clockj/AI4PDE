@@ -27,26 +27,26 @@ working branch `qwu/dev`.
 | | `final` | package |
 |---|---|---|
 | Track 1 best | **81.344644** | R25 xfam6fp16 (09-13) |
-| Track 2 best | **81.164374** | T2R12 xfam6fp16 (09-13) |
-| leader, read 09-14 | T1 81.85874 · T2 81.99648 | gaps 0.514 · 0.832 |
+| Track 2 best | **81.314785** | T2R13 P2-L8, F-FNO ×4 + ViT ×2 (09-16) |
+| leader, read 09-14 | T1 81.85874 · T2 81.99648 | gaps 0.514 · 0.682 |
 
-* **Staged for the 09-15 UTC slot** (`../sub_candidates/README.md` §NOW, predictions recorded):
-  Track 1 **P1** = Swin U-Net w64 L2 ×4 fused + ViT ×2, est. **81.453** vs R25 (81.386–81.517);
-  Track 2 **P2-L8** = F-FNO w40 L8 ×4 fused (dense) + ViT ×2, est. **81.237** vs T2R12
-  (81.195–81.329).
-* **The round-26 pair, staged 09-14: upload status unknown.** Track 2 xfam5fp16 (T2R9 + fp16),
-  est. 81.166 vs T2R12 (81.113–81.210, likely a tie); Track 1 R25 + a CUDA graph on `predict`,
-  est. 81.428 vs R25 (81.345–81.527), fingerprinted by sps −1e-4.
-* **R25 / T2R12: fp16 ran on the board** (errors moved ≤ 3e-4 against R24). Track 1 kept 37 % of
-  the local cut; on Track 2 it did not pay for the second ViT's FLOPs. Both estimates missed only
-  in `time` (`ROUNDS.md`, round 25).
-* **Package of record, xfam6fp16:** 4 all-data `cmb3sim` FNOs (one fused invocation) + 2 ViTs (a
-  second) · int8 `--linear tensor` · band `Track_1/bands/r24_xfam6.npz` · `ALPHA = 0.60` ·
-  `AMP = "fp16"`, `SPEC_PATH = "bmm"`, `HOST_WRITE = "torch"` · 146 MB extracted.
-* **Where the remaining score is:** within the FNO package the four containment levers (band,
-  capacity, member count, family) are closed and precision is read. The backbone campaign
-  (`Track_1/plan/plan_20260914.md`, ledger `leaderboard/screen.jsonl`) found Swin and F-FNO, which
-  the 09-15 slots price. Also left: TF32 (safe, not baked) and the Track-1 graph (staged).
+* **09-16, one non-FNO family per track.** **T2R13 = P2-L8** (F-FNO w40 L8 ×4 dense + ViT ×2):
+  **81.314785, a new Track-2 best**, +0.150 and above its own estimate — rel +0.029, tke +0.194,
+  `time` +0.599, sps +0.302, so the family moved containment. **R26 = P1** (Swin ×4 + ViT ×2):
+  **81.218444, −0.126 against R25**, every error row on the wrong side of an 81.453 estimate.
+  **mvpe fell on BOTH tracks** (−0.174 / −0.161): FNO holds mvpe better than either new family.
+* **09-17 slots** (`../sub_candidates/README.md` §NOW): T1 = R25 + the CUDA graph, staged since
+  09-14, est. **81.428** (81.37–81.52); T2 = **P2-L4**, est. **+0.027** over T2R13, built when
+  bundle E lands.
+* **Packages of record.** *T1, xfam6fp16 (R25):* 4 all-data `cmb3sim` FNOs (fused) + 2 ViTs · int8
+  `tensor` · band `r24_xfam6.npz` · ALPHA 0.60 · fp16, bmm, HOST_WRITE torch · 146 MB. *T2, P2-L8
+  (T2R13):* 4 all-data F-FNO w40 L8 fused on the **dense** path + the same 2 ViTs · int8 `tensor` ·
+  band `t2r13_p2ffnoL8x4.npz` · ALPHA 0.60 · fp16, bmm · 36 MB.
+* **Where the remaining score is.** The backbone campaign is **closed** (`Track_1/plan/screen_20260914.md`
+  6z): families, the Swin ladder, F-FNO depth (L4 is the cost floor), width, modes, regularization,
+  sim, mixed depth and conditioning are settled, and **Track 1 has no F-FNO option at any depth** —
+  the fused stack carries a fixed ~27 % penalty at b64 (gate 7330003). What is left is package-level:
+  the Track-1 graph, F-FNO depth on Track 2, the ViT-pair question, TF32 and `StackedFFNO` efficiency.
 
 ## Standing rules
 
@@ -163,10 +163,9 @@ The official program is `/users/PAS1187/qwu/RealPDE/official/t1_v9/realpde_t1_st
 * **SPS factorizes:** `sps = 100·mean_i(a_i)·containment`, `a_i = 0.5g(rel) + 0.3g(tke) +
   0.2g(mvpe)`, `g(m) = 0.5/(0.5+m)`. The exact optimal band is therefore a sort (`Track_1/sps9.py`),
   and a board round's `sps` follows from its other three subscores, `sps(B) ≈ sps(A)·a(B)/a(A)`,
-  with containment as the residual. Board steps that moved containment: band +1.41 · capacity
-  w24→w96 +0.99 / +0.96 · members 3→8 +0.67 · U-FNO in/out +0.46 / −0.44 · first ViT +0.18 / +0.16 ·
-  second ViT +0.05 / +0.04. Everything else (sim, depth at equal FLOPs, auxiliary losses, latency
-  rebuilds, 4→8 members with a ViT present) landed within ±0.05.
+  with containment as the residual. The board steps that moved containment are listed in `ROUNDS.md`
+  (band, capacity, member count, family; everything else inside ±0.05), and 09-16 adds two: Swin
+  +0.128 (R26) and F-FNO +0.302 (T2R13).
 * **The rule combining the subscores into `final_score` is unpublished. It is a free linear fit**
   (no Σw = 1) over 32 rounds pooled across both tracks: **rel_l2 0.4775 · tke 0.1013 · mvpe
   0.0920 · time 0.0965 · sps 0.2501** (Σw 1.018, max residual 0.0025). `Track_1/final_v9.py` is
@@ -183,8 +182,11 @@ The official program is `/users/PAS1187/qwu/RealPDE/official/t1_v9/realpde_t1_st
 ### Board latency — measured; move in deltas, never predict a level
 
 * **Invocation:** +1.151 board ms on Track 1, +0.866 on Track 2 (R23, unfused).
-* **FLOPs:** ≈ 1.75 board ms per 4060-equivalent local ms on Track 1, 0.60 on Track 2 (one
-  reading). A100 local ms × 1.850 = 4060-equivalent.
+* **FLOPs:** ≈ 1.75 board ms per 4060-eq local ms on Track 1; Track 2 re-measured **0.937** on
+  T2R12 → T2R13 (was 0.60; one cross-date reading each, `board_rounds.LOC_SLOPE_T2`). A100 local
+  ms × 1.850 = 4060-equivalent.
+* **Slopes hold only WITHIN a kernel family (R26).** P1's fused Swin step measured 0.63× R25's and
+  predicted −1.245 board ms; the board returned **+1.17**, below even the fp32-fallback band.
 * **Precision** is charged less than FLOPs: fp16 kept 37 % of its local cut on Track 1, ≈ 0.65
   board ms per 4060-eq ms (R24→R25, `PREC_SLOPE_T1`); on Track 2 ~20 % (T2R12, confounded).
 * At ~4.5 board ms on Track 1, 1 board ms ≈ −0.072 `final`, and +0.1 A100 ms/window ≈ −0.023.
@@ -244,9 +246,10 @@ FNO's σ head must share the trunk and have an MLP readout (`--var-mlp`), `--lif
 
 ## Instruments — a sign, not a size
 
-* **Every local number is a sign.** The proxy over-reads error cuts about 2×. Board/proxy level
-  ratios are ≈ rel 1.07, tke 1.14, mvpe 1.45, and the delta residual is ~4 % of the error rms.
-  Across model families the proxy has been wrong in size and, for U-FNO, in sign.
+* **Every local number is a sign.** The proxy over-reads error cuts about 2×. Board/proxy ratios are
+  ≈ rel 1.07, tke 1.14, mvpe 1.45. **Across model FAMILIES it predicts neither size nor sign** —
+  U-FNO (R16) and Swin (R26): Swin read equal-or-better on all three errors, the board moved all
+  three down.
 * **Instrument defaults are not the operating point.** `--alpha` defaults to 0.75 in
   `compare_v9.py`, `ens_v9.py`, `fit_band.py` and `predict_board.py`, and to 0.90 in `kfold.py`;
   `fit_band.py --band-p` defaults to 0.5. Pass `--alpha 0.60` and `--band-p 0.45`.
