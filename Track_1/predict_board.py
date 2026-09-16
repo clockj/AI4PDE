@@ -125,7 +125,10 @@ LAT_INV = LAT_INV_T1                 # back-compat default; pass track=2 to lat_
 # same-day FLOPs pair (R16 -> R17, 1.76); Track 2 reads 0.60 on one noisier reading. The 0.336
 # above was refit ACROSS days, and Track 1's R17 -> R18 "0.25" was a host-write change -- host
 # work is cheap on the board, GPU compute is not.
-LAT_LOC_T1, LAT_LOC_T2 = 1.75, 0.60
+# LAT_LOC_T2 was 0.60 (T2R9 -> T2R11) until 2026-09-16, when T2R12 -> T2R13 (P2-L8) read 0.937:
+# -0.573 A100 ms/step = -1.060 4060-eq bought -0.992 board ms. One reading, and CROSS-DATE (09-13 vs
+# 09-16) on a machine that drifts by date -- see board_rounds.LOC_SLOPE_T2 for which is which.
+LAT_LOC_T1, LAT_LOC_T2 = 1.75, 0.937
 LAT_LOC = LAT_LOC_T1
 
 
@@ -247,6 +250,17 @@ ANCHORS = {
                 sps=41.867687, final=81.344644),
     "t2r12": dict(rel_l2=94.861391, tke=78.587250, mvpe=94.224322, time=91.039757,
                   sps=41.760694, final=81.164374),
+    # ROUND 26 / T2R13, 2026-09-16 -- the first non-FNO primary families on the board, one per track.
+    # `r26` is P1 (Swin U-Net w64 L2 x4 + ViT x2): it LOST -0.126, with all three error subscores below
+    # R25's and `time` 91.528 where 93.240 was predicted, so anchor Track-1 Swin work here and nothing
+    # else -- R25 remains Track 1's best and its accuracy reference.
+    # `t2r13` is P2-L8 (F-FNO w40 L8 x4 dense + ViT x2) and is THE DEFAULT TRACK-2 ANCHOR from now on:
+    # it is the Track-2 best (81.314785), its errors and its containment both moved, and every future
+    # Track-2 package is a delta against it. Board step 6.069 ms at 2 invocations.
+    "r26": dict(rel_l2=94.747724, tke=78.667443, mvpe=94.173298, time=91.528039,
+                sps=41.995785, final=81.218444),
+    "t2r13": dict(rel_l2=94.890753, tke=78.781089, mvpe=94.063576, time=91.638537,
+                  sps=42.063113, final=81.314785),
     "r10": R10,
 }
 

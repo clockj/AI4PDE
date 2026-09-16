@@ -67,6 +67,8 @@ Rounds R6–R12 predate the `submitted/` archive and their bands are gone.
 twins plus `arch_vit_d384`). Promoted 2026-09-11 after R21/T2R9 scored.
 
 | `r24_xfam6.npz` | `94bbebc3f1fef6870bfab36bb35d8450` | R24 (id not reported) |
+| `r26_p1swin4.npz` | `b5f0ebf4fda9fae12b1cf71789717fab` | R26 (id not reported) |
+| `t2r13_p2ffnoL8x4.npz` | `b99d177d889126b0734bee0680bc69b0` | T2R13 (id not reported) |
 
 `r24_xfam6.npz` is fitted on R21's twins plus one cmb3sim-recipe ViT twin (`arch_vit_cmb3sim`),
 for R21's members plus `arch_vit_all_cmb3sim_s3`. Promoted 2026-09-13 after R24 scored. T2R11
@@ -74,3 +76,16 @@ for R21's members plus `arch_vit_all_cmb3sim_s3`. Promoted 2026-09-13 after R24 
 
 `r24_xfam6.npz` shipped again, byte for byte, in R25 and T2R12 (2026-09-13): R24's archive with
 fp16 autocast baked in.
+
+
+`r26_p1swin4.npz` (promoted 2026-09-16) was fitted on the held-out Swin twins `w1_swin_unet_s1`,
+`w2_swin_unet_w64_s2`, `w2_swin_unet_w64_s3` plus `arch_vit_d384` and `arch_vit_cmb3sim`, at ALPHA
+0.60 and `--band-p 0.45`, for P1's four all-data Swin members plus R25's two ViTs. R26 scored
+81.218444 with it and LOST to R25, so it is a record, not a recommendation.
+
+`t2r13_p2ffnoL8x4.npz` (promoted 2026-09-16) was fitted on the held-out F-FNO L8 twins
+`p2_ffno_l8_s1..s3` plus the same two ViT twins, at ALPHA 0.60 and `--band-p 0.45`, for P2-L8's four
+all-data F-FNO w40 L8 members plus the two ViTs. **T2R13 is the Track-2 best (81.314785)** and its
+`sps` +0.302 over T2R12 is far more than the per-sample factor alone, so this band together with the
+F-FNO family moved containment. A future Track-2 band is refit with its member set, never this one
+reused.

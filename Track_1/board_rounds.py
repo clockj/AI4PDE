@@ -119,6 +119,22 @@ ROUNDS = [
     # ms/window) would give at LOC_SLOPE_T1 (15-60 % across Track 1's 0.03-0.30 ms drift). Estimate of
     # record 81.356 assumed 50 %; actual 81.345, the miss all `time`. NEW TRACK-1 BEST, +0.014 over R21.
     ("R25 xfam6 fp16/2inv", "2026-09-13", 0, 94.861790, 78.793380, 94.347508, 92.297891, 41.867687, 81.344644),
+    # R26 = P1: the FIRST non-FNO primary family to ship. Four all-data Swin U-Net w64 L2 fused by
+    # StackedSwin + R25's two ViTs, 2 invocations; band refit from the Swin twins; archive tagged
+    # r27_p1swin4_a060 (the r26-tagged graph archive was never uploaded). Submission id not reported.
+    #   IT LOST ON ACCURACY AND ON TIME. Against R25: rel -0.114, tke -0.126, mvpe -0.174, sps +0.128,
+    #   `time` -0.770, net -0.126. Estimate of record 81.453 (rel 94.855, tke 78.871, mvpe 94.399,
+    #   time 93.240, sps 41.900): every error row landed on the WRONG SIDE of R25.
+    #   THE PROXY INVERTED. It read Swin as equal-or-better on all three error metrics; the board moved
+    #   all three DOWN. That is the U-FNO failure a second time -- across model FAMILIES the proxy
+    #   predicts neither size nor sign, only that something changed.
+    #   TIME WENT BACKWARDS. The fused Swin step measured 0.63x R25's interleaved (1.019 vs 1.404
+    #   ms/window), which predicted -1.245 board ms at LOC_SLOPE_T1; the board came back at 6.245 ms
+    #   against R25's 5.076, i.e. +1.17. Even the fp32-fallback band (time 91.79-92.66) is above the
+    #   91.528 actual, so a load-time fallback alone cannot explain it: Swin's kernels transfer badly
+    #   to the eval GPU. RULE: a local latency cut measured on kernels UNLIKE the anchor's does not
+    #   transfer, and LOC_SLOPE / PREC_SLOPE hold only WITHIN a kernel family.
+    ("R26 p1swin4 swinx4+ViT2/2inv", "2026-09-16", 0, 94.747724, 78.667443, 94.173298, 91.528039, 41.995785, 81.218444),
 ]
 
 UNSCORED = []   # every round on both tracks now has full subscores
@@ -226,6 +242,19 @@ ROUNDS_T2 = [
     # transfer, so ~0.73 of a possible 3.61 ms came back (inside Track 2's drift). Net +0.009 over T2R9:
     # NEW TRACK-2 BEST. Estimate of record 81.223; the miss is the `time` row (-0.063).
     ("T2R12 xfam6 fp16/2inv", "2026-09-13", 0, 94.861391, 78.587250, 94.224322, 91.039757, 41.760694, 81.164374),
+    # T2R13 = P2-L8: four all-data F-FNO w40 L8 fused by StackedFFNO on the DENSE spectral path +
+    # T2R12's two ViTs (tensor-identical), 2 invocations; band refit from the L8 twins; archive tagged
+    # r27_p2ffno4_a060. Submission id not reported. NEW TRACK-2 BEST, +0.150 over T2R12, board 6.069 ms.
+    #   Against T2R12: rel +0.029, tke +0.194, mvpe -0.161, `time` +0.599, sps +0.302, net +0.150.
+    #   It landed at the OPTIMISTIC end of its bracket (estimate of record 81.237, optimistic 81.329,
+    #   actual 81.315), the first package this campaign has UNDER-predicted.
+    #   THE FAMILY TRANSFERRED ON TRACK 2 where it inverted on Track 1's Swin: rel and tke both up,
+    #   and sps +0.302 is far above the per-sample factor alone, so the F-FNO family moved CONTAINMENT.
+    #   `time` +0.599 for a step measured at 0.861x T2R12's -- the first latency cut this project has
+    #   predicted and collected inside its bracket, and the pair that re-measures LOC_SLOPE_T2 below.
+    #   MVPE IS THE EXCEPTION: -0.161 here and -0.174 on Swin the same day, the only metric to fall on
+    #   BOTH tracks. FNO holds mvpe better than either new family.
+    ("T2R13 p2ffnoL8 ffnox4+ViT2/2inv", "2026-09-16", 0, 94.890753, 78.781089, 94.063576, 91.638537, 42.063113, 81.314785),
 ]
 
 # The fit pools both tracks -- see the module docstring.  ROUNDS first, then ROUNDS_T2;
@@ -337,7 +366,12 @@ def invocation_cost(anchor_time_score: float, n: int = 1, track: int = 1) -> tup
 # At R21's operating point, +0.1 A100 ms/window of local compute is ~ -0.023 `final` on Track 1,
 # and a board ms saved is ~ +0.072.
 LOC_SLOPE_T1 = 1.75     # board ms per 4060-equivalent local ms, Track 1 (R16->R17 1.76, R21->R24 1.74)
-LOC_SLOPE_T2 = 0.60     # Track 2, T2R9 -> T2R11 only
+# Track 2's FLOPs slope, RE-MEASURED 2026-09-16 on T2R12 -> T2R13 (P2-L8): the step fell 0.573 A100
+# ms/step (-1.060 4060-eq) and the board saved 0.992 ms, i.e. 0.937 board ms per 4060-eq ms.
+# THE PREVIOUS VALUE, 0.60 (T2R9 -> T2R11, 09-10 -> 09-12), is kept here deliberately. Both are ONE
+# reading, and this one is CROSS-DATE (09-13 against 09-16) on a machine that drifts by date, so if
+# the next Track-2 FLOPs pair reads ~0.60 again, that is machine drift and not a slope change.
+LOC_SLOPE_T2 = 0.937    # was 0.60 until 2026-09-16
 
 # ROUND 25: A PRECISION CUT IS NOT CHARGED LIKE A FLOPs CUT (2026-09-14). R25 is R24's archive with
 # fp16 autocast baked in, and its error subscores moved by <= 3e-4 (the fingerprint that fp16 ran),
