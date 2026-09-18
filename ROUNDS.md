@@ -2352,6 +2352,94 @@ same shape of miss as R26's: the estimate was right about everything the proxy c
 
 ---
 
+### Round 28 / T2R15 BOARD RESULT (2026-09-18) — a new Track-1 best, and the ViT pair is worth keeping
+
+The day the F-FNO family arrived on Track 1 and the ViT-pair question closed. **R28 = 81.401196, a new
+Track-1 best (+0.056552 over R25)**, and **T2R15 = 81.265138, −0.049647**, so **T2R13 (81.314785) stays
+Track 2's**. One slot beat its estimate, the other hit the floor of its bracket, and between them they
+answered the two questions the 09-17 handoff opened.
+
+**Track 1, R28** = `track1_r31_p2ffnoL8_a060.zip` (md5 `467a7bad22330bbf56228b3c435bc24b`): R25's package
+with the primary family swapped — four all-data F-FNO w40 L8 members fused by `StackedFFNO` on the dense
+path + R25's two ViTs, band `t2r13_p2ffnoL8x4.npz` byte for byte. The exact cross-track twin of T2R13.
+
+| | rel_l2 | tke | mvpe | time | sps | final |
+|---|---|---|---|---|---|---|
+| R25 on the board | 94.861790 | 78.793380 | 94.347508 | 92.297891 | 41.867687 | 81.344644 |
+| estimate of record (09-17) | 94.891 | 78.987 | 94.187 | 91.75 | 42.170 | 81.387 |
+| bracket | | | | 90.36–92.30 | | 81.25–81.44 |
+| **actual** | 94.890524 | 78.952686 | 94.205730 | 92.021555 | 42.139290 | **81.401196** |
+| vs R25 | +0.028734 | +0.159306 | −0.141778 | −0.276336 | +0.271603 | **+0.056552** |
+
+1. **A BOARD read of a family transfers across tracks; a PROXY read of a family does not.** The estimate
+   was built entirely from the T2R13 − T2R12 board pair — rel +0.029, tke +0.194, mvpe −0.161, sps +0.302
+   — and the board returned **+0.029 / +0.159 / −0.142 / +0.272**. Every row has the right sign at **≈ 85 %
+   of the size**. Compare R26, where the *proxy* read Swin equal-or-better on all three errors and the
+   board moved all three down. **This is the first family-level prediction the project has got right, and
+   the difference is the instrument, not the family.**
+2. **Containment moved on Track 1 too, at the same fraction.** `sps` +0.272 against a forced part of only
+   **+0.019**, so **containment +0.253** — against +0.302 on Track 2. The F-FNO family's containment gain
+   is a property of the family, not of one board.
+3. **mvpe is still the exception.** −0.142 here (+2.66 % of error). It has now fallen on *every* package
+   that replaced the cmb3sim FNO: Swin −0.174, F-FNO −0.161 on Track 2, −0.142 here. **No new family has
+   improved mvpe, and the FNO stack is still the best thing we have for it.**
+4. **The first cross-family latency read that did not invert.** 5.076 → **5.480 board ms, +0.404**, for the
+   fused stack's +0.246 A100 ms/window (+0.455 4060-eq) = **0.89 board ms per 4060-eq ms, half of
+   `LOC_SLOPE_T1` 1.75**. It is recorded as **`LOC_SLOPE_T1_XFAM`**, not as a change to `LOC_SLOPE_T1`:
+   Swin inverted outright and the CUDA graph inverted on the *same* kernels, so a cross-family Track-1
+   estimate still belongs in a bracket [0, 1.75] with 0.89 as its only anchor. The estimate charged the
+   full 1.75, under-read `time` by 0.26 subscore, and that is exactly where the +0.014 beat came from.
+
+**Track 2, T2R15** = `track2_r28_l8x4_a060.zip` (md5 `db1808de781ec419e4cd3d251871a129`): T2R13 with the
+ViT pair removed — the same four F-FNO L8 members alone, **one invocation**, band refit from the L8 twins
+only.
+
+| | rel_l2 | tke | mvpe | time | sps | final |
+|---|---|---|---|---|---|---|
+| T2R13 on the board | 94.890753 | 78.781089 | 94.063576 | 91.638537 | 42.063113 | 81.314785 |
+| estimate of record (09-17) | 94.851 | 78.619 | 93.981 | 93.667 | 41.916 | 81.431 |
+| bracket | | | | 92.60–94.15 | | 81.26–81.48 |
+| **actual** | 94.823177 | 78.519336 | 93.885731 | 92.730627 | 41.742474 | **81.265138** |
+| vs T2R13 | −0.067576 | −0.261753 | −0.177845 | +1.092090 | −0.320639 | **−0.049647** |
+
+1. **The ViT pair stays in every package.** Priced at the fitted weights, dropping it costs **−0.155 of
+   accuracy + containment** and returns **+0.105 of `time`** — net **−0.050**. `sps` −0.321 is forced
+   −0.188 plus **containment −0.132**, which is **three times** the −0.041 the estimate carried from
+   T2R12's second-ViT read. Two 14.8 MB ViTs buy containment that no number of F-FNO members reproduces,
+   and they are worth an invocation to keep.
+2. **"Halve the local deltas" under-read this one, and the reason is general.** The **un-halved** AoA 15–20
+   ratios (rel ×1.0165, tke ×1.0195, mvpe ×1.0297) predict rel **94.811** / tke **78.457** / mvpe
+   **93.886** against the actual **94.823 / 78.519 / 93.886** — essentially exact, where the halved version
+   missed all three. **The 2× over-read rule is calibrated on arms that REMOVE error. A member REMOVAL is
+   charged in full.** (T2R14 pointed the same way: its predicted tke *loss* over-read by 5×, i.e. halving
+   a loss was wrong there too, in the other direction.)
+3. **A fourth Track-2 latency reading, and the lowest yet.** 6.069 → **4.480 board ms**, −1.589 against
+   −2.736 predicted: **58 % realized**. Charging the dropped invocation at `INV_MS_T2` 0.866 leaves −0.723
+   board ms for −2.551 4060-eq = **≈ 0.28** — and if the invocation term is itself smaller today, both
+   are. The four readings are now **0.60 / 0.937 / 0.529 / ≈ 0.28**, three of them at or below 0.60 and the
+   two most recent the lowest, so **`LOC_SLOPE_T2` goes back to 0.60 with an explicit 0.3–0.9 bracket.**
+4. **The eval machine was fast on both boards.** T2R15's 4.480 ms is **below T2R8's 4.659 ms**, the
+   cheapest one-invocation Track-2 reading on record, and R28's stack cost +0.40 where +0.80 was predicted.
+   Both `time` rows therefore carry a same-day drift in the same direction, which is one more reason the
+   0.89 and the 0.28 are brackets rather than constants.
+
+**Where this leaves the packages.** Track 1 ships **R28** (F-FNO L8 ×4 + ViT ×2, 81.401196); Track 2 ships
+**T2R13** (the same members plus the same ViT pair, 81.314785). They are the same package on two boards,
+and the ViT pair is now board-measured on both. The remaining levers are same-family: the `StackedFFNO`
+batch-tiling fix (pure latency on R28's own members and band) and the distilled student.
+
+* **Weights after 38 pooled rounds** (`Track_1/final_v9.py`): rel_l2 **0.4778** · tke **0.1011** · mvpe
+  **0.0920** · time **0.0965** · sps **0.2499**, Σw 1.0173, max |residual| **0.0030** (R6, recorded to 3–4
+  decimals).
+* **Ranks, read 09-18 ~04:00 UTC** (we are `xtgg233`). Track 1 **#21** at 81.4012, leader `roysegal`
+  81.9613, **#10 `hituc` 81.62374 → +0.223 to the cut**. Track 2 **#14** at 81.31478, leader `roysegal`
+  82.05275, **#10 `mouchinn` 81.51141 → +0.197 to the cut**. Per the 09-17 rules pivot **the shortlist is
+  the objective**, so the #10 line — not the leader — is the number to steer by.
+* **The containment ledger** gains two entries: **F-FNO on Track 1 +0.253** (R28) and **dropping the ViT
+  pair −0.132** (T2R15).
+
+---
+
 ## CLAUDE.md detail moved here on 2026-09-15 (verbatim)
 
 `CLAUDE.md` was trimmed back under 30,000 characters on 2026-09-15, when the two 09-15 packages, the

@@ -125,13 +125,17 @@ LAT_INV = LAT_INV_T1                 # back-compat default; pass track=2 to lat_
 # same-day FLOPs pair (R16 -> R17, 1.76); Track 2 reads 0.60 on one noisier reading. The 0.336
 # above was refit ACROSS days, and Track 1's R17 -> R18 "0.25" was a host-write change -- host
 # work is cheap on the board, GPU compute is not.
-# LAT_LOC_T2 HAS THREE READINGS AND IS NOW THE MEAN OF THE TWO MOST RECENT (2026-09-17):
-#   T2R9 -> T2R11 0.60 | T2R12 -> T2R13 0.937 | T2R13 -> T2R14 (P2-L4) 0.529, the cleanest of the
-#   three (one day apart, same kernels, depth the only lever: -0.738 A100 ms/step = -1.366 4060-eq
-#   bought -0.723 board ms). T2R14's `time` came in BELOW the old 0.60 prediction, so 0.937 was a
-#   HIGH DRAW, not a slope change. Shipped: (0.937 + 0.529)/2 = 0.733; bracket any Track-2 latency
-#   lever with 0.53 and 0.94 instead of trusting the point. See board_rounds.LOC_SLOPE_T2.
-LAT_LOC_T1, LAT_LOC_T2 = 1.75, 0.733
+# LAT_LOC_T2 HAS FOUR READINGS AND GOES BACK TO 0.60 (2026-09-18):
+#   T2R9 -> T2R11 0.60 | T2R12 -> T2R13 0.937 | T2R13 -> T2R14 0.529 | T2R13 -> T2R15 ~0.28 (after
+#   charging the dropped invocation at LAT_INV_T2). Three of the four sit at or below 0.60 and the
+#   two most recent are the lowest, so 0.937 was a high draw. Shipped 0.60, the median; **bracket
+#   every Track-2 latency lever with 0.3 and 0.9**, never a point. T2R15 landed at 4.480 board ms,
+#   below T2R8's 4.659 one-invocation floor, so that day was fast on BOTH boards.
+# LAT_LOC_T1 is 1.75 WITHIN a kernel family. R28 is the first CROSS-family Track-1 read that did not
+#   invert: +0.455 4060-eq bought +0.404 board ms = 0.89, half of 1.75 (board_rounds.LOC_SLOPE_T1_XFAM).
+#   Price a cross-family Track-1 candidate in the bracket [0, 1.75] with 0.89 as its only anchor.
+LAT_LOC_T1, LAT_LOC_T2 = 1.75, 0.60
+LAT_LOC_T1_XFAM = 0.89
 LAT_LOC = LAT_LOC_T1
 
 
@@ -277,6 +281,20 @@ ANCHORS = {
                 sps=41.867769, final=81.307815),
     "t2r14": dict(rel_l2=94.914425, tke=78.750833, mvpe=94.136582, time=92.111693,
                   sps=41.790524, final=81.308359),
+    # ROUND 28 / T2R15, 2026-09-18 -- the F-FNO family on Track 1, and the ViT pair priced.
+    # `r28` is the NEW TRACK-1 BEST (81.401196): R25's package with four fused F-FNO w40 L8 members in
+    # place of the four cmb3sim FNOs, T2R13's band, 2 invocations, board step 5.480 ms. The family's
+    # board-measured accuracy and containment transferred from Track 2 at ~0.85x (sps +0.272, of which
+    # +0.253 is containment). **THE DEFAULT ANCHOR FOR ANY F-FNO PACKAGE ON TRACK 1**; anchor an FNO
+    # package on `r25`, which is still the reference for that family's accuracy.
+    # `t2r15` is T2R13 with the ViT pair dropped (L8 x4 alone, ONE invocation, board step 4.480 ms):
+    # -0.050, so the pair stays. Use it ONLY to price a one-invocation Track-2 package or the ViT
+    # pair's containment (-0.132, three times the -0.041 assumed from T2R12); T2R13 is still the
+    # Track-2 accuracy anchor and the Track-2 best.
+    "r28": dict(rel_l2=94.890524, tke=78.952686, mvpe=94.205730, time=92.021555,
+                sps=42.139290, final=81.401196),
+    "t2r15": dict(rel_l2=94.823177, tke=78.519336, mvpe=93.885731, time=92.730627,
+                  sps=41.742474, final=81.265138),
     "r10": R10,
 }
 

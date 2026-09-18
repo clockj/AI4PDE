@@ -70,6 +70,7 @@ twins plus `arch_vit_d384`). Promoted 2026-09-11 after R21/T2R9 scored.
 | `r26_p1swin4.npz` | `b5f0ebf4fda9fae12b1cf71789717fab` | R26 (id not reported) |
 | `t2r13_p2ffnoL8x4.npz` | `b99d177d889126b0734bee0680bc69b0` | T2R13 (id not reported) |
 | `t2r14_p2ffnoL4x4.npz` | `c7572ae00c07dccff52a39e17160fdda` | T2R14 (id not reported) |
+| `t2r15_l8x4.npz` | `63cc4cb3e00704b4efaaaec8bc19c309` | T2R15 (id not reported) |
 
 `r24_xfam6.npz` is fitted on R21's twins plus one cmb3sim-recipe ViT twin (`arch_vit_cmb3sim`),
 for R21's members plus `arch_vit_all_cmb3sim_s3`. Promoted 2026-09-13 after R24 scored. T2R11
@@ -122,3 +123,16 @@ of CONTAINMENT ACROSS DEPTH: the three error subscores moved by less than the fo
 and `sps` came back −0.273, so containment fell **−0.310** against T2R13's L8 band on the same recipe.
 Every depth's band scores well on its own twins, so this is a record of something no local instrument
 reads — not a defect in the fit. L8 stays the Track-2 package.
+
+`t2r13_p2ffnoL8x4.npz` SHIPPED AGAIN, byte for byte, in **R28** (2026-09-18) — the Track-1 twin of
+T2R13 — and **R28 is the Track-1 best at 81.401196**. So this one band now carries both boards' record
+packages, and its `sps` moved containment on both: **+0.302 on Track 2, +0.253 on Track 1**. It is the
+first band in this list to be scored on two boards with two different results, and both were wins.
+
+`t2r15_l8x4.npz` (promoted 2026-09-18) was fitted on the held-out F-FNO L8 twins `p2_ffno_l8_s1..s3`
+**alone** — no ViT twins — at ALPHA 0.60 and `--band-p 0.45`, for the four all-data F-FNO L8 members
+with no ViT pair. It shipped in `track2_r28_l8x4_a060.zip` and T2R15 scored 81.265138 with it, −0.050
+against T2R13. It is kept as the measurement of what the ViT pair's diversity is worth to a band: the
+same members, the same recipe, the same ALPHA, and **containment −0.132** purely for the two ViTs the
+error field no longer sees. A band fitted without the ViT twins is not wrong — it is fitted to a
+genuinely narrower error field — which is precisely why the ViT pair stays in the package.

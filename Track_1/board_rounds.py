@@ -153,6 +153,28 @@ ROUNDS = [
     #   transfer to the board -- and the first one on the SAME kernels as its anchor, which is what
     #   makes it the strongest of the three: host-side launch accounting does not transfer either.
     ("R27 xfam6fp16 GRAPH/2inv", "2026-09-17", 0, 94.861790, 78.793380, 94.347508, 91.914674, 41.867769, 81.307815),
+    # R28 = THE F-FNO L8 TWIN ON TRACK 1, and a NEW TRACK-1 BEST: R25's package with the primary family
+    # swapped -- four all-data F-FNO w40 L8 members fused by StackedFFNO on the dense path + R25's two
+    # ViTs, 2 invocations, band `t2r13_p2ffnoL8x4.npz` byte for byte. The exact cross-track twin of
+    # T2R13. Archive `track1_r31_p2ffnoL8_a060.zip` (md5 467a7bad...). Submission id not reported.
+    #   81.401196, +0.056552 over R25, INSIDE its 81.25-81.44 bracket and 0.014 ABOVE the 81.387
+    #   estimate of record -- the first Track-1 slot this campaign has both predicted and won.
+    #   1. THE FAMILY TRANSFERRED ACROSS BOARDS AT 0.85x. Predicting from the T2R13 - T2R12 board pair
+    #      gave rel +0.029 / tke +0.194 / mvpe -0.161 / sps +0.302; the board delivered +0.029 / +0.159
+    #      / -0.142 / +0.272. Every row has the right SIGN and ~85 % of the size. `sps` +0.272 is
+    #      forced only +0.019, so CONTAINMENT MOVED +0.253 here against +0.302 on Track 2 -- the same
+    #      mechanism, the same fraction. A board read of a family DOES transfer; a proxy read does not.
+    #   2. MVPE IS STILL THE EXCEPTION (-0.142, +2.66 % of error). It has now fallen on every package
+    #      that replaced the cmb3sim FNO: Swin -0.174, F-FNO -0.161 (T2) and -0.142 (T1).
+    #   3. THE FIRST CROSS-FAMILY LATENCY READ THAT LANDED ON THE RIGHT SIDE. 5.076 -> 5.480 board ms,
+    #      +0.404, for the fused stack's +0.246 A100 ms/window (+0.455 4060-eq) = 0.89 board ms per
+    #      4060-eq ms -- HALF of LOC_SLOPE_T1. Swin inverted outright; this one is merely cheap. Kept
+    #      as LOC_SLOPE_T1_XFAM below, NOT as a change to LOC_SLOPE_T1. The estimate assumed the full
+    #      1.75 and so under-read `time` by 0.26 subscore, which is where the +0.014 beat came from.
+    #      Caveat: the eval machine ran fast on BOTH boards today (see T2R15), so part of the +0.40 vs
+    #      +0.80 is same-day drift.
+    #   R28 IS THE TRACK-1 ANCHOR FOR F-FNO PACKAGES; `r25` stays the anchor for FNO packages.
+    ("R28 p2ffnoL8 ffnox4+ViT2/2inv", "2026-09-18", 0, 94.890524, 78.952686, 94.205730, 92.021555, 42.139290, 81.401196),
 ]
 
 UNSCORED = []   # every round on both tracks now has full subscores
@@ -294,6 +316,26 @@ ROUNDS_T2 = [
     #   VERDICT: F-FNO DEPTH IS CLOSED ON THE BOARD TOO. L8 stays the Track-2 package and T2R13
     #   (81.314785) remains the Track-2 best; L4 buys latency and hands it straight back in containment.
     ("T2R14 p2ffnoL4 ffnoL4x4+ViT2/2inv", "2026-09-17", 0, 94.914425, 78.750833, 94.136582, 92.111693, 41.790524, 81.308359),
+    # T2R15 = T2R13 WITH THE ViT PAIR REMOVED: the same four all-data F-FNO w40 L8 members fused on the
+    # dense path, ALONE, at ONE invocation, band refit from the L8 twins only. Archive
+    # `track2_r28_l8x4_a060.zip` (md5 db1808de..., built and gated 09-15). Submission id not reported.
+    #   81.265138, -0.049647 against T2R13, AT THE FLOOR of its 81.26-81.48 bracket (estimate 81.431).
+    #   1. THE ViT PAIR STAYS IN EVERY PACKAGE. Priced at the fitted weights, dropping it costs
+    #      -0.155 of accuracy+containment and returns +0.105 of `time`, i.e. NET -0.050. sps -0.321 is
+    #      forced -0.188 plus CONTAINMENT -0.132 -- three times the -0.041 the estimate assumed from
+    #      T2R12. Two ViTs at 14.8 MB each buy containment no F-FNO member reproduces.
+    #   2. "HALVE THE LOCAL DELTAS" UNDER-READ THIS ONE. The un-halved AoA 15-20 ratios (rel x1.0165,
+    #      tke x1.0195, mvpe x1.0297) predict rel 94.811 / tke 78.457 / mvpe 93.886 against the actual
+    #      94.823 / 78.519 / 93.886 -- essentially exact, where the halved version missed all three.
+    #      The 2x over-read rule is for an arm that REMOVES error; a member REMOVAL is charged in full.
+    #   3. A FOURTH TRACK-2 LATENCY READING, AND THE LOWEST YET. 6.069 -> 4.480 board ms, -1.589,
+    #      against -2.736 predicted (58 % realized). Charging the dropped invocation at INV_MS_T2
+    #      0.866 leaves -0.723 board ms for -2.551 4060-eq = 0.28 -- and if the invocation term is
+    #      itself smaller today, both are. 4.480 ms is also BELOW T2R8's 4.659 ms floor for a
+    #      one-invocation FNO x4 package, so the machine was fast: same-day drift on both boards.
+    #   LOC_SLOPE_T2 goes back to 0.60 with an explicit 0.3-0.9 bracket (see below). T2R13
+    #   (81.314785) remains the Track-2 best.
+    ("T2R15 l8x4 ffnox4 noViT/1inv", "2026-09-18", 0, 94.823177, 78.519336, 93.885731, 92.730627, 41.742474, 81.265138),
 ]
 
 # The fit pools both tracks -- see the module docstring.  ROUNDS first, then ROUNDS_T2;
@@ -405,16 +447,26 @@ def invocation_cost(anchor_time_score: float, n: int = 1, track: int = 1) -> tup
 # At R21's operating point, +0.1 A100 ms/window of local compute is ~ -0.023 `final` on Track 1,
 # and a board ms saved is ~ +0.072.
 LOC_SLOPE_T1 = 1.75     # board ms per 4060-equivalent local ms, Track 1 (R16->R17 1.76, R21->R24 1.74)
-# Track 2's FLOPs slope, THREE READINGS, all single cross-date pairs on a machine that drifts by date:
+# ...but only WITHIN a kernel family. R28 (2026-09-18) is the first CROSS-FAMILY Track-1 read that did
+# not invert: swapping the four fused cmb3sim FNOs for four fused F-FNO w40 L8 cost +0.246 A100
+# ms/window (+0.455 4060-eq) and the board charged +0.404 ms, i.e. 0.89 -- HALF of LOC_SLOPE_T1. Swin
+# (R26) inverted outright and the CUDA graph (R27) inverted on the SAME kernels, so the honest reading
+# is that a cross-family Track-1 estimate belongs in a bracket [0, 1.75] with 0.89 as its only anchor.
+# One reading, and the eval machine ran fast on both boards that day (T2R15 came in under T2R8's floor).
+LOC_SLOPE_T1_XFAM = 0.89
+# Track 2's FLOPs slope, FOUR READINGS, all single cross-date pairs on a machine that drifts by date:
 #   T2R9  -> T2R11  (09-10 -> 09-12)  +1.234 A100 ms/step  -> +1.373 board ms   = 0.60
 #   T2R12 -> T2R13  (09-13 -> 09-16)  -0.573 A100 ms/step  -> -0.992 board ms   = 0.937
 #   T2R13 -> T2R14  (09-16 -> 09-17)  -0.738 A100 ms/step  -> -0.723 board ms   = 0.529
-# The 2026-09-16 handoff asked the next pair whether 0.937 was a slope or a draw; T2R14 answered
-# **a high draw**, and it is the cleanest of the three (one day apart, same kernels, same member
-# count, depth the only lever). The shipped constant is the MEAN OF THE TWO MOST RECENT READS,
-# (0.937 + 0.529) / 2 = 0.733; the three-read mean is 0.689, and any Track-2 latency lever should be
-# bracketed with 0.53 and 0.94 rather than priced at a point.
-LOC_SLOPE_T2 = 0.733    # 0.60 until 09-16, 0.937 until 09-17; now mean(0.937, 0.529)
+#   T2R13 -> T2R15  (09-16 -> 09-18)  -1.379 A100 ms/step  -> -1.589 board ms, of which -0.866 is the
+#                                     dropped invocation, leaving -0.723 over -2.551 4060-eq = ~0.28
+#                                     (and if INV_MS_T2 is smaller today, both terms are)
+# 0.937 was a HIGH DRAW: three of the four readings sit at or below 0.60, and the two most recent are
+# the lowest. The shipped constant goes BACK TO 0.60, which is the median and the only value with two
+# readings near it; bracket every Track-2 latency lever with **0.3 and 0.9** rather than pricing it at
+# a point. T2R15 also came in at 4.480 board ms, BELOW T2R8's 4.659 one-invocation floor, so part of
+# its cut is same-day machine speed and the ~0.28 is the low end of what a slope can mean.
+LOC_SLOPE_T2 = 0.60     # 0.60 -> 0.937 (09-16) -> 0.733 (09-17) -> back to 0.60 (09-18); bracket 0.3-0.9
 
 # ROUND 25: A PRECISION CUT IS NOT CHARGED LIKE A FLOPs CUT (2026-09-14). R25 is R24's archive with
 # fp16 autocast baked in, and its error subscores moved by <= 3e-4 (the fingerprint that fp16 ran),

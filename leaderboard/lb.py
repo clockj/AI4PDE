@@ -68,6 +68,28 @@ LEADER_NOTE_ZH = {
 }
 
 
+# Every dated read of OUR RANK: (date, track, rank, our final, the #10 team's final). Since the
+# 2026-09-17 rules pivot the top-10 CUT, not the leader, is the objective: the organizers shortlist
+# the top 10, re-train each method from scratch and score a private test set at novel AoA / Re.
+# Append a row whenever the user dumps the board. We are `xtgg233`.
+RANK_READS = [
+    ("2026-09-18", 1, 21, 81.4012, 81.62374),    # #10 hituc; leader roysegal 81.9613
+    ("2026-09-18", 2, 14, 81.31478, 81.51141),   # #10 mouchinn; leader roysegal 82.05275
+]
+
+
+def rank_latest(track):
+    """(date, rank, our final, the #10 cut) of the newest rank read on a track, or None."""
+    rs = [x for x in RANK_READS if x[1] == track]
+    return max(rs, key=lambda x: x[0]) if rs else None
+
+
+def cut_latest(track):
+    """The #10 team's `final` at the newest rank read, or None."""
+    r = rank_latest(track)
+    return r[4] if r else None
+
+
 def leader_latest(track):
     """(date, final) of the latest leader read on a track."""
     r = max((x for x in LEADER_READS if x[1] == track), key=lambda x: x[0])
@@ -1156,6 +1178,24 @@ def _curve_svg(B, collab):
                 o.append(_hit(x, yy, ten, tzh, body))
                 if k < len(reads) - 1:
                     o.append(f'<text x="{x:.1f}" y="{yy - 10:.1f}" text-anchor="middle">{v:.3f}</text>')
+            cut = cut_latest(track)
+            if cut is not None:
+                _rk = rank_latest(track)
+                o.append(f'<line x1="{X(_date_num(_rk[0])):.1f}" y1="{Y(cut):.1f}" x2="{xr}" '
+                         f'y2="{Y(cut):.1f}" stroke="var(--warm)" stroke-width="1.4" '
+                         f'stroke-dasharray="2 3"/>')
+                o.append(_hit(X(_date_num(_rk[0])), Y(cut),
+                              f"top-10 cut · Track {track} · read {_rk[0]}\n#10 final {cut:.5f}\n"
+                              f"we are #{_rk[2]} at {_rk[3]:.4f} · +{cut - _rk[3]:.3f} to the cut\n"
+                              f"the shortlist, not the leader, is the objective (rules pivot 09-17)",
+                              f"前十门槛 · Track {track} · {_rk[0]} 读取\n第 10 名 final {cut:.5f}\n"
+                              f"我们第 {_rk[2]} 名，{_rk[3]:.4f} · 距门槛 +{cut - _rk[3]:.3f}\n"
+                              f"目标是进入名单，而不是追领先者（09-17 规则转向）",
+                              f'<rect x="{X(_date_num(_rk[0])) - 5:.1f}" y="{Y(cut) - 5:.1f}" '
+                              f'width="10" height="10" fill="var(--panel)" stroke="var(--warm)" '
+                              f'stroke-width="1.5"/>'))
+                o.append(tsvg(f"{xr + 10}", f"{Y(cut) + 3.5:.1f}", f"top-10 cut {cut:.3f}",
+                              f"前十门槛 {cut:.3f}", 'style="fill:var(--warm)"'))
             o.append(tsvg(f"{xr + 10}", f"{Y(lv) + 3.5:.1f}", f"leader {lv:.3f}", f"领先者 {lv:.3f}",
                           'style="fill:var(--ink)"'))
             o.append(tsvg(f"{xr + 10}", f"{Y(bv) + 3.5:.1f}", f"best {bv:.3f} {bestr['round']}",
@@ -1676,6 +1716,7 @@ def html(B, Rn, w, path, S=(), state="missing"):
              "隐藏集的实测校正。")
          + "</p>", '<div id="top">']
 
+    _rk1, _rk2 = rank_latest(1), rank_latest(2)
     o.append('<div class="strip">')
     for k_en, k_zh, v, n_en, n_zh in [
             ("best, track 1", "最佳，track 1", f"{best['actual']['final']:.3f}",
@@ -1690,6 +1731,18 @@ def html(B, Rn, w, path, S=(), state="missing"):
             ("gap to leader, track 2", "与领先者差距，track 2",
              f"{lv2 - best2['actual']['final']:.3f}",
              f"leader {lv2:.3f} &middot; read {ld2[5:]}", f"领先者 {lv2:.3f} &middot; {ld2[5:]} 读取"),
+            ("rank / top-10 cut, track 1", "排名 / 前十门槛，track 1",
+             (f"#{_rk1[2]}" if _rk1 else "&mdash;"),
+             (f"cut {_rk1[4]:.3f} &middot; +{_rk1[4] - best['actual']['final']:.3f} to the cut"
+              if _rk1 else "not read"),
+             (f"门槛 {_rk1[4]:.3f} &middot; 距门槛 +{_rk1[4] - best['actual']['final']:.3f}"
+              if _rk1 else "未读取")),
+            ("rank / top-10 cut, track 2", "排名 / 前十门槛，track 2",
+             (f"#{_rk2[2]}" if _rk2 else "&mdash;"),
+             (f"cut {_rk2[4]:.3f} &middot; +{_rk2[4] - best2['actual']['final']:.3f} to the cut"
+              if _rk2 else "not read"),
+             (f"门槛 {_rk2[4]:.3f} &middot; 距门槛 +{_rk2[4] - best2['actual']['final']:.3f}"
+              if _rk2 else "未读取")),
             ("prediction rms", "预测残差 rms",
              f"{np.sqrt(np.mean(np.square(resid))):.3f}",
              f"{len(resid)} predicted rounds",
