@@ -13,6 +13,8 @@ Trained on real data minus VAL_TRAJ, so every number stays honestly held out. Ad
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import time
 
 import numpy as np
@@ -526,6 +528,27 @@ def main() -> None:
                          "split holds out 8 trajectories drawn from the INTERIOR of the Re "
                          "range, so it cannot see Re-extrapolation behaviour -- and the hidden "
                          "test set is at unseen Re. Pass a Re-extreme split to measure that.")
+    ap.add_argument("--teacher", default="",
+                    help="DISTILLATION. A directory written by distill_labels.py: the member-"
+                         "averaged field and sigma of a TEACHER ENSEMBLE, in normalized space, "
+                         "one row per window in window_index order. The student is then trained "
+                         "against a target blended with the teacher's, and its sigma head against "
+                         "the teacher's sigma, which is what a single model has to reproduce if "
+                         "it is to replace a six-member package at one invocation. The labels' "
+                         "index is asserted equal to this run's, so a stride or split mismatch "
+                         "fails loudly instead of training on shuffled labels.")
+    ap.add_argument("--teacher-sim", action="store_true",
+                    help="Also blend the SIM branch's target with the teacher's answer on the "
+                         "mapped sim windows (sim_*.npy in the same directory). The teacher "
+                         "labels any input, so sim stops being a wrong-but-related distribution "
+                         "and becomes more of the teacher's own function.")
+    ap.add_argument("--teacher-mix", type=float, default=0.5,
+                    help="Weight on the TRUE target; 1 - w goes to the teacher's field. The "
+                         "residual-based field terms (--loss, --lam-cov, --lam-tail, the "
+                         "gradient losses, --lam-p) all see the ONE blended target, which for "
+                         "the MSE branch has the same gradient as blending the two losses and "
+                         "for the redescending coverage loss is the better-posed of the two. "
+                         "The SIGMA target is the teacher's alone whenever --teacher is set.")
     ap.add_argument("--sim", default="",
                     help="train_sim directory. Adds a SECOND loss term on sim windows mapped "
                          "into real's measurement space (simreal.load_sim_mapped). Sim is a "
@@ -875,6 +898,56 @@ def main() -> None:
         print(f"init: {args.init} -> {len(ok)}/{len(dst)} tensors copied "
               f"({len(dst) - len(ok)} left at their random init)", flush=True)
 
+    # ---- DISTILLATION LABELS (forge 09-17) ------------------------------------------------
+    # Rows are in window_index(trajs, stride) order, which is the order `idx` was just built
+    # in, so the gather below is `pos` itself. The index is compared element by element rather
+    # than trusted: a silent misalignment would train the student on another window's answer.
+    teach_mean = teach_sig = sim_teach_mean = None
+    if args.teacher:
+        bad = [f for f, on in (("--norm self", self_norm_mode), ("--subpix", args.subpix > 0.0),
+                               ("--mixup", args.mixup > 0.0), ("--aug-scale", args.aug_scale > 0.0),
+                               ("--aug-noise", args.aug_noise > 0.0),
+                               ("--aug-mask", args.aug_mask > 0.0),
+                               ("--aoa-boost", w_samp is not None)) if on]
+        if bad:
+            # The teacher labelled the window as it is stored. Anything that changes x or y
+            # after the gather would leave the label describing a different input.
+            raise SystemExit(f"--teacher refuses {bad}: the labels describe the unaugmented "
+                             f"window, and these change it")
+        tman = json.load(open(os.path.join(args.teacher, "manifest.json")))
+        if (tman["stride"], tman["phases"], bool(tman["all_data"]), sorted(tman["exclude"])) != \
+           (args.stride, args.phases, bool(args.all_data), sorted(excl)):
+            raise SystemExit(f"--teacher labels were built for stride {tman['stride']} phases "
+                             f"{tman['phases']} all_data {tman['all_data']} exclude "
+                             f"{tman['exclude']}, this run is stride {args.stride} phases "
+                             f"{args.phases} all_data {args.all_data} exclude {sorted(excl)}")
+        tidx = np.load(os.path.join(args.teacher, "real_idx.npy"))
+        if tidx.shape != idx.shape or not np.array_equal(tidx, idx):
+            raise SystemExit("--teacher labels are not aligned with this run's window index")
+        teach_mean = torch.from_numpy(np.load(os.path.join(args.teacher, "real_mean.npy")))
+        teach_sig = torch.from_numpy(np.load(os.path.join(args.teacher, "real_sig.npy")))
+        print(f"teacher: {args.teacher}  {len(tidx)} labelled windows, mix {args.teacher_mix} "
+              f"true / {1 - args.teacher_mix:.2f} teacher, sigma from the teacher; members "
+              f"{[m['path'].split('/')[-1] for m in tman['members']]}", flush=True)
+        if args.teacher_sim:
+            if sim_idx_t is None:
+                raise SystemExit("--teacher-sim needs --sim")
+            sman = tman.get("sim")
+            if sman is None:
+                raise SystemExit(f"--teacher-sim: {args.teacher} has no sim labels")
+            if (sman["stride"], sman["sim_map"], bool(sman["sim_exclude_held"]),
+                    sman["frames"]) != (args.sim_stride, args.sim_map,
+                                        bool(args.sim_exclude_held), args.sim_frames):
+                raise SystemExit("--teacher-sim: the sim labels were built with different "
+                                 f"sim settings ({sman}) than this run")
+            sidx = np.load(os.path.join(args.teacher, "sim_idx.npy"))
+            if not np.array_equal(sidx, sim_idx_t.numpy()):
+                raise SystemExit("--teacher-sim labels are not aligned with this run's sim index")
+            sim_teach_mean = torch.from_numpy(np.load(os.path.join(args.teacher, "sim_mean.npy")))
+            print(f"teacher-sim: {len(sidx)} labelled sim windows", flush=True)
+    elif args.teacher_sim:
+        raise SystemExit("--teacher-sim without --teacher")
+
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.wd)
     steps = args.epochs * ((len(idx) + args.batch - 1) // args.batch)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=args.lr, total_steps=steps)
@@ -907,7 +980,7 @@ def main() -> None:
         # steps over a differently-weighted pool rather than one pass over every window.
         perm = (torch.randperm(len(idx_t)) if w_samp is None else
                 torch.multinomial(w_samp, len(idx_t), replacement=True))
-        acc = np.zeros(15)
+        acc = np.zeros(16)
         n = 0
         for i in range(0, len(idx_t), args.batch):
             pos = perm[i:i + args.batch]
@@ -970,6 +1043,17 @@ def main() -> None:
                 # LAST, so the masked elements carry the physical zero exactly rather than the
                 # zero plus whatever --aug-scale / --aug-noise had just put there.
                 x, y = aug_mask(x, y, args.aug_mask, zconst)
+
+            # The teacher's field replaces part of the truth, and its sigma replaces all of
+            # it. `kd` reports how far the two targets are apart in the loss's own units --
+            # it is a diagnostic, never added to the loss.
+            t_sig = None
+            kd_gap = torch.zeros((), device=dev)
+            if teach_mean is not None:
+                tm = teach_mean[pos].to(dev, non_blocking=True).float()
+                t_sig = teach_sig[pos].to(dev, non_blocking=True).float()
+                kd_gap = torch.mean(((tm - y) * cw) ** 2).detach()
+                y = args.teacher_mix * y + (1.0 - args.teacher_mix) * tm
 
             def compute_loss():
                 # Everything from the model input to the total loss, factored out so SAM
@@ -1125,7 +1209,10 @@ def main() -> None:
                     loss = loss + args.lam_spec * l_spec
                 l_var = l_tke = torch.zeros((), device=dev)
                 if args.var_head:
-                    s_true = std_t(y)
+                    # With a teacher, the sigma head is distilled outright: the ensemble's
+                    # sigma is a far better calibrated target than this one window's std_t(y),
+                    # and the band -- hence sps containment -- is built on it.
+                    s_true = t_sig if t_sig is not None else std_t(y)
                     l_var = torch.mean((sigma.log() - (s_true + 1e-4).log()) ** 2)
                     # With alpha = 1 the composed field has std exactly `sigma`, so its TKE is
                     # 0.5*sum_c (sigma_c * STD_c)^2 identically. Writing it that way instead of
@@ -1171,7 +1258,8 @@ def main() -> None:
                     # One sim batch per real step. Real defines the epoch: sim is a regularizer
                     # on a wrong-but-related distribution, not a second dataset to fit.
                     nb = args.sim_batch or args.batch
-                    ss = sim_idx_t[torch.randint(len(sim_idx_t), (nb,))]
+                    sj = torch.randint(len(sim_idx_t), (nb,))
+                    ss = sim_idx_t[sj]
                     xs_ = torch.stack([sim_trajs_t[i][t:t + T_IN] for i, t in ss.tolist()])
                     ys_ = torch.stack([sim_trajs_t[i][t + T_IN:t + T_IN + T_OUT]
                                        for i, t in ss.tolist()])
@@ -1183,6 +1271,9 @@ def main() -> None:
                         xs_, ys_ = xs_[..., :C], ys_[..., :C]
                     xs_ = ((xs_.to(dev, non_blocking=True) - mean_v) / std_v)
                     ys_ = ((ys_.to(dev, non_blocking=True) - mean_v) / std_v)
+                    if sim_teach_mean is not None:
+                        ys_ = (args.teacher_mix * ys_ + (1.0 - args.teacher_mix)
+                               * sim_teach_mean[sj].to(dev, non_blocking=True).float())
                     if yp_ is None:
                         ps_ = from_ch(model(to_ch(xs_), detach_var=args.detach_var)[0])
                     else:
@@ -1271,7 +1362,7 @@ def main() -> None:
                 # backward is even launched.
                 return loss, [loss, l_field, l_var, l_tke, l_probe, l_div,
                               l_spec, l_crps, l_svar, l_sim, l_tail, l_aux, l_psim,
-                              l_cov, l_sub]
+                              l_cov, l_sub, kd_gap]
 
             loss, terms = compute_loss()
             opt.zero_grad(set_to_none=True)
@@ -1317,7 +1408,7 @@ def main() -> None:
                   f"div {a[5]:.5f}  spec {a[6]:.5f}  crps {a[7]:.5f}  "
                   f"svar {a[8]:.5f}  sim {a[9]:.5f}  tail {a[10]:.5f}  "
                   f"aux {a[11]:.5f}  psim {a[12]:.5f}  cov {a[13]:.5f}  "
-                  f"sub {a[14]:.5f}  "
+                  f"sub {a[14]:.5f}  kd {a[15]:.5f}  "
                   f"({time.time()-t0:.0f}s)", flush=True)
 
     if swa_state is not None:
