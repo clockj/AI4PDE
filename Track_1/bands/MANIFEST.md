@@ -71,6 +71,7 @@ twins plus `arch_vit_d384`). Promoted 2026-09-11 after R21/T2R9 scored.
 | `t2r13_p2ffnoL8x4.npz` | `b99d177d889126b0734bee0680bc69b0` | T2R13 (id not reported) |
 | `t2r14_p2ffnoL4x4.npz` | `c7572ae00c07dccff52a39e17160fdda` | T2R14 (id not reported) |
 | `t2r15_l8x4.npz` | `63cc4cb3e00704b4efaaaec8bc19c309` | T2R15 (id not reported) |
+| `t2r16_p2ffnoL8_fill.npz` | `cc0da63039b832e56d99d0426a6cfcc4` | T2R16 (uploaded 09-19) |
 
 `r24_xfam6.npz` is fitted on R21's twins plus one cmb3sim-recipe ViT twin (`arch_vit_cmb3sim`),
 for R21's members plus `arch_vit_all_cmb3sim_s3`. Promoted 2026-09-13 after R24 scored. T2R11
@@ -136,3 +137,24 @@ against T2R13. It is kept as the measurement of what the ViT pair's diversity is
 same members, the same recipe, the same ALPHA, and **containment −0.132** purely for the two ViTs the
 error field no longer sees. A band fitted without the ViT twins is not wrong — it is fitted to a
 genuinely narrower error field — which is precisely why the ViT pair stays in the package.
+
+`t2r16_p2ffnoL8_fill.npz` (promoted 2026-09-18, before its result, because it is the first band whose
+*inputs* are a committed band plus one flag). Provenance: **exactly `t2r13_p2ffnoL8x4.npz`'s inputs** —
+the held-out F-FNO L8 twins `p2_ffno_l8_s1..s3` plus `arch_vit_d384` and `arch_vit_cmb3sim`, ALPHA 0.60,
+`--band-p 0.45`, `--fit-on seen --fit-aoa 15 20` — with `fit_band.py --fill-unscored` added. **The refit
+WITHOUT the flag reproduces `t2r13_p2ffnoL8x4.npz` bitwise** (`b99d177d…`), which is what makes this a
+one-flag diff and not a new fit; `REPRODUCE.md` §6.3 is corrected accordingly.
+
+What the flag does (`Track_1/plan/lit_20260917.md` §4.9): at elements the fitting split never scores,
+`optimal_band`'s weight vector is all zeros and `argmax` returns index 0, so `base` collapses to
+`min_i |E|` ≈ 0. The fill blends those elements toward a k=5 box mean of well-sampled neighbours,
+`w = clip(n_ok/8, 0, 1)`. Measured: **3,663 of 81,920 elements changed (4.47 %)**, their median
+0.00110 → 0.00592 and the band minimum 2.85e-7 → **2.64e-4**; the band median moves 0.00937 → 0.00950,
+the maximum is unchanged, **every untouched element is bit-identical, and it only ever widens**. Cost on
+our own data is nil: `val_seen` 51.61 → 51.61, `val_unseen` 56.97 → 56.95, and the board proxy is
+identical at all four error stretches (1.00× 51.72 · 1.05× 50.75 · 1.15× 48.83 · 1.30× 46.02).
+
+`pkg_identity` against T2R13: the **prediction is bit-identical** (max |A−B| = 0.0), so `rel_l2`, `tke`,
+`mvpe` and `time` are T2R13's exactly and this band alone decides the round; `lower`/`upper` differ only
+at filled elements and only outward, by ≤ 2.146e-2. It ships in `track2_r33_p2ffnoL8_fill.zip`
+(`15a6e57d…`) and in the Track-1 twin `track1_r33_p2ffnoL8_fill.zip` (`b5abf139…`).
