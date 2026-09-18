@@ -26,10 +26,12 @@ Appending after a board result:
 from __future__ import annotations
 
 import argparse
+import datetime as _dt_mod
 import json
 import pathlib
 import os
 import sys
+from zoneinfo import ZoneInfo
 
 import numpy as np
 
@@ -53,7 +55,17 @@ LEADER_READS = [
     ("2026-09-11", 2, 81.99648, ""),
     ("2026-09-14", 1, 81.85874, ""),
     ("2026-09-14", 2, 81.99648, ""),
+    ("2026-09-17", 1, 81.9613, "labels swapped in the user's message; assignment by monotonicity"),
+    ("2026-09-17", 2, 82.05275, "labels swapped in the user's message; assignment by monotonicity"),
 ]
+
+# The notes above are rendered in the curve's leader tooltip, which is bilingual; a note with no
+# gloss here falls back to the English in both languages.
+LEADER_NOTE_ZH = {
+    "np-user, read 08-31": "np-user，08-31 读取",
+    "labels swapped in the user's message; assignment by monotonicity":
+        "用户消息里两个赛道的标签写反了；按单调性归位",
+}
 
 
 def leader_latest(track):
@@ -203,9 +215,169 @@ def load(name):
         return [json.loads(l) for l in f if l.strip()]
 
 
+def generated_at():
+    """The moment this page is rendered, in the competition's own clock (America/New_York)."""
+    try:
+        now = _dt_mod.datetime.now(ZoneInfo("America/New_York"))
+    except Exception:                                  # no tzdata: fall back to local time
+        now = _dt_mod.datetime.now()
+    return now.strftime("%Y-%m-%d %H:%M %Z").strip()
+
+
+def board_through(B):
+    """The newest DATE the board ledger carries -- board.jsonl plus the collaborator rounds that
+    only `board_rounds.py` has. The page states this next to its own generation time so a stale
+    render is visible: the two dates drift apart."""
+    ds = [str(r["date"])[:10] for r in B if r.get("date")]
+    ds += [str(c["date"])[:10] for c in _collab_rounds()]
+    return max(ds) if ds else "-"
+
+
 def err(score):
     """Invert score = 100/(1+0.5e)."""
     return 2.0 * (100.0 / score - 1.0)
+
+
+# ---------------------------------------------------------------------------------------
+# The campaign, in six phases.  `start` is the FIRST day of the phase and the only field the
+# assignment uses: a row belongs to the last phase whose `start` is on or before its date.  Both
+# the phase section and the grouped experiment ledger read this table, so they cannot drift.
+# Sources: Track_1/board_rounds.py (the round comments), ROUNDS.md, ROADMAP.md Part 1.
+PHASES = [
+    dict(n=1, start="2026-07-29",
+         en="U-Net &rarr; FNO", zh="U-Net &rarr; FNO",
+         q_en="Which backbone, and can the v9 board be read at all?",
+         q_zh="用哪个骨干网络？v9 的板子到底能不能读懂？",
+         o_en="The 0.90M FNO with the velocity-gradient loss replaces the 1.93M U-Net, and an "
+              "ensemble beats any single model. <code>time_score</code> is <b>not</b> a constant: "
+              "board time tracks the number of <b>sequential invocations</b>, not local wall time "
+              "&mdash; the 8-member package was faster locally and 2.09&nbsp;ms slower on the board.",
+         o_zh="带速度梯度损失的 0.90M FNO 取代了 1.93M 的 U-Net，集成也胜过任何单模型。"
+              "<code>time_score</code> <b>不是</b>常数：board 的时间跟的是<b>串行调用次数</b>，"
+              "不是本地墙钟时间——8 成员的包在本地更快，在 board 上却慢了 2.09&nbsp;ms。",
+         r_en="Score locally with the kit&rsquo;s own scorer before every upload, and price latency "
+              "in <b>invocations</b>, not in local milliseconds.",
+         r_zh="每次上传前都用官方 kit 自带的评分程序在本地评一遍；延迟按<b>调用次数</b>计价，"
+              "不是按本地毫秒。"),
+    dict(n=2, start="2026-08-08",
+         en="ensembles and the SPS band", zh="集成与 SPS band",
+         q_en="Where is the missing score &mdash; in accuracy, or in <code>sps</code>?",
+         q_zh="丢掉的分数在哪里——精度，还是 <code>sps</code>？",
+         o_en="In <code>sps</code>. The exact per-element band is <b>+1.41</b> of containment, the "
+              "largest single move on record; 3&rarr;8 members is another +0.67. R12&rsquo;s eleven "
+              "members over four invocations handed it straight back in latency, and R13 recovered "
+              "it by fusing to <b>one</b> invocation at ALPHA&nbsp;0.60. Track&nbsp;2 opened with "
+              "that identical package.",
+         o_zh="在 <code>sps</code>。逐元素精确求解的 band 带来 <b>+1.41</b> 的含盖率，是有记录以来"
+              "最大的一步；成员数 3&rarr;8 再 +0.67。R12 的 11 个成员分 4 次调用，把这些又在延迟上"
+              "还了回去；R13 融合成<b>一次</b>调用、ALPHA&nbsp;0.60 才拿回来。Track&nbsp;2 就用这个"
+              "完全相同的包开张。",
+         r_en="<code>sps</code> scores per-element containment, so <b>attack the error tail, not the "
+              "rms</b> &mdash; and always fit the band from <b>held-out</b> twins (a band fitted on "
+              "memorized errors scored 36.94).",
+         r_zh="<code>sps</code> 按逐元素含盖率评分，所以要<b>打误差的尾巴，不是 rms</b>——而且 band "
+              "必须用<b>留出</b>孪生模型拟合（用记住的误差拟合出来的 band 只得 36.94）。"),
+    dict(n=3, start="2026-09-01",
+         en="dropout, capacity w96, depth L8", zh="dropout、容量 w96、深度 L8",
+         q_en="How much regularized capacity will the error tail pay for?",
+         q_zh="误差的尾巴能为多少「带正则的容量」买单？",
+         o_en="Dropout&nbsp;0.45 is +0.200; width 24&rarr;96 is +0.99 / +0.96 of containment on the "
+              "two boards; depth at equal FLOPs is a wash (4&times;L8 = 8&times;L4). R14&rsquo;s "
+              "out-of-range gate fired on <b>no</b> hidden window, so the hidden set is interior, "
+              "and the FNO capacity ladder ends at w96&nbsp;L8.",
+         o_zh="dropout&nbsp;0.45 值 +0.200；宽度 24&rarr;96 在两块板上各 +0.99 / +0.96 的含盖率；"
+              "等 FLOPs 下深度是平局（4&times;L8 = 8&times;L4）。R14 的越界门控在隐藏集上<b>一次都"
+              "没有触发</b>，说明隐藏集在训练范围之内；FNO 的容量阶梯到 w96&nbsp;L8 为止。",
+         r_en="Regularized capacity pays through the <b>tail</b>, not the rms. A slot built to "
+              "answer a question (R14&rsquo;s gate) outranks a slot built to chase a score.",
+         r_zh="带正则的容量是通过<b>尾部</b>兑现的，不是 rms。一个用来回答问题的名额（R14 的门控）"
+              "胜过一个只用来追分数的名额。"),
+    dict(n=4, start="2026-09-06",
+         en="sim co-training and the cmb3sim losses", zh="sim 联合训练与 cmb3sim 损失",
+         q_en="Can CFD, and physics-shaped losses, buy accuracy that the real data cannot?",
+         q_zh="CFD 和「物理形状」的损失，能买到真实数据买不到的精度吗？",
+         o_en="R18 / T2R6 open the phase with two accuracy-neutral latency rebuilds (the threaded "
+              "host write, the bmm spectral path), which is what makes R19 a clean read of sim. "
+              "Both sim and the losses are real and both are small: +0.031 (T1) / +0.049 (T2) at "
+              "constant latency, and "
+              "<b>neither moved containment</b>. Sim&rsquo;s <code>tke</code> went the <b>wrong "
+              "way</b> against every local instrument, and clean CFD turns out to be <i>harder</i> "
+              "to predict than smoothed PIV.",
+         o_zh="本阶段由 R18 / T2R6 两次<b>不影响精度</b>的延迟重构开场（多线程主机写回、bmm 频谱"
+              "路径），正因如此 R19 才是对 sim 的一次干净读数。sim 和这些损失都真实、也都很小："
+              "恒定延迟下 +0.031（T1）/ +0.049（T2），而且<b>都没有移动含盖率"
+              "</b>。sim 的 <code>tke</code> 与所有本地仪器的预测<b>反号</b>；干净的 CFD 反而比"
+              "平滑过的 PIV <i>更难</i>预测。",
+         r_en="Sim is a small co-training regularizer, not a volume multiplier; "
+              "<code>--lam-grad</code> is the only physics loss that works.",
+         r_zh="sim 只是一个小的联合训练正则项，不是数据量的倍增器；<code>--lam-grad</code> 是唯一"
+              "有效的物理损失。"),
+    dict(n=5, start="2026-09-10",
+         en="a second family, fusion, and the latency constants",
+         zh="第二个家族、融合，与延迟常数",
+         q_en="What does a second architecture family buy, and what does the board actually charge "
+              "for latency?",
+         q_zh="第二个架构家族能买到什么？board 对延迟到底怎么收费？",
+         o_en="<code>sps</code> factorizes, so containment is readable from the published subscores "
+              "alone. The first ViT is +0.18 / +0.16 of containment, the second +0.05 / +0.04, and "
+              "member count closes. R23 was uploaded <b>unfused on purpose</b> and measured one "
+              "invocation at <b>1.151 / 0.866 board ms</b> against a fitted 0.435 &mdash; the model "
+              "had been 2.65&times; light. fp16 kept 37&nbsp;% of its local cut.",
+         o_zh="<code>sps</code> 可以分解，于是含盖率只用已公布的子分数就能读出来。第一个 ViT 值 "
+              "+0.18 / +0.16 的含盖率，第二个 +0.05 / +0.04，成员数就此封闭。R23 <b>故意不融合</b>"
+              "上传，把一次调用测成 <b>1.151 / 0.866 board ms</b>，而拟合值只有 0.435——旧模型轻了 "
+              "2.65 倍。fp16 只保住了本地降幅的 37&nbsp;%。",
+         r_en="A slot built so that <b>only one subscore can move</b> buys a number no local work "
+              "can. Compare packages by board-subscore deltas, never by <code>final</code>.",
+         r_zh="一个<b>只让一个子分数能动</b>的名额，能买到任何本地工作都买不到的数字。比较两个包要用 "
+              "board 子分数的增量，绝不能用 <code>final</code>。"),
+    dict(n=6, start="2026-09-14",
+         en="the backbone screen", zh="骨干网络筛选",
+         q_en="Is there a backbone outside the FNO family, and is there any latency left to take?",
+         q_zh="FNO 家族之外还有更好的骨干吗？延迟还有没有可拿的？",
+         o_en="F-FNO is a <b>Track-2</b> family (+0.302 of containment; T2R13 <b>81.314785</b>, a new "
+              "Track-2 best) and Track&nbsp;1 has no F-FNO option at any depth. Swin moved "
+              "containment +0.128 and lost every error row (R26 &minus;0.126). The CUDA graph "
+              "<b>ran</b> &mdash; errors bit-identical, <code>sps</code> +8.2e-05 &mdash; and is "
+              "<b>0.565 board ms slower</b> on the eval GPU (R27 &minus;0.037, all <code>time</code>). "
+              "Halving F-FNO depth is free in rms error and &minus;0.310 in containment (T2R14 "
+              "&minus;0.006), so L8 stays. Both bests hold: R25 and T2R13.",
+         o_zh="F-FNO 是 <b>Track&nbsp;2</b> 的家族（含盖率 +0.302；T2R13 得 <b>81.314785</b>，"
+              "Track&nbsp;2 新最佳），而 Track&nbsp;1 在任何深度上都没有 F-FNO 可用。Swin 把含盖率"
+              "抬了 +0.128，三项误差却全部变差（R26 &minus;0.126）。CUDA graph <b>确实跑了</b>"
+              "——三项误差逐位相同，<code>sps</code> +8.2e-05——但在评测 GPU 上<b>慢了 0.565 board "
+              "ms</b>（R27 &minus;0.037，全部落在 <code>time</code>）。F-FNO 深度砍半在 rms 误差上"
+              "不花钱，却在含盖率上 &minus;0.310（T2R14 &minus;0.006），所以 L8 留任。两个最佳都"
+              "守住了：R25 与 T2R13。",
+         r_en="Across model families <b>and</b> across kernel families the local instrument predicts "
+              "<b>neither size nor sign</b>, and <b>containment is invisible to every local "
+              "instrument</b>: the band is refit per package from that package&rsquo;s own twins, so "
+              "every variant scores well on its own fit.",
+         r_zh="无论跨模型家族<b>还是</b>跨 kernel 家族，本地仪器<b>既测不准大小，也测不准方向</b>；"
+              "而且<b>含盖率对所有本地仪器都不可见</b>——band 是按包用它自己的孪生模型重新拟合的，"
+              "所以每个变体在自己的拟合上都好看。"),
+]
+
+
+def phase_dates(i, last=""):
+    """`MM-DD - MM-DD` for phase `i`: it runs to the day before the next one starts, and the last
+    phase runs to the newest date the page carries. Derived, so a boundary is stated in one place."""
+    a = PHASES[i]["start"]
+    if i + 1 < len(PHASES):
+        b = (_dt_mod.date.fromisoformat(PHASES[i + 1]["start"])
+             - _dt_mod.timedelta(days=1)).isoformat()
+    else:
+        b = max(str(last or "")[:10], a)
+    return f"{a[5:]} &ndash; {b[5:]}"
+
+
+def phase_of(date):
+    """The phase a date belongs to: the last one that had started by then."""
+    d, p = str(date)[:10], PHASES[0]
+    for x in PHASES:
+        if d >= x["start"]:
+            p = x
+    return p
 
 
 # ---------------------------------------------------------------------------------------
@@ -432,6 +604,7 @@ def tsvg(x, y, en, zh, attrs=""):
 
 
 NAV = [("top", "Read this first", "先读这里"),
+       ("phases", "Campaign phases", "阶段回顾"),
        ("curve", "Optimization curve", "优化曲线"),
        ("screen", "Backbone screen", "骨干网络筛选"),
        ("submissions", "Submissions", "提交记录"),
@@ -598,6 +771,45 @@ th.grp{text-align:center;border-bottom:1px solid var(--line);color:var(--dim)}
 .v-drop{color:var(--warm)}.st-failed{color:var(--warm)}.st-running{color:var(--probe)}
 @media (prefers-reduced-motion:no-preference){
   tbody tr td{transition:background .12s ease}}
+/* the generation stamp under the title */
+.upd{margin:0 0 12px}
+/* Long-cell clipping (2026-09-17).  A cell whose text would stretch its column is wrapped in a
+   <details>: the <summary> IS the text, clipped by CSS, and opening the disclosure un-clips it.
+   The text is therefore present exactly once, in both languages, and needs no JavaScript. */
+.xp{max-width:100%}
+.xp>summary{display:block;list-style:none;cursor:pointer;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis}
+.xp>summary::-webkit-details-marker{display:none}
+.xp>summary::marker{content:""}
+.xp>summary:hover{color:var(--ink);background:var(--sunk)}
+.xp>summary:focus-visible{outline:2px solid var(--probe);outline-offset:1px}
+.xp[open]>summary{white-space:normal;overflow:visible;text-overflow:clip}
+.xp.ml>summary{white-space:normal;text-overflow:clip;display:-webkit-box;-webkit-box-orient:vertical;
+  -webkit-line-clamp:3;line-clamp:3;overflow:hidden}
+.xp.ml[open]>summary{display:block;-webkit-line-clamp:none;line-clamp:none}
+.xp.w22{width:22ch}.xp.w30{width:30ch}
+table.fx{table-layout:fixed;width:100%;min-width:720px}
+table.fx td,table.fx th{overflow-wrap:anywhere}
+td.x{white-space:normal;vertical-align:top}
+/* a phase band spanning the ledger */
+tr.ph th{background:var(--sunk);color:var(--ink);text-align:left;white-space:normal;
+  font-family:"IBM Plex Sans","Noto Sans SC",Arial,sans-serif;font-size:11.5px;font-weight:600;
+  text-transform:none;letter-spacing:.01em;padding:8px 10px;
+  border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+tr.ph th .no{font-family:"IBM Plex Mono",ui-monospace,monospace;color:var(--probe);
+  font-weight:700;margin-right:8px}
+tr.ph th .dt{color:var(--faint);font-weight:400;margin-left:8px}
+/* the campaign-phase table: prose, so it wraps and is left-aligned throughout */
+#phases td{white-space:normal;vertical-align:top;text-align:left;line-height:1.5;
+  font-family:"IBM Plex Sans","Noto Sans SC","Helvetica Neue",Arial,sans-serif;font-size:12.5px}
+#phases td.n{font-family:"IBM Plex Mono",ui-monospace,monospace;color:var(--probe);font-weight:700}
+#phases td.n b{display:block;color:var(--ink);font-family:"IBM Plex Sans","Noto Sans SC",Arial,
+  sans-serif;font-weight:600;margin-top:2px}
+#phases td.dt,#phases td.rd{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:11.5px;
+  color:var(--dim)}
+#phases td.rd .s{display:block;color:var(--faint);margin-top:3px}
+#phases tr.now td{background:var(--coolw)}
+#phases td.ru{color:var(--ink)}
 /* narrow: the rail becomes a top bar with a horizontally scrollable nav */
 @media (max-width:880px){
   .app{grid-template-columns:1fr}
@@ -862,7 +1074,11 @@ def _curve_svg(B, collab):
     the step line is our running best, diamonds are leader reads. Labels hang under each panel's
     axis and END at the point's tick with the round id, so the ids line up along the axis."""
     W, L, PW, PH = 1000, 58, 792, 230
-    d0, d1 = _date_num(CURVE_X0), _date_num(CURVE_X1)
+    # The right edge has to cover the newest thing plotted -- a round or a leader read past
+    # CURVE_X1 would be drawn on top of the leader/best labels that sit beyond the axis.
+    last = max([str(r["date"])[:10] for r in B if r.get("actual")]
+               + [x[0] for x in LEADER_READS] + [CURVE_X1])
+    d0, d1 = _date_num(CURVE_X0), max(_date_num(CURVE_X1), _date_num(last) + 1)
 
     def X(dn):
         return L + (dn - d0) * PW / (d1 - d0)
@@ -930,7 +1146,8 @@ def _curve_svg(B, collab):
                 ten = (f"leader · Track {track} · read {dt}" + (f" ({note})" if note else "")
                        + f"\nfinal {v:.5f}"
                        + (f"\nour best then {max(then):.3f} · gap {v - max(then):.3f}" if then else ""))
-                tzh = (f"领先者 · Track {track} · {dt} 读取" + (f"（{note}）" if note else "")
+                tzh = (f"领先者 · Track {track} · {dt} 读取"
+                       + (f"（{LEADER_NOTE_ZH.get(note, note)}）" if note else "")
                        + f"\nfinal {v:.5f}"
                        + (f"\n当时我们的最佳 {max(then):.3f} · 差距 {v - max(then):.3f}" if then else ""))
                 body = (f'<path d="M{x:.1f},{yy - 5.5:.1f}L{x + 5.5:.1f},{yy:.1f}L{x:.1f},{yy + 5.5:.1f}'
@@ -1197,8 +1414,11 @@ def _screen_table(S):
         sq = " sq" if fam_square(fam) else ""
         stc = f' class="st-{_esc(st)}"' if st in ("failed", "running") else ""
         o.append(
-            f'<tr><td class="l"><code>{_esc(str(r.get("arm")))}</code>'
-            + (f'<br><span class="d">{_esc(str(r.get("backbone")))}</span>' if r.get("backbone") else "")
+            '<tr><td class="l x">'
+            + _clip(f'<code>{_esc(str(r.get("arm")))}</code>'
+                    + (f'<br><span class="d">{_esc(str(r.get("backbone")))}</span>'
+                       if r.get("backbone") else ""),
+                    _vlen(r.get("arm"), r.get("backbone")) > 22, cls=" w22")
             + f'</td><td class="l"><span class="sw{sq}" style="background:{fam_var(fam)}"></span>'
             f'{_esc(str(fam or "?"))}</td>'
             f'<td class="l"><span{stc}>{t(_esc(st or "?"), SCREEN_STATUS.get(st, _esc(st or "?")))}</span></td>'
@@ -1215,7 +1435,10 @@ def _screen_table(S):
             + proj("proj_dfinal_t1_replace_vits") + proj("proj_dfinal_t2_partner")
             + k1cell(r)
             + f'<td class="l"><span class="chip v-{_esc(v)}">{t(_esc(ven), _esc(vzh))}</span></td>'
-            f'<td class="l t">{tdata(r.get("note") or "", r.get("note_zh"))}</td></tr>')
+            + '<td class="l t x">'
+            + _clip(tdata(r.get("note") or "", r.get("note_zh")),
+                    _vlen(r.get("note"), r.get("note_zh")) > 30, cls=" ml w30")
+            + "</td></tr>")
     o.append("</tbody></table></div>")
     return "".join(o)
 
@@ -1345,6 +1568,83 @@ def _residual_svg(rows, rms):
     return "".join(o)
 
 
+def _vlen(*texts):
+    """Visual width of a cell in monospace columns: a CJK glyph is ~1.7 Latin characters, and the
+    widest language decides -- clipping must be driven by whichever text is longer on screen."""
+    def one(x):
+        x = str(x or "")
+        return sum(1.7 if ord(c) > 0x2E80 else 1.0 for c in x)
+    return max([one(x) for x in texts] or [0.0])
+
+
+def _clip(body, width, cls=""):
+    """A cell clipped to one line (or three, with `cls=" ml"`) and expanded by a click.
+
+    `body` is rendered HTML and may carry both languages; the text itself is never duplicated --
+    the <summary> IS the content and CSS decides how much of it shows. Short cells pass through,
+    so the disclosure triangle only appears where something is actually hidden."""
+    return f'<details class="xp{cls}"><summary>{body}</summary></details>' if width else body
+
+
+def _phase_rounds(B):
+    """{phase number: [board rows, in date order]} -- the SAME assignment the ledger uses."""
+    d = {}
+    for r in B:
+        d.setdefault(phase_of(r["date"])["n"], []).append(r)
+    return d
+
+
+def _phases_section(B):
+    """One row per phase: what it asked, which rounds carried it, what came back, what rule it left.
+
+    Everything except the authored prose is derived: the round ids and the board span come from
+    `board.jsonl` through `phase_of`, so a new round joins its phase with no edit here."""
+    byp, cur = _phase_rounds(B), phase_of(board_through(B))["n"]
+    th = lambda en, zh, cls="": f'<th class="l{cls}">{t(en, zh)}</th>'    # noqa: E731
+    o = ['<section id="phases"><div class="head"><h2>' + t("Campaign phases", "阶段回顾")
+         + '</h2><span class="eyebrow">'
+         + t("six stretches, six questions", "六个阶段，六个问题") + "</span><p>"
+         + t("Each phase asked one question. Rounds are assigned to a phase <b>by upload date</b>, "
+             "from the same table that groups the experiment ledger at the foot of this page, so "
+             "the two cannot drift apart. The <b>rule</b> column is what a phase is worth today: "
+             "the outcome is history, the rule still governs a decision.",
+             "每个阶段只问一个问题。轮次<b>按上传日期</b>归入各阶段，用的是页尾实验台账分组所用的"
+             "同一张表，所以两者不会走样。真正有长期价值的是<b>「留下的规则」</b>一列："
+             "结论属于历史，规则至今仍在约束决策。")
+         + "</p></div>"
+         '<div class="scroll"><table class="fx"><colgroup><col style="width:13%">'
+         '<col style="width:8%"><col style="width:16%"><col style="width:14%">'
+         '<col style="width:28%"><col style="width:21%"></colgroup><thead><tr>'
+         + th("Phase", "阶段") + th("Dates", "日期") + th("The question", "它在问什么")
+         + th("Rounds", "轮次") + th("Outcome", "结果")
+         + th("The rule it left", "留下的规则") + "</tr></thead><tbody>"]
+    last = board_through(B)
+    for i, ph in enumerate(PHASES):
+        rs = byp.get(ph["n"], [])
+        ids = " &middot; ".join(f'<b>{_esc(r["round"])}</b>' if r.get("actual")
+                                else f'<span class="d">{_esc(r["round"])}</span>' for r in rs)
+        span = []
+        for tr in (1, 2):
+            sc = [r for r in rs if r["track"] == tr and r.get("actual")]
+            if not sc:
+                continue
+            a, b = sc[0]["actual"]["final"], sc[-1]["actual"]["final"]
+            span.append(f"T{tr} {a:.3f}" + (f"&#8594;{b:.3f}" if len(sc) > 1 else ""))
+        now = ' class="now"' if ph["n"] == cur else ""
+        o.append(f'<tr{now}><td class="n">P{ph["n"]}'
+                 + ("" if ph["n"] != cur else ' <span class="chip OPEN">'
+                    + t("now", "进行中") + "</span>")
+                 + f'<b>{t(ph["en"], ph["zh"])}</b></td>'
+                 f'<td class="dt">{phase_dates(i, last)}</td>'
+                 f'<td>{t(ph["q_en"], ph["q_zh"])}</td>'
+                 f'<td class="rd">{ids or "&mdash;"}'
+                 + (f'<span class="s">{" &middot; ".join(span)}</span>' if span else "")
+                 + f'</td><td>{t(ph["o_en"], ph["o_zh"])}</td>'
+                 f'<td class="ru">{t(ph["r_en"], ph["r_zh"])}</td></tr>')
+    o.append("</tbody></table></div></section>")
+    return "".join(o)
+
+
 def html(B, Rn, w, path, S=(), state="missing"):
     T = [r for r in B if r.get("actual") and r["track"] == 1]
     ref = float(np.median([r["actual"]["time"] for r in T]))
@@ -1361,6 +1661,10 @@ def html(B, Rn, w, path, S=(), state="missing"):
 
     o = [HTML_HEAD, '<div class="app">', _sidebar(B, Rn, S), '<main><div class="wrap">',
          "<h1>" + t("RealPDE calibration log", "RealPDE 校准日志") + "</h1>",
+         '<p class="stamp upd">'
+         + t(f"last updated {generated_at()} &middot; board data through {board_through(B)}",
+             f"最后更新 {generated_at()} &middot; board 数据截至 {board_through(B)}")
+         + "</p>",
          '<p class="lede">'
          + t("Every submission, the prediction recorded before it was uploaded, and what the "
              "board returned &mdash; then the local experiments behind them and the measured "
@@ -1402,6 +1706,7 @@ def html(B, Rn, w, path, S=(), state="missing"):
              + t(f"<b>`sps` factorizes, and the residual names every lever.</b> The scoring rule is <code>sps = 100 &middot; mean(a_i) &middot; containment</code> with <code>a_i = 0.5g(rel)+0.3g(tke)+0.2g(mvpe)</code>, so any round can be priced from its published subscores alone &mdash; no free parameter, no local measurement. THE RESIDUAL IS THEN THE CONTAINMENT TERM, and across all eighteen consecutive board steps it is nonzero for exactly four kinds of change: the <b>band</b> (+1.410, R9&#8594;R10), regularized <b>capacity</b> (+0.992 / +0.961, width 24&#8594;96 on both boards), <b>member count</b> (+0.668, 3&#8594;8), and the architecture <b>family</b> (+0.464 / &minus;0.440, U-FNO in and back out). Everything rounds 16&ndash;20 tried &mdash; sim co-training, depth at equal FLOPs, the coverage and temporal-gradient losses, <code>lam_v</code>, both latency rebuilds, the gated blend &mdash; lands inside &plusmn;0.05. It also re-prices the exchange rate, because <code>a_i</code> is computed from the other three subscores: per 10% of error removed, <code>rel_l2</code> is worth <b>+0.346</b>, <code>tke</code> <b>+0.290</b> and <code>mvpe</code> <b>+0.100</b>, so <code>tke</code> is 84% of <code>rel_l2</code>, not 74%. Two corrections it forced: round 16 closed every non-FNO family on U-FNO&rsquo;s &minus;0.45 miss, which was true of the <i>package</i> (batch-1 latency, worse <code>rel_l2</code>) and false of the <i>member</i>, whose +0.44 <code>sps</code> was filed as noise and was the third-largest containment move on record; and &ldquo;<code>sps</code> is unreachable&rdquo; was a statement about rms, not about <code>sps</code>. Section&nbsp;3 remains the reason every local reading is hedged: the proxy predicts the board&rsquo;s <i>level</i> to &plusmn;2&ndash;8% and almost none of its <i>movement</i> ({rms:.1f}% residual rms).",
                  f"<b>`sps` 可以分解，而残差把每一个杠杆都点了名。</b>评分规则是 <code>sps = 100 &middot; mean(a_i) &middot; 含盖率</code>，其中 <code>a_i = 0.5g(rel)+0.3g(tke)+0.2g(mvpe)</code>，所以任何一轮都可以只用它已公布的子分数来定价——没有自由参数，也不需要任何本地测量。于是残差就是含盖率项：在全部十八对连续 board 步骤上，它只对四类改动非零——<b>band</b>（+1.410，R9&#8594;R10）、带正则的<b>容量</b>（+0.992 / +0.961，宽度 24&#8594;96，两块板都复现）、<b>成员数</b>（+0.668，3&#8594;8），以及架构<b>家族</b>（+0.464 / &minus;0.440，U-FNO 进再出）。第 16&ndash;20 轮试过的一切——sim 联合训练、等 FLOPs 的深度、coverage 与 temporal-gradient 损失、<code>lam_v</code>、两次延迟重构、门控混合——全在 &plusmn;0.05 之内。它同时重新给兑换率定了价，因为 <code>a_i</code> 由另外三个子分数算出：每削减 10% 误差，<code>rel_l2</code> 值 <b>+0.346</b>，<code>tke</code> 值 <b>+0.290</b>，<code>mvpe</code> 值 <b>+0.100</b>——<code>tke</code> 是 <code>rel_l2</code> 的 84%，不是 74%。它逼出两处更正：第 16 轮用 U-FNO 的 &minus;0.45 封了所有非 FNO 家族，那对<i>包</i>成立（batch 1 的延迟、更差的 <code>rel_l2</code>），对<i>成员</i>不成立——它那 +0.44 的 <code>sps</code> 被当噪声记下，实际是有记录以来第三大的含盖率移动；而「<code>sps</code> 拿不到」说的是 rms，不是 <code>sps</code>。第 3 节仍然是这里每个本地读数都要打折的理由：proxy 能把 board 的<i>水平</i>预测到 &plusmn;2&ndash;8%，却几乎解释不了它的<i>变化</i>（残差 rms {rms:.1f}%）。")
              + "</div></div>")
+    o.append(_phases_section(B))
     o.append(_curve_section(B))
     o.append(_screen_section(S, state))
 
@@ -1611,8 +1916,16 @@ def html(B, Rn, w, path, S=(), state="missing"):
                  "固定场 TKE 降 3.9%，最终只值 "
                  "+0.08。没有在集成规模下测"
                  "过的实验，等于没有测过。")
+             + " "
+             + t("Rows are grouped by the campaign phase above, then by verdict. A cell too long "
+                 "for its column is clipped &mdash; <b>click it to read the rest</b>.",
+                 "各行先按上方的阶段分组，再按结论排序。超出列宽的单元格会被截断——"
+                 "<b>点击即可展开全文</b>。")
              + "</p></div>"
-             '<div class="scroll"><table><thead><tr>'
+             '<div class="scroll"><table class="fx"><colgroup>'
+             '<col style="width:96px"><col style="width:98px"><col style="width:21%">'
+             '<col style="width:13%"><col style="width:46px"><col>'
+             '<col style="width:80px"></colgroup><thead><tr>'
              '<th class="l">' + t("Verdict", "结论") + "</th>"
              '<th class="l">' + t("Date", "日期") + "</th>"
              '<th class="l">' + t("Arm", "实验") + "</th>"
@@ -1622,19 +1935,36 @@ def html(B, Rn, w, path, S=(), state="missing"):
              '<th class="l">' + t("Board", "上板") + "</th>"
              "</tr></thead><tbody>")
     order = {"SHIPPED": 0, "OPEN": 1, "MARGINAL": 2, "CLOSED": 3, "REJECTED": 4}
-    for r in sorted(Rn, key=lambda x: (order.get(x["verdict"], 9), x["date"])):
-        e = ('<span class="g">&#10003;</span>' if r.get("ensemble_tested")
-             else '<span class="d">&mdash;</span>')
-        v = r["verdict"]
-        chip = t(v, VERDICT_ZH.get(v, v))
-        sh = _esc(r.get("shipped") or "") or '<span class="d">&mdash;</span>'
-        o.append(f'<tr><td class="l"><span class="chip {v}">{chip}</span>'
-                 f'</td><td class="l d">{r["date"]}</td>'
-                 f'<td class="l"><code>{_esc(r["arm"])}</code></td>'
-                 f'<td class="l d">{tdata(r.get("direction"), r.get("direction_zh"))}</td>'
-                 f'<td>{e}</td>'
-                 f'<td class="l t">{tdata(r.get("effect"), r.get("effect_zh"))}</td>'
-                 f'<td class="l">{sh}</td></tr>')
+    byp = {}                                  # the phase table above does the grouping
+    for r in Rn:
+        byp.setdefault(phase_of(r["date"])["n"], []).append(r)
+    for i, ph in enumerate(PHASES):
+        grp = byp.get(ph["n"], [])
+        if not grp:
+            continue
+        o.append(f'<tr class="ph"><th colspan="7" class="l"><span class="no">P{ph["n"]}</span>'
+                 + t(ph["en"], ph["zh"])
+                 + f'<span class="dt">{phase_dates(i, board_through(B))} &middot; '
+                 + t(f"{len(grp)} arms", f"{len(grp)} 条实验") + "</span></th></tr>")
+        for r in sorted(grp, key=lambda x: (order.get(x["verdict"], 9), x["date"])):
+            e = ('<span class="g">&#10003;</span>' if r.get("ensemble_tested")
+                 else '<span class="d">&mdash;</span>')
+            v = r["verdict"]
+            chip = t(v, VERDICT_ZH.get(v, v))
+            sh = _esc(r.get("shipped") or "") or '<span class="d">&mdash;</span>'
+            o.append(f'<tr><td class="l"><span class="chip {v}">{chip}</span>'
+                     f'</td><td class="l d">{r["date"]}</td>'
+                     + '<td class="l x">'
+                     + _clip(f'<code>{tdata(r["arm"], r.get("arm_zh"))}</code>',
+                             _vlen(r["arm"], r.get("arm_zh")) > 27)
+                     + '</td><td class="l d x">'
+                     + _clip(tdata(r.get("direction"), r.get("direction_zh")),
+                             _vlen(r.get("direction"), r.get("direction_zh")) > 17)
+                     + f'</td><td>{e}</td><td class="l t x">'
+                     + _clip(tdata(r.get("effect"), r.get("effect_zh")),
+                             _vlen(r.get("effect"), r.get("effect_zh")) > 150, cls=" ml")
+                     + '</td><td class="l x">'
+                     + _clip(sh, _vlen(r.get("shipped")) > 8) + "</td></tr>")
     o.append("</tbody></table></div></section>")
 
     import final_v9                       # the fit also carries two collaborator rounds that
