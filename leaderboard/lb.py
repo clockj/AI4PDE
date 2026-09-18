@@ -228,7 +228,7 @@ def board_through(B):
     """The newest DATE the board ledger carries -- board.jsonl plus the collaborator rounds that
     only `board_rounds.py` has. The page states this next to its own generation time so a stale
     render is visible: the two dates drift apart."""
-    ds = [str(r["date"])[:10] for r in B if r.get("date")]
+    ds = [str(r["date"])[:10] for r in B if r.get("date") and r.get("actual")]
     ds += [str(c["date"])[:10] for c in _collab_rounds()]
     return max(ds) if ds else "-"
 

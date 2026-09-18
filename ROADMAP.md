@@ -961,6 +961,42 @@ Four slots over two days, three of them losses of ≤ 0.13 and one a new Track-2
 * **mvpe is the FNO's metric.** It fell on both boards on 09-16 (Swin −0.174, F-FNO −0.161) and only
   recovered on 09-17 by going *shallower* (+0.073). No new family has improved it.
 
+### 1.29 THE RULES PIVOT (read 2026-09-17 on the site and the Codabench public API)
+
+Sources: `realpdecompetition.github.io`, Codabench 17363 / 17385, quoted in `Track_1/plan/lit_20260917.md`
+§2 and `Track_1/plan/plan_20260917.md` §6. Two sentences change what the remaining slots are for.
+
+> **"The top 10 teams on the … leaderboard are shortlisted. Organizers re-train each shortlisted team's
+> method from scratch on the competition's GPU cluster to ensure reproducibility, then evaluate on a
+> private test set with unseen parameter regimes; the resulting private-test scores decide the top 3."**
+
+> **"Public validation set + private test set (unseen parameters, novel angles-of-attack / Reynolds
+> numbers)."** Evaluation runs on **8× NVIDIA A800**. A shortlisted solution that cannot be reproduced
+> through re-training is **disqualified**. Participants may not "generate additional data for training,
+> nor … rely on pretrained models trained on anything other than the competition's released training
+> data"; augmentation is allowed provided "every training sample must trace back to the released
+> training data."
+
+**Three consequences.**
+
+1. **The development `final` is a QUALIFIER, not the prize metric.** It puts us in the top 10 and picks
+   the package. At 81.34 against a leader at 81.96 we are almost certainly already inside the cut, so
+   the remaining slots are worth more as **generalization experiments** than as score. Read our RANK on
+   both boards, not the gap.
+2. **From-scratch reproducibility is a hard gate**, so a `.pth` that exists only in `Track_1/unet/` is a
+   liability. Work item: **`REPRODUCE.md` + `reproduce.sh`** — twins → all-data members → band fit →
+   build, eleven trainings, dry-run with fresh seeds so the re-trained method's own score spread is
+   known before the organizers measure it. Scout is drafting it.
+3. **The private set is OOD in AoA and Re**, which reopens what R14 closed. R14's "the hidden set is in
+   the training speed range" was measured on the **public validation set** and still holds there; it
+   says nothing about a set described as *novel* AoA / Re. The instrument is therefore the
+   **AoA-holdout screen** (AoA 10 and AoA 20 held out, with the sim at that AoA excluded too), run for
+   the cmb3sim FNO, its no-sim variant and F-FNO L8. The gated mean blend (`BLEND_BETA`, which wins out
+   of distribution in `mean_blend_re.py`) and the family choice are **re-decided on those reads**.
+4. Minor but load-bearing: **`time` is measured on the organizers' A800s**, so `LOC_SLOPE_*`,
+   `INV_MS_*` and every latency constant in `board_rounds.py` price the **dev board only**. And DINOv2
+   initialization, already closed for being useless, is now closed on the rules as well.
+
 ## Part 2 — Closed. Do not re-propose without new evidence.
 
 Everything here was closed by measurement, with the file that measured it. The list exists so a
@@ -976,6 +1012,18 @@ new session does not spend a week re-deriving a negative.
 | MVPE as an objective | weight ≈ 0.000, §1.4 |
 | **A CUDA graph on Track 1's `predict`** | R27 = R25's archive with `GRAPH = True` and nothing else: errors bit-identical, `sps` +8.2e-05 (so it ran), `time` 5.076 → **5.641 board ms**. The graph is SLOWER on the eval GPU; −0.037 `final`. §1.28 |
 | **F-FNO depth L4 on Track 2** | T2R14 = T2R13 with L4 members, depth the only lever: errors a wash (rel +0.024, tke −0.030, mvpe +0.073), `time` +0.473, but **containment −0.310** → `sps` −0.273, net −0.006. L8 stays. §1.28 |
+
+**Closed on PHYSICS, not on an experiment (2026-09-17, `Track_1/plan/lit_20260917.md` §3.4):
+σ-amplitude modelling, i.e. every arm whose mechanism is "predict the fluctuation amplitude better".**
+The scored TKE target is the per-pixel variance of **20 frames** of a signal whose correlation time is a
+large fraction of the window, so the target is itself mostly sampling noise. Pooled over all 3465 windows
+of all 82 trajectories: the previous window's variance field scores rel-L2 **0.803** (0.722 optimally
+rescaled); the trajectory's **own long-run mean variance field, hindsight, leave-one-out** — the best
+*phase-blind* predictor that exists — scores **0.570**; **we already score ≈ 0.538**; a hindsight variance
+computed from **40** frames reaches only **0.456**, and from 80 frames 0.358, falling as ≈ `n^-0.35`, the
+signature of a sampling-noise-dominated estimator. **So a 20 % TKE cut (0.538 → 0.43) is below what an
+oracle with twice the data achieves.** It cannot come from better amplitude prediction — only from
+phase — and **no TKE-targeted arm gets GPU time.**
 
 **Closed with held-out local evidence** (each cost a real experiment; see `ROUNDS.md`):
 
@@ -1348,6 +1396,17 @@ implement self-normalization but measured it on a split blind to what it is for;
 * **Resubmitting a package for a better `time_score` draw.** §1.7.
 
 ## Part 4 — Where things are
+
+### Evaluation containers (moved verbatim from `CLAUDE.md` 2026-09-17) — nothing is installed at eval time
+
+* Track 1, `pytorch/pytorch:2.2.2-cuda12.1-cudnn8-runtime`: no `scipy`, `h5py`, `matplotlib`,
+  `pandas`; `einops` only from the kit's `_vendor/`; `requests` and `setuptools` are present. Never
+  import h5py from anything in the zip (`unet/model.py` imports it lazily).
+* Track 2, `w3nhao/realpde-track2:v1` (torch 2.2.2, CUDA 12.1, Python 3.10): `einops` present, runs
+  in an isolated subprocess.
+* The platform may load `submission.py` via `spec_from_file_location` with the extract dir off
+  `sys.path`. Vendor any other pure-Python dependency.
+
 
 | what | where |
 |---|---|

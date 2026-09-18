@@ -30,43 +30,50 @@ working branch `qwu/dev`.
 | Track 2 best | **81.314785** | T2R13 P2-L8, F-FNO ×4 + ViT ×2 (09-16) |
 | leader, read 09-17 | T1 81.9613 · T2 82.05275 | gaps 0.617 · 0.738 |
 
-* **09-17, two small losses; both bests hold.** **R27** = R25's archive + `GRAPH = True`:
-  **81.307815, −0.037**, errors bit-identical and sps +8.2e-05 (so the graph ran), all of it `time` —
-  5.076 → **5.641** board ms. **The Track-1 graph is closed**, and it is the third local latency read
-  in a row that did not transfer (fp16 kept 37 %, Swin inverted, the graph inverted) — the first one
-  on the anchor's own kernels, so host-side launch accounting does not transfer either.
-  **T2R14 = P2-L4**: **81.308359, −0.006**; depth is a wash on the errors (rel +0.024, tke −0.030,
-  mvpe +0.073) and the −0.273 sps is **containment −0.310** against a forced +0.038. **F-FNO depth is
-  closed on the board; L8 stays.** Containment is now the second quantity only the board can measure.
-* **09-16.** T2R13 (F-FNO L8 ×4 + ViT ×2) took Track 2 with +0.150, the first package this campaign
-  under-predicted; R26 (Swin ×4 + ViT ×2) lost 0.126, every error row on the wrong side. **mvpe fell
-  on BOTH tracks** — FNO holds it better than either new family, and no new family has improved it.
-* **09-18 slots** (`../sub_candidates/README.md` §NOW): T2 = **`track2_r28_l8x4_a060.zip`** (F-FNO L8
-  ×4, **no ViT pair**, 1 invocation, staged and gated since 09-15), est. **81.431** (81.26–81.48) —
-  the slot asks what the ViT pair's containment is worth; T1 = the **F-FNO L8 twin** (R25's ViTs +
-  T2R13's four F-FNO members, band `t2r13_p2ffnoL8x4.npz`), accuracy side +0.094 at constant latency,
-  `time` TBD from forge — **it does not go up if the package is more than +1.2 board ms over R25**
-  (break-even is +1.510).
+* **09-17, two small losses; both bests hold.** **R27** (R25 + `GRAPH = True`): **−0.037**, errors
+  bit-identical, sps +8.2e-05 (the graph ran), all of it `time` — 5.076 → **5.641** ms. **The Track-1
+  graph is closed**, the third local latency read in a row that did not transfer and the first on the
+  anchor's own kernels, so host-side launch accounting does not transfer either. **T2R14** (P2-L4):
+  **−0.006**; the errors are a wash and the −0.273 sps is **containment −0.310** against a forced
+  +0.038. **F-FNO depth is closed on the board; L8 stays.** Containment is the second quantity only
+  the board can measure.
+* **09-16.** T2R13 (F-FNO L8 ×4 + ViT ×2) took Track 2 with +0.150; R26 (Swin ×4 + ViT ×2) lost 0.126.
+  **mvpe fell on BOTH tracks** — no new family has improved it.
+* **THE RULES PIVOT, confirmed 09-17** (`plan/lit_20260917.md` §2, `plan_20260917.md` §6). Three
+  consequences: the remaining slots are **learning** slots (we are almost certainly inside a top-10
+  cut, so the leader gap is secondary); **every shipped checkpoint must be re-creatable from the
+  release** (`REPRODUCE.md` + `reproduce.sh`, scout drafting); and R14's "hidden set in range" holds
+  for the **public** set only — the private set is OOD in AoA and Re, so an **AoA-holdout screen**
+  replaces it.
+* **09-18 slots, both decided** (`../sub_candidates/README.md` §NOW). T1 =
+  **`track1_r31_p2ffnoL8_a060.zip`**, the F-FNO L8 twin (R25's ViTs + T2R13's four members, band
+  `t2r13_p2ffnoL8x4.npz`, md5 `467a7bad…`): accuracy +0.094 from the T2R13−T2R12 board pair, `time`
+  −0.052 at the interleaved **+0.80 board ms**, est. **81.387** (81.25–81.44). T2 =
+  **`track2_r28_l8x4_a060.zip`** (L8 ×4, **no ViT pair**, 1 invocation), est. **81.431** (81.26–81.48)
+  — the ViT pair's containment, and a re-test of `INV_MS_T2`.
 * **Packages of record.** *T1, xfam6fp16 (R25):* 4 all-data `cmb3sim` FNOs (fused) + 2 ViTs · int8
   `tensor` · band `r24_xfam6.npz` · ALPHA 0.60 · fp16, bmm, HOST_WRITE torch · 146 MB. *T2, P2-L8
   (T2R13):* 4 all-data F-FNO w40 L8 fused on the **dense** path + the same 2 ViTs · int8 `tensor` ·
   band `t2r13_p2ffnoL8x4.npz` · ALPHA 0.60 · fp16, bmm · 36 MB.
-* **Where the remaining score is.** The backbone campaign is **closed** (`Track_1/plan/screen_20260914.md`
-  6z: families, the Swin ladder, depth, width, modes, regularization, sim, mixed depth, conditioning),
-  and 09-17 closed the Track-1 graph and F-FNO depth on the board too. What is left is package-level:
-  the ViT-pair question on both tracks, TF32, and `StackedFFNO` efficiency — getting the dense path's
-  b64 ratio below the fused stack's fixed ~27 % penalty (gate 7330003) reopens Track-1 F-FNO, and it
-  is code work, not a GPU arm.
+* **Where the remaining score is.** The backbone campaign is **closed** (`plan/screen_20260914.md` 6z),
+  and 09-17 closed the Track-1 graph and F-FNO depth on the board too. What is left is package-level
+  and is in `plan_20260917.md` §2: **distillation of the shipping ensemble into one model** (a
+  same-family FLOPs cut, the one regime where the board slope holds — worth +0.2 / +0.27 if the student
+  loses < 0.05, with a pre-registered ship rule), `StackedFFNO` dense-path efficiency (code, +0.054 now
+  that the twin ships anyway), the ViT-pair read, and the AoA-holdout screen.
 
 ## Standing rules
 
 * **The user uploads; agents never do.** One submission per track per day.
-* **Predict before upload.** All five predicted subscores go into `../sub_candidates/README.md`
-  (an estimate of record plus a bracket) before the user uploads; a prediction written afterwards
-  is worthless. The `leaderboard/board.jsonl` record carries that `pred`, and is appended by the
-  time the result is recorded.
-* **All-data checkpoints supply weights, never evidence.** They train on every validation
-  trajectory (rounds 7, 8 and 10 were each misled by one). Evidence comes from the held-out twins.
+* **The development board is a top-10 QUALIFIER, not the prize metric.** Organizers re-train each
+  shortlisted method **from scratch** on their cluster (8× A800) and score a **private test set at novel
+  AoA / Re**; those scores decide the top 3, an **irreproducible method is disqualified**, and external
+  data, new simulations and outside pretrained weights are **prohibited**.
+* **Predict before upload.** All five predicted subscores go into `../sub_candidates/README.md` (an
+  estimate of record plus a bracket) **before** the user uploads; one written afterwards is worthless.
+  `leaderboard/board.jsonl` carries that `pred` in a PENDING row from the day of upload.
+* **All-data checkpoints supply weights, never evidence** (rounds 7, 8 and 10 were each misled by
+  one). Evidence comes from the held-out twins.
 * **Compare packages by board-subscore deltas, never by `final`**; never resubmit for a timing draw.
 * **One controlled lever per slot.** A slot where only one subscore can move (R14's gate, R23's
   unfused package) buys a number no local work can. Main Development slots are for learning; the
@@ -74,10 +81,10 @@ working branch `qwu/dev`.
 * **Only baked constants ship.** `submission.py` constants override the `RPDE_*` switches, which
   steer measurement drivers only. Anything decided at load time (`AMP`, `GRAPH`) must leave a
   fingerprint in the board result.
-* **Local timing:** never while an `rp_*` job is alive; only arms interleaved in one process count.
-* **No generated trees, caches or bulk data under `$HOME`** (1 M-inode quota). Jobs, logs and
-  scratch go to `/fs/scratch/PAS1187/qwu/tmp/realpde/` or `/tmp`; `Track_1/unet/` checkpoints and
-  `../sub_candidates/` archives are the existing exceptions.
+* **Local timing:** never while an `rp_*` job is alive; only interleaved arms count.
+* **No generated trees, caches or bulk data under `$HOME`** (1 M-inode quota). Jobs, logs and scratch
+  go to `/fs/scratch/PAS1187/qwu/tmp/realpde/` or `/tmp`; `Track_1/unet/` and `../sub_candidates/` are
+  the exceptions.
 * **Wrap-up** = *Current state* here plus any changed fact, `ROUNDS.md`, `ROADMAP.md`, touched
   READMEs · board rows into `board_rounds.py` and `final_v9.py:BOARD` (self-checking at import),
   `predict_board.py` anchors, `leaderboard/board.jsonl`, `lb.py --html` and a republish of the
@@ -98,17 +105,16 @@ Simulation is training-side only.
 | timed | all of `predict()` | all of `ttt_step`, plus `reset_ttt_state` charged to the next step; construction and loading are untimed |
 | limits | extracted archive < 256 MB | < 256 MB, and 10 min wall clock for the whole run |
 
-**The windows tile.** Stride 20 equals the horizon, so window *k*'s target is window *k+1*'s input,
-bit for bit.
+**The windows tile.** Stride 20 equals the horizon, so window *k*'s target is window *k+1*'s input.
 * Track 1 could copy answers out of its own argument (93.500 live). Disclosed; the organizers
   confirmed such scores are invalid (`Track_1/submit_trick/DISCLOSURE.md`). Never ship it.
 * **The only clean input for window *k* is window *k*'s own input.** A statistic pooled across
   windows (a trajectory mean) contains targets and still passes a permutation-invariance check,
   which `validate_strict.py` asserts. `predict()` gets no Re or AoA, only `metadata["sample_id"]`.
-* **Track 2 is Track 1's model, streamed.** Anything computable from `prev_target_norm` is already
-  in `input_norm`. Only the supervised pair and the realized error are new, and every adaptation
-  built on them is measured and closed (`Track_2/README.md`). Ship frozen. The site's
-  "N-step autoregressive" is teacher-forced, so nothing compounds.
+* **Track 2 is Track 1's model, streamed.** Anything computable from `prev_target_norm` is already in
+  `input_norm`; only the supervised pair and the realized error are new, and every adaptation built on
+  them is measured and closed (`Track_2/README.md`). **Ship frozen.** The site's "N-step
+  autoregressive" is teacher-forced, so nothing compounds.
 
 ## Data
 
@@ -128,9 +134,9 @@ benchmark, not the competition data.
 * **Normalizer** (GaussianNormalizer on train_real at 32×64; std 0 → 1):
   `mean_in = [0.154960856, -0.000513992854, 0.0]`, `std_in = [0.0968056545, 0.015960684, 1.0]`,
   `mean_tgt = [0.154962569, -0.000517793698, 0.0]`, `std_tgt = [0.0968104079, 0.0159636438, 1.0]`.
-  Track 1 must apply it itself; skipping it is the classic way a correct model scores badly.
-  `*_in` equals `_fno.MEAN/STD`. `*_tgt` differs in the sixth decimal, so Track 2's output needs
-  the target affine to be exact (`Track_2/verify_space.py`).
+  Track 1 applies it itself (skipping it is the classic way a correct model scores badly); `*_in` is
+  `_fno.MEAN/STD`, and `*_tgt` differs in the sixth decimal, so Track 2's output affine must be exact
+  (`Track_2/verify_space.py`).
 * **Units.** Sim is non-dimensional (mean u ≈ 0.86–0.91); real is m/s with mean u ≈ c(AoA)·Re,
   c = [1.138, 1.149, 1.098, 1.002, 0.991]e-5 at AoA 0…20, so raw ratios run 3×–19× — never mix raw
   arrays. Sim normalizer (u, v at 32×64): `MEAN_SIM = [0.858663955, -0.004962022]`, `STD_SIM =
@@ -141,9 +147,8 @@ benchmark, not the competition data.
 * **The hidden set lies inside the training speed range.** R14 shipped a gate on out-of-range
   windows and it fired on none, so the hidden set's unseen Reynolds numbers are interior.
   `val_relo`, `val_rehi` and k-fold Re band 0 are retired as decision instruments.
-* **Error follows AoA for `rel_l2`** (out-of-fold 0.052 / 0.053 / 0.086 / 0.106 / 0.121 at AoA
-  0…20), **not for TKE** (1.10× span, non-monotone). Elements whose target is exactly 0 (outside the
-  FOV, inside the airfoil) are dropped from SPS.
+* **Error follows AoA for `rel_l2`** (out-of-fold 0.052 / 0.053 / 0.086 / 0.106 / 0.121 at AoA 0…20),
+  **not for TKE** (1.10× span, non-monotone). Elements whose target is exactly 0 are dropped from SPS.
 
 ## Scoring
 
@@ -155,18 +160,17 @@ The official program is `RealPDE/official/t1_v9/realpde_t1_starting_kit_v9/scori
 * `rel_l2`, `tke`, `mvpe` → `100/(1 + 0.5·e)`, on `u, v` only. rel-L2 is per window. TKE is the
   rel-L2 of `0.5·(var_t u + var_t v)` over the 20 output frames, so it is phase-free. MVPE is the
   rel-L2 of the time-mean at probes x ∈ {13,21,29,37}, y ∈ {8,10,…,24}, per x-station, averaged.
-* `time` → `100/(1 + sqrt(t/0.72896))`, where t is the mean board **seconds** per step
-  (5.570 ms → 91.96); zero or non-finite ⇒ 0.
+* `time` → `100/(1 + sqrt(t/0.72896))`, t the mean board **seconds** per step (5.570 ms → 91.96);
+  zero or non-finite ⇒ 0. **The private set is timed on 8× A800, so these constants need not carry.**
 * `sps` (kit v9) → `100·w`. Per scored element (target inside `[lower, upper]` and non-zero):
   `(1−pm)·exp(−(upper−lower)/σ)`, `pm = e/(0.5+e)` per branch, branches DM 0.5 / TKE 0.3 / MVPE 0.2,
   σ = 0.0563870259. Always ship a band (the default ±5 %·|pred| is poor). **Malformed bounds (shape,
   non-finite, `lower > upper`) zero every subscore.**
-* **SPS factorizes:** `sps = 100·mean_i(a_i)·containment`, `a_i = 0.5g(rel) + 0.3g(tke) +
-  0.2g(mvpe)`, `g(m) = 0.5/(0.5+m)`. The exact optimal band is therefore a sort (`Track_1/sps9.py`),
-  and a board round's `sps` follows from its other three subscores, `sps(B) ≈ sps(A)·a(B)/a(A)`,
-  with containment as the residual. The board steps that moved containment are listed in `ROUNDS.md`
-  (band, capacity, member count, family; everything else inside ±0.05); 09-16 added Swin +0.128 (R26)
-  and F-FNO +0.302 (T2R13), and 09-17 the first NEGATIVE one, **F-FNO L8 → L4 −0.310** (T2R14).
+* **SPS factorizes:** `sps = 100·mean_i(a_i)·containment`, `a_i = 0.5g(rel) + 0.3g(tke) + 0.2g(mvpe)`,
+  `g(m) = 0.5/(0.5+m)`, so the optimal band is a sort (`Track_1/sps9.py`) and a round's `sps` follows
+  from its other three subscores, `sps(B) ≈ sps(A)·a(B)/a(A)`, with containment the residual. The steps
+  that moved it are in `ROUNDS.md` (band, capacity, member count, family; the rest inside ±0.05); 09-16
+  added Swin +0.128 and F-FNO +0.302, 09-17 the first NEGATIVE one, **F-FNO L8 → L4 −0.310** (T2R14).
   **No local instrument reads containment** — the band is refit per package on its own twins.
 * **The rule combining the subscores into `final_score` is unpublished. It is a free linear fit**
   (no Σw = 1) over 32 rounds pooled across both tracks: **rel_l2 0.4775 · tke 0.1013 · mvpe
@@ -176,13 +180,13 @@ The official program is `RealPDE/official/t1_v9/realpde_t1_starting_kit_v9/scori
   mvpe **+0.100**, all three **+0.736** `final`.
 * **Noise:** the four error subscores are deterministic per archive; only `time` varies (same-shape
   drift 0.03–0.30 ms on T1, 0.4–0.7 ms on T2).
-* **Both boards are one test set and one rule.** The same package lands within ~0.4 % on `rel_l2`
-  and `sps` across tracks; Track 1's `mvpe` error is lower in every pair (~3–5 %) and, since width
-  96, its `tke` error by ~1.5 %. A package that scored on one board is worth submitting on the other.
+* **Both boards are one test set and one rule.** The same package lands within ~0.4 % on `rel_l2` and
+  `sps` across tracks; Track 1's `mvpe` error is lower in every pair (~3–5 %) and, since w96, its `tke`
+  by ~1.5 %. **A package that scored on one board is worth submitting on the other** (R28 is that).
 
 ### Board latency — measured; move in deltas, never predict a level
 
-* **Invocation:** +1.151 board ms on Track 1, +0.866 on Track 2 (R23, unfused); untested since.
+* **Invocation:** +1.151 board ms on T1, +0.866 on T2 (R23, unfused); untested since — T2R15 re-tests it.
 * **FLOPs:** ≈ 1.75 board ms per 4060-eq local ms on Track 1. Track 2 has three single cross-date
   readings — 0.60, 0.937, **0.529** (T2R13 → T2R14, the cleanest) — and ships **0.733**, their two
   most recent mean (`board_rounds.LOC_SLOPE_T2`); **bracket a Track-2 latency lever with 0.53 and
@@ -193,43 +197,43 @@ The official program is `RealPDE/official/t1_v9/realpde_t1_starting_kit_v9/scori
   own kernels, so **host-side launch accounting does not transfer either**.
 * **Precision** is charged less than FLOPs: fp16 kept 37 % on Track 1, ≈ 0.65 board ms per 4060-eq
   ms (`PREC_SLOPE_T1`); ~20 % on Track 2 (T2R12, confounded).
-* At ~4.5 board ms on Track 1, 1 board ms ≈ −0.072 `final`, and +0.1 A100 ms/window ≈ −0.023.
-  Track 2 carries a fixed ~+0.86 ms per-step handicap at one invocation.
-* The eval machine drifts by date, so anchor on a recent round of the same shape. Code:
-  `board_rounds.py` (`INV_MS_T1/T2`, `LOC_SLOPE_T1/T2`, `board_ms()`, `time_score()`,
-  `invocation_cost()`) and `predict_board.py` (`LAT_INV_*`, `LAT_LOC_*`).
+* At ~4.5 board ms on T1, 1 board ms ≈ −0.072 `final` and +0.1 A100 ms/window ≈ −0.023; T2 carries a
+  fixed ~+0.86 ms per-step handicap at one invocation.
+* The eval machine drifts by date — anchor on a recent round of the same shape. Code: `board_rounds.py`
+  (`INV_MS_*`, `LOC_SLOPE_*`, `board_ms`, `time_score`, `invocation_cost`), `predict_board.py`
+  (`LAT_INV_*`, `LAT_LOC_*`).
 
 ## What ships, and why
 
 **Members.** Checkpoints in `Track_1/unet/` (untracked); read any recipe from
 `torch.load(ckpt)["config"]`.
-* **FNO `cmb3sim` ×4**, `fno_all_w96L8cmb3sim_s1..s4.pth` (jobs `r19e`/`r19f`): `--arch fno
-  --width 96 --n-layers 8 --modes-y 8 --modes-x 12 --stride 5 --epochs 400 --batch 32 --lr 2e-4
-  --dropout 0.45 --var-head --var-mlp --lift-mlp --loss mse --lam-f 0.0 --lam-cov 2.0 --cov-c 0.25
-  --lam-grad 1.0 --lam-tgrad 0.3 --lam-v 0.15 --lam-t 0.15 --alpha-train 0.0 --sim <train_sim>
-  --lam-sim 0.3 --sim-loss full --all-data`. `--lam-f 0.0 --lam-cov 2.0` replaces the MSE field
-  term with a curvature-matched Welsch "coverage" loss that bends only the tail. Held-out twins
-  drop `--all-data` and add `--sim-exclude-held`.
+* **FNO `cmb3sim` ×4**, `fno_all_w96L8cmb3sim_s1..s4.pth` (jobs `r19e`/`r19f`): `--arch fno --width 96
+  --n-layers 8 --modes-y 8 --modes-x 12 --stride 5 --epochs 400 --batch 32 --lr 2e-4 --dropout 0.45
+  --var-head --var-mlp --lift-mlp --loss mse --lam-f 0.0 --lam-cov 2.0 --cov-c 0.25 --lam-grad 1.0
+  --lam-tgrad 0.3 --lam-v 0.15 --lam-t 0.15 --alpha-train 0.0 --sim <train_sim> --lam-sim 0.3
+  --sim-loss full --all-data`. `--lam-f 0.0 --lam-cov 2.0` swaps the MSE field term for a
+  curvature-matched Welsch "coverage" loss that bends only the tail. Twins drop `--all-data`, add
+  `--sim-exclude-held`.
 * **ViT ×2** (`ViT2d`, dim 384, 8 layers, 6 heads, dropout 0.3, no `--var-mlp`/`--lift-mlp`):
-  `arch_vit_all_s1.pth` (plain MSE field loss, `--lam-grad 1.0 --lam-v 0.3`, no sim) and
-  `arch_vit_all_cmb3sim_s3.pth` (the cmb3sim losses and sim).
+  `arch_vit_all_s1.pth` (plain MSE field, `--lam-grad 1.0 --lam-v 0.3`, no sim) and
+  `arch_vit_all_cmb3sim_s3.pth` (cmb3sim losses and sim).
 * **Held-out twins** (they supply the band's error field): `fno_r18_cmb3sim{,_s2,_s3}.pth`,
   `arch_vit_d384.pth`, `arch_vit_cmb3sim.pth`.
-* **`train2.py`'s argparse defaults are NOT the recipe:** `--alpha-train` 1.0 (collapses the
-  model), `--sim-loss shape` (rejected), `--lam-f` 1.0, `--lam-v/--lam-t` 1.0/0.5, `--loss rel`,
-  `--width` 64, `--n-layers` 4, modes (12,16), `--epochs` 150.
+* **`train2.py`'s argparse defaults are NOT the recipe:** `--alpha-train` 1.0 (collapses the model),
+  `--sim-loss shape`, `--lam-f` 1.0, `--lam-v/--lam-t` 1.0/0.5, `--loss rel`, `--width` 64,
+  `--n-layers` 4, modes (12,16), `--epochs` 150.
 
 **Inference** (`Track_1/submit_fno/submission.py` + `_fno.py`; `Track_2/submit/_fno.py` is a
 symlink to the same file):
 1. Normalize → average the members' raw field and σ on the GPU → `compose`: rescale the
-   fluctuation's per-pixel temporal std toward the σ head at **ALPHA 0.60** (0.55–0.70 is a flat
-   plateau) → denormalize.
-2. Band: `half = base · clip(σ/σ_ref, 0.3, 3.0)^p` with p 0.45. `base` is solved per element,
-   box-smoothed (k 3) and fitted by `fit_band.py` on the AoA 15–20 subset at a 1.39× error stretch
-   (the board's measured element tail is 1.36; refitting there buys 0.000).
-3. `_fno.fuse()` folds same-architecture members into one invocation: `StackedFNO` (modes
-   zero-padded; `w2` pads at the FRONT) and `StackedViT`, exact to ~1e-8 with TF32 off, and since
-   09-14 `StackedSwin` and `StackedFFNO` (`FFNO_PATH` dense or fft), within 2e-5 in fp32.
+   fluctuation's per-pixel temporal std toward the σ head at **ALPHA 0.60** (0.55–0.70 is flat) →
+   denormalize.
+2. Band: `half = base · clip(σ/σ_ref, 0.3, 3.0)^p`, p 0.45. `base` is solved per element, box-smoothed
+   (k 3) and fitted by `fit_band.py` on AoA 15–20 at a 1.39× error stretch (the board's measured tail
+   is 1.36; refitting there buys 0.000).
+3. `_fno.fuse()` folds same-architecture members into one invocation: `StackedFNO` (modes zero-padded,
+   `w2` pads at the FRONT) and `StackedViT`, exact to ~1e-8 with TF32 off; `StackedSwin` and
+   `StackedFFNO` (`FFNO_PATH` dense or fft) within 2e-5 in fp32.
 4. Latency settings, each verified accuracy-neutral (sizes in `ROUNDS.md`): `HOST_WRITE = "torch"`
    (threaded output write, bit-identical); `SPEC_PATH = "bmm"` (real 2×2-block spectral matmul,
    2e-6); int8 packing (free for FNO and ViT); `AMP` (autocast checked against fp32 at import,
@@ -247,10 +251,9 @@ that works; the σ head needs the shared trunk and `--var-mlp`) are stated with 
 
 ## Instruments — a sign, not a size
 
-* **Every local number is a sign.** The proxy over-reads error cuts about 2×. Board/proxy ratios are
-  ≈ rel 1.07, tke 1.14, mvpe 1.45. **Across model FAMILIES it predicts neither size nor sign** —
-  U-FNO (R16) and Swin (R26): Swin read equal-or-better on all three errors, the board moved all
-  three down.
+* **Every local number is a sign.** The proxy over-reads error cuts ~2×; board/proxy ratios ≈ rel
+  1.07, tke 1.14, mvpe 1.45. **Across model FAMILIES it predicts neither size nor sign** (U-FNO R16,
+  Swin R26: Swin read equal-or-better on all three errors, the board moved all three down).
 * **Instrument defaults are not the operating point:** `--alpha` is 0.75 in `compare_v9`,
   `ens_v9`, `fit_band`, `predict_board` and 0.90 in `kfold`, and `fit_band --band-p` is 0.5.
   **Always pass `--alpha 0.60 --band-p 0.45`.**
@@ -258,7 +261,8 @@ that works; the σ head needs the shared trunk and `--var-mlp`) are stated with 
   own bands; `ens_v9.py --aoa 15 20` scores member sets on the board-like proxy (add the full
   split). Error an arm removes independently per member vanishes in the ensemble average.
 * **Confirm** with the interior Re-band k-fold: `kfold.py --split re`, bands 1–3 pooled (~2150
-  windows; `--paired` bootstraps trajectories). It overstates `rel_l2` ~1 %, signs of tke/sps right.
+  windows; `--paired` bootstraps trajectories) — overstates `rel_l2` ~1 %, signs of tke/sps right.
+  For the PRIVATE set use the AoA-holdout screen instead: it is the only OOD instrument we have.
 * **Predict** with `Track_1/predict_board.py` (per-metric ratios, the 1.36 SPS tail, measured
   latency constants; `t2*` anchors select Track 2's), anchored on a recent round of the same shape.
   Bracket `time` with the measured slopes, never a cross-day refit. For `sps`, the per-sample factor
@@ -267,7 +271,7 @@ that works; the σ head needs the shared trunk and `--var-mlp`) are stated with 
   first job (single runs at 2–3σ have regressed repeatedly). An arm that does not move its own
   training loss (e.g. `var`) cannot move the held-out metric.
 * **Refit everything downstream** (band, ALPHA) before comparing a changed member set or scale
-  parameter. **Derive held-out lists** (`re_split.excluded()`, `kfold.py --folds`): the grid is
+  parameter. **Derive held-out lists** (`re_split.excluded()`, `kfold.py --folds`) — the grid is
   incomplete, so a typed `--exclude` leaks.
 * **If an arm scores worse than the worst case for its own hypothesis, suspect the harness.** A
   representation change is measured only once the scoring path implements it.
@@ -275,44 +279,46 @@ that works; the σ head needs the shared trunk and `--var-mlp`) are stated with 
 ## Closed — do not re-propose without new evidence
 
 Evidence and files: `ROADMAP.md` Part 2, the latest handoff, and `ROUNDS.md`.
-* **Band**, eight times (exact per-element solver, trajectory CV, spread-adaptive, asymmetric
-  −0.29, online calibration). Member weights (uniform is optimal). ALPHA (a plateau).
+* **Band**, eight times (exact per-element solver, trajectory CV, spread-adaptive, asymmetric −0.29,
+  online calibration). Member weights (uniform is optimal). ALPHA (a plateau).
 * **Architecture:** capacity past w96 L8 (L12, w128, modes (12,20)) and below it; ViT L12; member
   count; a third family (AFNO) or a third ViT; U-FNO as a package; CNO and Transolver (latency);
-  DeepONet (rank-p decoder); GNNs; KANO; DINOv2 initialization (fits better, generalizes the same).
-* **σ head:** readout width/depth/inputs; loss weights (`lam_v` is U-shaped at the recipe); a
-  detached head; a separate σ network; post-hoc calibration (three nulls); FGN/CRPS generative σ.
-* **Losses and regularizers:** the scorer's own functionals in the loss (`--lam-p`, `--lam-t` up,
-  `--lam-tail`, `--w-mean`, spectrum, Laplacian); ∇·u → 0 and momentum; `--wd`; SAM;
-  `--aug-noise`; `--aug-scale`; `--phases 4`; 800 epochs; `--chan-pow`; SWA; `--point-mlp`.
-  `--mode-drop` and `--aug-mask` sit at the seed floor.
+  DeepONet; GNNs; KANO; DINOv2 init (no gain — and now **prohibited** by the external-weights rule).
+* **σ head:** readout width/depth/inputs; loss weights (`lam_v` U-shaped); a detached head; a separate
+  σ network; post-hoc calibration; FGN/CRPS generative σ. **σ-amplitude modelling is closed on PHYSICS**
+  too: the TKE target is a 20-sample variance, our 0.538 already beats the hindsight long-run variance
+  (0.570), and a 20 % cut would beat a 40-frame hindsight variance (0.456). No TKE-targeted arm.
+* **Losses and regularizers:** the scorer's functionals in the loss (`--lam-p`, `--lam-t` up,
+  `--lam-tail`, `--w-mean`, spectrum, Laplacian); ∇·u → 0 and momentum; `--wd`; SAM; `--aug-noise`;
+  `--aug-scale`; `--phases 4`; 800 epochs; `--chan-pow`; SWA; `--point-mlp`. `--mode-drop` and
+  `--aug-mask` sit at the seed floor.
 * **Representation:** `--norm self` (−0.50 ensembled); phase/advection re-registration;
   oscillatory and temporal-basis heads; diffusion (PDE-Refiner); analog forecasting; long context;
   denoise → predict → renoise.
-* **Sim:** sim pretraining (+0.00); `lam_sim` dose; sim stride; per-pixel maps; `--sim-loss
-  shape`; a real-data structured perturbation (`--aux-fstride`); a sim pressure head.
+* **Sim:** sim pretraining (+0.00); `lam_sim` dose; sim stride; per-pixel maps; `--sim-loss shape`;
+  `--aux-fstride`; a sim pressure head. **New simulations are prohibited**; the release's is fine.
 * **Track 2 adaptation:** residual EMA; online band calibration; gradient TTT (+0.02 accuracy for
   −0.5 latency); closed-form readout refit (09-14); trajectory history (worth nothing). Transductive
   pooled statistics are a leak.
-* **Test-set range:** the gated mean blend (the hidden set is in range; `BLEND_BETA = 0`).
+* **Test-set range:** the gated mean blend (`BLEND_BETA = 0`) — **for the PUBLIC set only**; it wins out
+  of distribution, so the private set re-opens it on the AoA-holdout reads.
 * **Latency (board-measured, 09-17):** the **Track-1 CUDA graph** (R27, +0.565 board ms) and
   **F-FNO depth L4 on Track 2** (T2R14: errors a wash, containment −0.310).
-* **Backbones (09-14 screen; `ROADMAP.md` Part 2):** the ConvNeXt U-Net (w40, w72), PDE-Arena
-  U-Net and SimVP families; Swin capacity (w96); sim on Swin; Re/AoA oracle conditioning (removes
-  no error); F-FNO's fused speed on Track 1 (1.30× its member loop at b64 fp16: Track 2 only).
+* **Backbones (09-14 screen; `ROADMAP.md` Part 2):** the ConvNeXt U-Net (w40, w72), PDE-Arena U-Net
+  and SimVP families; Swin capacity (w96); sim on Swin; Re/AoA oracle conditioning (removes no error).
 
 ## Build and gate a package
 
 ```bash
-# From the repo root. Builds and gates BOTH tracks from one member set; stages into ../sub_candidates/.
+# Repo root. Builds and gates BOTH tracks from one member set; stages into ../sub_candidates/.
 RPDE_A="<all-data members>" RPDE_M="<held-out twins>" RPDE_BAND=Track_1/bands/<band>.npz \
 RPDE_INT8=1 RPDE_LINEAR=tensor RPDE_SHIP_AMP='"fp16"' RPDE_SPEC_PATH=bmm RPDE_HOST_WRITE=torch \
-RPDE_TAG=r26_<tag>_a060 bash Track_1/submit_fno/build_round13.sh 0.60
+RPDE_TAG=<tag>_a060 bash Track_1/submit_fno/build_round13.sh 0.60
 ```
 
-* Without `RPDE_BAND` the script refits the band (`fit_band.py --ckpt $A --err-ckpt $M --alpha
-  ALPHA --band-p 0.45`). **Refit whenever the member set or ALPHA changes, and always take the
-  error field from held-out twins.** A band fitted on memorized errors scored sps 36.94 (R6).
+* Without `RPDE_BAND` the script refits the band (`fit_band.py --ckpt $A --err-ckpt $M --alpha ALPHA
+  --band-p 0.45`). **Refit whenever the member set or ALPHA changes; always take the error field from
+  held-out twins.** A band fitted on memorized errors scored sps 36.94 (R6).
 * **Pass every knob.** Unset ones fall back to older behaviour (round-13 width-24 members, ALPHA
   0.90, empty `SPEC_PATH`/`HOST_WRITE`, fp32 packing, `AMP = None`). The script `sed`s `ALPHA`,
   `FUSE`, `AMP`, `SPEC_PATH` into both tracks' `submission.py` and `HOST_WRITE`/`BLEND_BETA` into
@@ -332,9 +338,8 @@ RPDE_TAG=r26_<tag>_a060 bash Track_1/submit_fno/build_round13.sh 0.60
 ## Submission contracts
 
 **Track 1:** `submission.py` at the zip root. `predict(input_array, metadata=None)` takes
-`(N,20,32,64,3)` raw physical and returns a float array of the same shape (float32 or float64), or
-`{"prediction", "lower", "upper"}`. Finite everywhere, `p` zero, bounds per element with the same
-shape and `lower ≤ upper`.
+`(N,20,32,64,3)` raw physical and returns a float array of the same shape, or
+`{"prediction", "lower", "upper"}`. Finite everywhere, `p` zero, bounds per element, `lower ≤ upper`.
 
 **Track 2:** `get_ttt_model(submission_dir, device)` → an object with `reset_ttt_state()` and
 `ttt_step(input_norm, prev_target_norm) → (prediction, info)`. `info["adapt_loss"]` is required;
@@ -345,19 +350,15 @@ harness that copies out on the same line.
 
 ### Evaluation containers — nothing is installed at eval time
 
-* Track 1, `pytorch/pytorch:2.2.2-cuda12.1-cudnn8-runtime`: no `scipy`, `h5py`, `matplotlib`,
-  `pandas`; `einops` only from the kit's `_vendor/`; `requests` and `setuptools` are present. Never
-  import h5py from anything in the zip (`unet/model.py` imports it lazily).
-* Track 2, `w3nhao/realpde-track2:v1` (PyTorch 2.2.2, CUDA 12.1, Python 3.10): `einops` present;
-  runs in an isolated subprocess.
-* The platform may load `submission.py` via `spec_from_file_location` with the extract directory
-  off `sys.path`. Vendor any other pure-Python dependency.
+Track 1 `pytorch/pytorch:2.2.2-cuda12.1-cudnn8-runtime`, Track 2 `w3nhao/realpde-track2:v1`. **Neither
+has `scipy`, `h5py`, `matplotlib` or `pandas`**; `einops` is vendored on T1, present on T2. Never import
+h5py from anything in the zip, and vendor every other pure-Python dependency: the platform may load
+`submission.py` with the extract dir off `sys.path`. Detail in `ROADMAP.md` Part 4.
 
 ## Engineering traps
 
 * Never train through `compose` (`--alpha-train 0.0`); compose at inference only.
-* Time `predict()` end to end, after warm-up, outside the loop. The forward pass is a small
-  fraction of it.
+* Time `predict()` end to end, after warm-up, outside the loop; the forward pass is a small part of it.
 * `torch.amax(x, dim=())` reduces over all dims (it gave a whole Linear one int8 scale). Score the
   real code path, never a re-implementation of it.
 * Preprocessing that reads real-data statistics (domain maps, masks, per-condition normalizers)
@@ -367,10 +368,9 @@ harness that copies out on the same line.
   gate passes such a package as if the feature were absent.
 * Running jobs re-import the working tree per arm. Edit shared modules in a copy, install with an
   atomic `mv` after `ast.parse`, keep the default path bit-identical.
-* Co-scheduled h5 readers need `HDF5_USE_FILE_LOCKING=FALSE` (set in `jobs/common.sh`). Slurm
-  snapshots a batch script at submit time.
-* A background waiter's sentinel must be the job script's last line, and the waiter must also exit
-  when the job leaves the queue.
+* Co-scheduled h5 readers need `HDF5_USE_FILE_LOCKING=FALSE` (`jobs/common.sh`); Slurm snapshots a
+  batch script at submit time.
+* A waiter's sentinel must be the job script's last line, and it must exit when the job leaves the queue.
 
 ## Environment
 
@@ -379,21 +379,19 @@ harness that copies out on the same line.
   Login and OnDemand nodes have no GPU. The 12-core cpuset binds before the GPU: pin training and
   evaluation to disjoint cores, and do not judge liveness by `nvidia-smi` (~0 % when healthy).
   `debug-nextgen` (same A100, ≤ 1 h) is fast when nextgen jams, but needs the user's OK.
-* Jobs of other projects share the allocation (`hd_*`, `p5_*`, `p6_*`, `tt26-*`), and
-  `ondemand/*` is the user's desktop. Never touch them. Ours are `rp_*`.
-* Repo `/users/PAS1187/qwu/workspace/realpde/main` · data and official kits
-  `/users/PAS1187/qwu/RealPDE/` (`official/{t1_v9,t2_v6}/`, `baseline_checkpoints/`) · job scripts
-  and logs `/fs/scratch/PAS1187/qwu/tmp/realpde/{jobs,logs}/` (`jobs/common.sh`).
-* Python: `source .pyenv.sh`, or call `/users/PAS1187/qwu/.conda/envs/realpde/bin/python`.
-  `environment.yml` pins the eval stack: Python 3.10, torch 2.2.2+cu121, **numpy 1.26.4** (torch
-  2.2.2 is not numpy-2 compatible), **setuptools 69.5.1** (the CNO baseline imports
-  `pkg_resources`). h5py, scipy, matplotlib and pandas are for local work only.
+* Other projects share the allocation (`hd_*`, `p5_*`, `p6_*`, `tt26-*`) and `ondemand/*` is the
+  user's desktop — never touch them. Ours are `rp_*`.
+* Repo `~/workspace/realpde/main` · data and kits `~/RealPDE/` (`official/{t1_v9,t2_v6}/`,
+  `baseline_checkpoints/`) · jobs and logs `/fs/scratch/PAS1187/qwu/tmp/realpde/{jobs,logs}/`.
+* Python: `source .pyenv.sh`, or `~/.conda/envs/realpde/bin/python`. `environment.yml` pins the eval
+  stack: Python 3.10, torch 2.2.2+cu121, **numpy 1.26.4** (torch 2.2.2 is not numpy-2 compatible),
+  **setuptools 69.5.1**. h5py, scipy, matplotlib and pandas are for local work only.
 
 ## Rules and dates
 
 One shared Codabench account (≤ 3 members); 1 submission per track per **UTC** day (it rolls over
 at 20:00 EDT), 100 per phase; Failed submissions are not counted.
-**Main Development ends 2026-09-27. The Decision phase (to 2026-10-25) selects the package.**
+**Main Development ends 2026-09-27; the Decision phase runs to 2026-10-25.**
 Results 2026-11-10; workshop 2026-12-06. Winners open-source two weeks before presenting.
 Prizes/track: $6k / $3k / $1.5k.
 
@@ -402,11 +400,11 @@ Prizes/track: $6k / $3k / $1.5k.
 ```
 CLAUDE.md  README.md  ROADMAP.md  ROUNDS.md  environment.yml  .pyenv.sh
 Track_1/   top level: board_rounds, final_v9, predict_board, compare_v9, ens_v9, kfold, sps9, ...
-  unet/         model.py (data), models_alt.py (FNO2d, ViT2d, ...), train2.py, simreal.py, *.pth (untracked)
-  submit_fno/   the package: submission.py, _fno.py, fit_band.py, build_zip.py, validate_strict.py, build_round13.sh
-  verify/ bands/ report/ plan/     gates · scored bands · write-ups · plans and ledgers
-  submit/ submit_trick/ fno_deeponet/ deeponet/ diffusion/     historical
-Track_2/        submit/, build_t2.py, validate_t2.py, stream_eval.py, verify_space.py, ttt_*.py (closed studies)
-leaderboard/    board.jsonl, runs.jsonl, lb.py
-outside the repo: ../sub_candidates/ (staging, predictions, submitted/) · ../handoffs/ · ../leaderboard.html
+  unet/       model.py (data), models_alt.py (FNO2d, ViT2d, ...), train2.py, simreal.py, *.pth (untracked)
+  submit_fno/ submission.py, _fno.py, fit_band.py, build_zip.py, validate_strict.py, build_round13.sh
+  verify/ bands/ report/ plan/   gates · scored bands · write-ups · plans and ledgers
+  submit/ submit_trick/ fno_deeponet/ deeponet/ diffusion/   historical
+Track_2/   submit/, build_t2.py, validate_t2.py, stream_eval.py, verify_space.py, ttt_*.py (closed)
+leaderboard/  board.jsonl, runs.jsonl, screen.jsonl, lb.py
+outside the repo: ../sub_candidates/ · ../handoffs/ · ../leaderboard.html
 ```
