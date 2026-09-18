@@ -70,8 +70,12 @@ if [ -n "${RPDE_BAND:-}" ]; then
   cp "$RPDE_BAND" Track_2/submit/band8.npz
   echo "  REUSING band $RPDE_BAND (no refit) -- md5 $(md5sum < Track_2/submit/band8.npz)"
 else
+  # RPDE_BAND_FILL=1 repairs the half-widths of elements the FITTING SPLIT never scored, where
+  # `optimal_band` returns min|E| ~ 0 and the containment indicator can then never fire on a
+  # differently-blanked recording (scout, lit_20260917.md 4.9). Unset = the default path, which
+  # is bit-identical to every band fitted before it.
   $PY Track_1/submit_fno/fit_band.py --ckpt $A --err-ckpt $M --alpha "$ALPHA" --band-p 0.45 \
-      --out Track_2/submit/band8.npz || exit 1
+      ${RPDE_BAND_FILL:+--fill-unscored} --out Track_2/submit/band8.npz || exit 1
 fi
 
 echo "=== 2/5  ALPHA (both tracks) and BLEND_BETA (Track 1 only) ================"

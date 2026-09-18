@@ -122,6 +122,29 @@ def main() -> None:
                          "the fitting split (CV sps 42.81 / 43.07 / 43.34 / 43.28 / 43.18 for "
                          "k = 1/2/3/5/7), and the same k is independently best on val_unseen "
                          "(40.615 against 40.414). 1 disables.")
+    ap.add_argument("--fill-unscored", action="store_true",
+                    help="Repair the half-widths of elements the FITTING SPLIT never scored "
+                         "(scout, lit_20260917.md 4.9). `optimal_band` maximizes "
+                         "cumsum(a_i*scored_i)*exp(-2|E|/sigma); if an element is unscored in "
+                         "every fitting window the weight vector is all zeros, gain is "
+                         "identically zero, argmax returns index 0, and `base` becomes "
+                         "min_i|E_ie| -- which at a blanked element (prediction ~ 0, target "
+                         "identically 0) is ~0. The shipped band's global minimum, 2.85e-7, "
+                         "comes from exactly this path, and 2 667 elements (3.3 %%) sit 13.6x "
+                         "below their frame median. The fitting split is THREE trajectories, so "
+                         "those elements are an artefact of three blanking patterns: 2 317 of "
+                         "them are scored somewhere in our own 82 recordings, and a private "
+                         "recording that blanks less than ours and scores them all would lose "
+                         "about 2.5 sps (-0.6 final) -- not to a wide interval, which costs "
+                         "almost nothing at this sigma, but to a containment indicator that can "
+                         "never fire. This flag blends each element toward a fill taken only "
+                         "from well-sampled neighbours. It reads only HOW OFTEN each element "
+                         "was scorable, never the mask itself, so it cannot learn our geometry.")
+    ap.add_argument("--fill-nok", type=int, default=8,
+                    help="--fill-unscored: an element is 'well sampled' at this many scored "
+                         "fitting windows, and the blend weight is clip(n_ok / this, 0, 1).")
+    ap.add_argument("--fill-smooth", type=int, default=5,
+                    help="--fill-unscored: the (T, H, W) box the fill is averaged over.")
     ap.add_argument("--out", default=os.path.join(HERE, "band.npz"))
     args = ap.parse_args()
 
@@ -175,6 +198,53 @@ def main() -> None:
             o = np.mean([np.take(q, range(i, i + uv_band.shape[ax]), axis=ax)
                          for i in range(k)], axis=0)
         uv_band = o.astype(np.float32)
+
+    if args.fill_unscored:
+        # Mask-independent by construction: the only thing read is n_ok, how many fitting windows
+        # scored each element. Never the mask, never a geometry.
+        n_ok = scored_s.sum(0).astype(np.float64)                     # (T, H, W, 2)
+        b = uv_band[0].astype(np.float64)
+        ok = (n_ok >= args.fill_nok).astype(np.float64)
+        # `fill` = box mean of `base` over well-sampled neighbours only. Carrying the weighted
+        # sum and the weight through the same separable box keeps it a true weighted mean, and
+        # keeps a dead REGION's interior from averaging its own dead values.
+        kk = args.fill_smooth
+
+        def box_sum(o):
+            """Separable k-box SUM over (T, H, W), channels independent -- the same sweep the
+            --band-smooth block uses, summing instead of averaging so num/den is a weighted mean."""
+            for ax in (0, 1, 2):
+                pad = [(0, 0)] * 4
+                pad[ax] = (kk // 2, kk // 2)
+                q = np.pad(o, pad, mode="edge")
+                o = np.sum([np.take(q, range(i, i + b.shape[ax]), axis=ax) for i in range(kk)],
+                           axis=0)
+            return o
+
+        num, den = box_sum(b * ok), box_sum(ok)
+        # Where even the k=5 box finds no well-sampled neighbour, fall back to the frame's own
+        # spatial median over well-sampled elements (per t and per channel).
+        med = np.zeros_like(b)
+        for t in range(b.shape[0]):
+            for c in range(b.shape[-1]):
+                v = b[t, :, :, c][ok[t, :, :, c] > 0]
+                med[t, :, :, c] = np.median(v) if v.size else np.median(b[t, :, :, c])
+        fill = np.where(den > 0, num / np.maximum(den, 1e-12), med)
+        w = np.clip(n_ok / float(args.fill_nok), 0.0, 1.0)
+        newb = w * b + (1.0 - w) * np.maximum(b, fill)
+        touched = newb != b
+        nt = int(touched.sum())
+        print(f"--fill-unscored: n_ok < {args.fill_nok} at {int((n_ok < args.fill_nok).sum())} "
+              f"of {n_ok.size} elements; never scored at {int((n_ok == 0).sum())}; "
+              f"CHANGED {nt} ({100.0 * nt / n_ok.size:.2f} %)")
+        if nt:
+            print(f"  touched base median {np.median(b[touched]):.5f} -> "
+                  f"{np.median(newb[touched]):.5f};  whole band median "
+                  f"{np.median(b):.5f} -> {np.median(newb):.5f}, max {b.max():.5f} -> "
+                  f"{newb.max():.5f}, min {b.min():.3e} -> {newb.min():.3e}")
+            print(f"  untouched elements bit-identical: "
+                  f"{bool(np.array_equal(b[~touched], newb[~touched]))}")
+        uv_band = newb.astype(np.float32)[None]
 
     # The scorer only reads the measured channels, but the ingestion program requires bounds
     # the same shape as the prediction, so the unscored pressure channel gets a zero column.
