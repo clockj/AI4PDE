@@ -2271,6 +2271,87 @@ Both slots carried `track{1,2}_r25_xfam6fp16_a060.zip`: R24's archive with `AMP 
 
 ---
 
+### Round 27 / T2R14 BOARD RESULT (2026-09-17) — the CUDA graph is slower and F-FNO depth is a wash; both bests hold
+
+Two slots, two losses, and neither cost more than 0.04. **R25 (81.344644) and T2R13 (81.314785) both
+remain the bests**, and what the day bought is calibration: a third consecutive local latency read
+that did not transfer, and the first board measurement of containment across depth.
+
+**Track 1, R27** = `track1_r26_xfam6fp16graph_a060.zip` (md5 `4f83127266141ddc139eb8e150fb09fc`),
+R25's uploaded archive with **one** change, `GRAPH = True`. Staged since 09-14.
+
+| | rel_l2 | tke | mvpe | time | sps | final |
+|---|---|---|---|---|---|---|
+| R25 on the board | 94.861790 | 78.793380 | 94.347508 | 92.297891 | 41.867687 | 81.344644 |
+| estimate of record (09-14, re-affirmed 09-16) | 94.861790 | 78.793380 | 94.347508 | 93.164 | 41.867552 | 81.428 |
+| bracket | identical | identical | identical | 92.30–94.19 | 41.8675 | 81.37–81.52 |
+| **actual** | 94.861790 | 78.793380 | 94.347508 | 91.914674 | 41.867769 | **81.307815** |
+| vs R25 | 0.000000 | 0.000000 | 0.000000 | **−0.383217** | +0.000082 | **−0.036829** |
+
+* **The graph ran.** rel, tke and mvpe came back *bit-identical* to R25 to six decimals, and sps
+  moved **+8.2e-05** — not identical, so the capture did not fall back to eager at import. The
+  predicted sign was −1.35e-04 at the *local* 1.36 error stretch; the board's own element tail gives
+  the derivative the other sign. **The ~1e-4 magnitude is the fingerprint, not the sign.**
+* **And it is slower on the eval GPU.** 5.076 → **5.641 board ms, +0.565**, where the estimate
+  assumed one invocation's launch overhead (1.151 ms, R23) would come *off*. +0.565 is outside Track
+  1's 0.03–0.30 ms same-shape drift and on the wrong side of it, so either the eval GPU charges the
+  capture/replay path more than the launches it removes, or the day's drift is larger than anything
+  this project has recorded. Every one of the −0.037 is `time`.
+* **THE TRACK-1 GRAPH IS CLOSED**, and with it the last Track-1 lever on the record package. This is
+  the **third consecutive local latency read that did not transfer** — fp16 kept 37 % (R24→R25),
+  R26's fused Swin step predicted −1.245 ms and delivered +1.17, and now the graph inverted. It is
+  the strongest of the three because it is the only one measured on the **same kernels as its
+  anchor**: host-side launch accounting does not transfer either. Local latency now predicts a sign
+  only when the change is an honest FLOPs cut inside one kernel family, and even then within ~2×.
+
+**Track 2, T2R14 = P2-L4** = `track2_r30_p2ffnoL4_a060.zip` (md5 `38c157835c2fc51efda865a9c5dcfe50`,
+build job 7332924): T2R13 with **depth** as the only lever — four all-data F-FNO w40 **L4** members
+fused by `StackedFFNO` on the dense path, T2R13's two ViTs, band refit from the held-out L4 twins.
+
+| | rel_l2 | tke | mvpe | time | sps | final |
+|---|---|---|---|---|---|---|
+| T2R13 on the board | 94.890753 | 78.781089 | 94.063576 | 91.638537 | 42.063113 | 81.314785 |
+| estimate of record (09-16) | 94.891 | 78.615 | 94.088 | 92.496 | 42.015 | 81.371 |
+| bracket | | | | 92.18 (slope 0.60) | | 81.34–81.41 |
+| **actual** | 94.914425 | 78.750833 | 94.136582 | 92.111693 | 41.790524 | **81.308359** |
+| vs T2R13 | +0.023672 | −0.030256 | +0.073006 | **+0.473156** | **−0.272589** | **−0.006426** |
+
+1. **Depth is a wash on the three errors.** The predicted `tke` cost of −0.166 subscore came in at
+   −0.030; `rel_l2` *rose* 0.024 and `mvpe` 0.073. In error terms: rel −0.49 %, tke +0.18 %, mvpe
+   −1.31 %. Halving the stack costs nothing measurable in rms error, exactly as the L8→L4 screen
+   said, and the proxy over-read a *loss* by the usual ~2×.
+2. **The slot was lost in CONTAINMENT, and that is the new fact.** With the a-factor computed from
+   the three *actual* errors (`a = 0.5g(rel) + 0.3g(tke) + 0.2g(mvpe)`, `g(m) = 0.5/(0.5+m)`,
+   `e = 2(100/s − 1)`), a moved +0.0009 relative, so the **forced** part of sps is **+0.038**. The
+   board returned **−0.273**, hence **containment fell −0.310**. The L4 σ head is worse calibrated
+   than L8's at the same band recipe — and **no local instrument reads this**: the band is refit per
+   package from that package's own twins, so every depth scores well on its own fit. Containment is
+   now the second quantity (after cross-family latency) that only the board can measure.
+3. **`LOC_SLOPE_T2` 0.937 was a high draw.** The build's interleaved read was **−0.738 A100 ms/step**
+   (2.6325 against P2-L8's 3.3707) = **−1.366 4060-eq ms**; the board saved **0.723 ms** (6.069 →
+   5.346), i.e. **0.529 board ms per 4060-eq ms**. `time` 92.112 came in below *both* predictions,
+   92.502 at 0.937 and 92.178 at the old 0.60. Three readings now exist, all single cross-date pairs
+   — 0.60 (T2R9→T2R11), 0.937 (T2R12→T2R13), 0.529 (T2R13→T2R14, and the cleanest: one day apart,
+   same kernels, same member count, depth the only lever). `board_rounds.LOC_SLOPE_T2` and
+   `predict_board.LAT_LOC_T2` now carry **mean(0.937, 0.529) = 0.733**, three-read mean 0.689;
+   bracket any Track-2 latency lever with **0.53 and 0.94** rather than pricing it at a point.
+
+**Verdicts.** *F-FNO depth is closed on the board too* — **L8 stays the Track-2 package**, and L4's
+cheaper step is handed straight back in containment. *The Track-1 CUDA graph is closed.* The
+prediction missed below its bracket for a reason no local instrument could have caught, which is the
+same shape of miss as R26's: the estimate was right about everything the proxy can see.
+
+* **Weights after 36 pooled rounds** (`Track_1/final_v9.py`): rel_l2 **0.4777** · tke **0.1012** ·
+  mvpe **0.0920** · time **0.0966** · sps **0.2500**, Σw 1.0174, max |residual| **0.0027** (R6, a
+  round recorded to 3–4 decimals; every six-decimal row clears 0.0025).
+* **Leaders, read 09-17:** T1 **81.9613** (gap to R25 **0.617**), T2 **82.05275** (gap to T2R13
+  **0.738**). Both moved up from the 09-14 reads. The user reported them with the track labels
+  swapped; the assignment above follows from monotonicity (a leader board does not go down) and is
+  recorded that way in `leaderboard/lb.py:LEADER_READS`.
+* **The containment ledger** (above) gains a negative entry: **F-FNO L8 → L4 −0.310** on Track 2.
+
+---
+
 ## CLAUDE.md detail moved here on 2026-09-15 (verbatim)
 
 `CLAUDE.md` was trimmed back under 30,000 characters on 2026-09-15, when the two 09-15 packages, the

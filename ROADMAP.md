@@ -926,6 +926,41 @@ The detail is in `ROUNDS.md`, "Round 25 BOARD RESULT". The rules:
 * **Method.** Both estimates of record missed only in the `time` row (−0.011 and −0.059), and
   both assumed that half of the local cut transfers. Use the measured fractions from now on.
 
+### 1.28 Rounds 26–27 / T2R13–T2R14 (2026-09-16 → 09-17): the graph and depth rounds
+
+Four slots over two days, three of them losses of ≤ 0.13 and one a new Track-2 best. Detail in
+`ROUNDS.md` ("Round 27 / T2R14 BOARD RESULT") and in `board_rounds.py`'s comment blocks. The rules:
+
+* **A local latency read transfers only when it is an honest FLOPs cut inside one kernel family —
+  and even then only within ~2×.** Three consecutive failures now: fp16 kept 37 % (R24→R25), R26's
+  fused Swin step measured 0.63× and predicted −1.245 board ms but delivered **+1.17**, and R27's
+  CUDA graph — measured at −0.2 % locally, i.e. invisible — delivered **+0.565 board ms**. R27 is
+  the strongest of the three because its kernels are *identical* to its anchor's: **host-side launch
+  accounting does not transfer either**, so the 1.151 ms/invocation of R23 cannot be collected by
+  restructuring launches. Bracket any latency lever at [0, the measured cut] and expect the wrong
+  sign outside a FLOPs change.
+* **CONTAINMENT IS INVISIBLE TO EVERY LOCAL INSTRUMENT, and it decides slots.** T2R14 (F-FNO L4
+  against T2R13's L8) put the three errors within noise — the forced part of `sps` is **+0.038** —
+  and the board returned **−0.273**, so containment fell **−0.310** and took the slot with it. The
+  band is refit per package from that package's own held-out twins, so *every* variant scores well
+  on its own fit and no local number separates them. The same quantity, with the opposite sign,
+  is what made T2R13 (+0.302) and R26 (+0.128) move at all. **Treat containment as a board-only
+  measurement and never bank it in an estimate.**
+* **Depth is closed on the board, not just locally.** L8 → L4 at K = 4: rel +0.024, tke −0.030
+  (−0.166 predicted), mvpe +0.073, `time` +0.473, `sps` −0.273, net **−0.006**. The cheaper stack is
+  real and it is handed straight back. **L8 stays the Track-2 package.**
+* **`LOC_SLOPE_T2` has three single cross-date readings and is a range, not a number:** 0.60
+  (T2R9→T2R11), 0.937 (T2R12→T2R13), **0.529** (T2R13→T2R14 — the cleanest: one day apart, same
+  kernels, same member count, depth the only lever). The shipped constant is **mean(0.937, 0.529) =
+  0.733**; bracket Track-2 latency with **0.53 and 0.94**. 0.937 was a high draw, exactly as the
+  09-16 handoff asked the next pair to decide.
+* **The fingerprint design keeps working.** R27's errors were bit-identical to R25's and `sps` moved
+  **+8.2e-05**: the graph provably ran. Note the *sign* was predicted wrong (−1.35e-04 at the local
+  1.36 stretch; the board's own tail flips the derivative) — **a fingerprint is a magnitude test,
+  not a direction test.**
+* **mvpe is the FNO's metric.** It fell on both boards on 09-16 (Swin −0.174, F-FNO −0.161) and only
+  recovered on 09-17 by going *shallower* (+0.073). No new family has improved it.
+
 ## Part 2 — Closed. Do not re-propose without new evidence.
 
 Everything here was closed by measurement, with the file that measured it. The list exists so a
@@ -939,6 +974,8 @@ new session does not spend a week re-deriving a negative.
 | A second architecture family (U-Net) | gate M measured +0.091 proxy; board delivered ~+0.09 `tke_score` ≈ +0.015 final |
 | Extra invocations | R12 paid 0.973 `time_score` for its 4th group and got it back nowhere |
 | MVPE as an objective | weight ≈ 0.000, §1.4 |
+| **A CUDA graph on Track 1's `predict`** | R27 = R25's archive with `GRAPH = True` and nothing else: errors bit-identical, `sps` +8.2e-05 (so it ran), `time` 5.076 → **5.641 board ms**. The graph is SLOWER on the eval GPU; −0.037 `final`. §1.28 |
+| **F-FNO depth L4 on Track 2** | T2R14 = T2R13 with L4 members, depth the only lever: errors a wash (rel +0.024, tke −0.030, mvpe +0.073), `time` +0.473, but **containment −0.310** → `sps` −0.273, net −0.006. L8 stays. §1.28 |
 
 **Closed with held-out local evidence** (each cost a real experiment; see `ROUNDS.md`):
 
