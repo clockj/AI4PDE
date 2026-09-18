@@ -1660,6 +1660,24 @@ FFNO_IMPL = "auto"
 # FFTs); "dense" (1-D FFTs as matmuls on a precomputed real basis, fp16-native) or "fft". A package
 # bakes it per track, as SPEC_PATH is baked: dense for Track 1's batch, fft for Track 2's batch 1.
 FFNO_PATH = None
+# FFNO_TILE: rows of the batch the FUSED F-FNO stack's dense spectral stage processes at a time.
+# Measured 09-18 (job 7370333, profiler + interleaved bench on the L8 twins at b64 fp16): the whole
+# of StackedFFNO's fixed ~30 % penalty against its own member loop lives in `_spectral_dense` --
+# 4.454 ms fused against 2.313 for four member layers, 1.93x, while the lift is 1.014x. The cause is
+# size, not arithmetic: the two permute-reshapes per axis materialise (b, k, ci, w, 2, my) as
+# (my*k, b*w, 2ci), which is ~12 MB at K=1 and fits the A100's 40 MB L2, and ~47 MB at K=4, which
+# does not. Tiling the stage over the batch restores the member loop's cache behaviour while
+# keeping ONE invocation -- and one invocation, not one kernel, is what the board charges its
+# 1.151 ms for. Measured: chunk 32 0.541x, 16 0.534x, 8 0.608x of the untiled stage, all three
+# BITWISE identical to it (max |diff| 0.00e+00); chunk 4 regresses to 1.176x and stops being
+# bitwise, so the window is real and 16 sits in the middle of it. 0 disables.
+# It is a TARGET, not an exact chunk: the batch is split into ceil(b / FFNO_TILE) EQUAL tiles, and
+# if it does not divide evenly the stage runs untiled. Equal tiles matter for correctness, not
+# tidiness -- a ragged tail gets its own cuBLAS kernel and makes a window's fp16 output depend on
+# its position in the batch, which broke validate_strict's permutation check (0.0 -> 1.4e-4).
+# Batches at or below the tile take the untiled path unchanged, so Track 2's batch-1 graph is
+# bit-identical to what it was.
+FFNO_TILE = int(os.environ.get("RPDE_FFNO_TILE", "16"))
 
 
 class _FFNOLayer(nn.Module):
@@ -1882,6 +1900,31 @@ class _StkFFNOLayer(nn.Module):
         return (yy + xx).reshape(b, k * co, h, w)
 
     def _spectral_dense(self, x):
+        """The dense spectral stage, in batch tiles (the note on `FFNO_TILE`).
+
+        Same arithmetic, same order, same kernels -- only fewer rows per launch, so the
+        intermediates stay in L2. Verified bitwise against the untiled path at tiles 8, 16 and 32.
+        """
+        b, t = x.shape[0], FFNO_TILE
+        if t and b > t:
+            # EVERY TILE THE SAME SIZE, or no tiling at all. A tail tile of a different length
+            # gets a different cuBLAS kernel, and then a window's fp16 result depends on WHERE IN
+            # THE BATCH it sat: the first cut of this (tiles of exactly FFNO_TILE, ragged tail)
+            # took validate_strict's permutation drift from 0.0 to 7.6e-5 fp16 and 1.4e-4 through
+            # the CUDA graph, past the 1e-4 limit, on a package that must be permutation-invariant
+            # by contract. Splitting into `n` EQUAL tiles keeps one kernel shape for the whole
+            # batch, so the result is position-independent again, and it wastes nothing -- unlike
+            # padding the tail, which CLAUDE.md rules out for exactly the kernel-selection reason
+            # that causes the drift. When b does not divide evenly the stage runs untiled, which
+            # is the path that was always exact.
+            n = -(-b // t)
+            if b % n == 0:
+                q = b // n
+                return torch.cat([self._spectral_dense_rows(x[i:i + q])
+                                  for i in range(0, b, q)], 0)
+        return self._spectral_dense_rows(x)
+
+    def _spectral_dense_rows(self, x):
         b, _, h, w = x.shape
         k, my, mx, ci, co = self.k, self.my, self.mx, self.ci, self.co
         key = (x.device, h, w)
