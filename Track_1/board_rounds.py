@@ -135,6 +135,24 @@ ROUNDS = [
     #   to the eval GPU. RULE: a local latency cut measured on kernels UNLIKE the anchor's does not
     #   transfer, and LOC_SLOPE / PREC_SLOPE hold only WITHIN a kernel family.
     ("R26 p1swin4 swinx4+ViT2/2inv", "2026-09-16", 0, 94.747724, 78.667443, 94.173298, 91.528039, 41.995785, 81.218444),
+    # R27 = R25's ARCHIVE WITH `GRAPH = True`, nothing else: predict()'s device-side chunk replays
+    # from a CUDA graph captured at import and verified bit-exact against eager, and the band's `base`
+    # is scaled by 1 + GRAPH_FP (1e-4) on the graph path so the run leaves a fingerprint. Archive
+    # `track1_r26_xfam6fp16graph_a060.zip` (md5 4f83127266...), staged 09-14. Submission id not reported.
+    #   THE FINGERPRINT SAYS THE GRAPH RAN. rel, tke and mvpe came back BIT-IDENTICAL to R25 to six
+    #   decimals, and sps moved +8.2e-05 (41.867687 -> 41.867769): not identical, so the capture did not
+    #   fall back to eager. The predicted sign was -1.35e-04 at the LOCAL 1.36 error stretch; the board's
+    #   own tail gives the derivative the other sign. The MAGNITUDE (~1e-4) is what identifies the path.
+    #   AND THE GRAPH MADE IT SLOWER. 5.076 -> 5.641 board ms, +0.565, where the estimate of record
+    #   (81.428, bracket 81.37-81.52) assumed one invocation's launch overhead came OFF (-1.151 ms,
+    #   R23). +0.565 is outside Track 1's 0.03-0.30 ms same-shape drift in the wrong direction, so
+    #   either the eval GPU charges the capture/replay path more than the launches it removes, or the
+    #   day's drift is larger than anything recorded. Net -0.037 against R25, ALL of it `time`.
+    #   THE TRACK-1 GRAPH IS CLOSED. With R26's Swin step (+1.17 where -1.245 was predicted) and R25's
+    #   fp16 (37 % of the local cut), this is the THIRD consecutive local latency read that did not
+    #   transfer to the board -- and the first one on the SAME kernels as its anchor, which is what
+    #   makes it the strongest of the three: host-side launch accounting does not transfer either.
+    ("R27 xfam6fp16 GRAPH/2inv", "2026-09-17", 0, 94.861790, 78.793380, 94.347508, 91.914674, 41.867769, 81.307815),
 ]
 
 UNSCORED = []   # every round on both tracks now has full subscores
@@ -255,6 +273,27 @@ ROUNDS_T2 = [
     #   MVPE IS THE EXCEPTION: -0.161 here and -0.174 on Swin the same day, the only metric to fall on
     #   BOTH tracks. FNO holds mvpe better than either new family.
     ("T2R13 p2ffnoL8 ffnox4+ViT2/2inv", "2026-09-16", 0, 94.890753, 78.781089, 94.063576, 91.638537, 42.063113, 81.314785),
+    # T2R14 = P2-L4: T2R13 with ONE lever, DEPTH. Four all-data F-FNO w40 **L4** members fused by
+    # StackedFFNO on the dense path + T2R13's two ViTs, band refit from the held-out L4 twins, ALPHA
+    # 0.60, fp16 / bmm / dense, 2 invocations. Archive `track2_r30_p2ffnoL4_a060.zip` (md5 38c15783...,
+    # build job 7332924). Submission id not reported. Estimate of record 81.371, bracket 81.34-81.41.
+    #   IT LANDED AT 81.308, BELOW ITS OWN BRACKET, for -0.006 against T2R13: rel +0.024, tke -0.030,
+    #   mvpe +0.073, `time` +0.473, sps -0.273.
+    #   1. DEPTH IS A WASH ON THE THREE ERRORS, exactly as the L8->L4 screen said it would be. The
+    #      predicted tke cost (-0.166) came in at -0.030, rel rose 0.024 and mvpe 0.073. Halving the
+    #      cost of the stack costs nothing measurable in rms error.
+    #   2. THE SLOT WAS LOST IN CONTAINMENT. With the a-factor computed from the three actual errors
+    #      (a = 0.5g(rel) + 0.3g(tke) + 0.2g(mvpe), g(m) = 0.5/(0.5+m)), the FORCED part of sps is
+    #      +0.038; the board returned -0.273, so CONTAINMENT FELL -0.310. The L4 sigma head is worse
+    #      calibrated than L8's, and NO local instrument reads containment across depth -- the band is
+    #      refit per package, and every refit scores well on its own twins.
+    #   3. THE 0.937 SLOPE WAS A HIGH DRAW. The interleaved build read -0.738 A100 ms/step (2.6325 vs
+    #      P2-L8's 3.3707) = -1.366 4060-eq; the board saved 0.723 ms (6.069 -> 5.346), i.e. **0.529
+    #      board ms per 4060-eq ms**. Predicted `time` was 92.502 at 0.937 and 92.178 at the old 0.60;
+    #      the actual 92.112 is below BOTH. See LOC_SLOPE_T2 -- it is now the mean of the two reads.
+    #   VERDICT: F-FNO DEPTH IS CLOSED ON THE BOARD TOO. L8 stays the Track-2 package and T2R13
+    #   (81.314785) remains the Track-2 best; L4 buys latency and hands it straight back in containment.
+    ("T2R14 p2ffnoL4 ffnoL4x4+ViT2/2inv", "2026-09-17", 0, 94.914425, 78.750833, 94.136582, 92.111693, 41.790524, 81.308359),
 ]
 
 # The fit pools both tracks -- see the module docstring.  ROUNDS first, then ROUNDS_T2;
@@ -366,12 +405,16 @@ def invocation_cost(anchor_time_score: float, n: int = 1, track: int = 1) -> tup
 # At R21's operating point, +0.1 A100 ms/window of local compute is ~ -0.023 `final` on Track 1,
 # and a board ms saved is ~ +0.072.
 LOC_SLOPE_T1 = 1.75     # board ms per 4060-equivalent local ms, Track 1 (R16->R17 1.76, R21->R24 1.74)
-# Track 2's FLOPs slope, RE-MEASURED 2026-09-16 on T2R12 -> T2R13 (P2-L8): the step fell 0.573 A100
-# ms/step (-1.060 4060-eq) and the board saved 0.992 ms, i.e. 0.937 board ms per 4060-eq ms.
-# THE PREVIOUS VALUE, 0.60 (T2R9 -> T2R11, 09-10 -> 09-12), is kept here deliberately. Both are ONE
-# reading, and this one is CROSS-DATE (09-13 against 09-16) on a machine that drifts by date, so if
-# the next Track-2 FLOPs pair reads ~0.60 again, that is machine drift and not a slope change.
-LOC_SLOPE_T2 = 0.937    # was 0.60 until 2026-09-16
+# Track 2's FLOPs slope, THREE READINGS, all single cross-date pairs on a machine that drifts by date:
+#   T2R9  -> T2R11  (09-10 -> 09-12)  +1.234 A100 ms/step  -> +1.373 board ms   = 0.60
+#   T2R12 -> T2R13  (09-13 -> 09-16)  -0.573 A100 ms/step  -> -0.992 board ms   = 0.937
+#   T2R13 -> T2R14  (09-16 -> 09-17)  -0.738 A100 ms/step  -> -0.723 board ms   = 0.529
+# The 2026-09-16 handoff asked the next pair whether 0.937 was a slope or a draw; T2R14 answered
+# **a high draw**, and it is the cleanest of the three (one day apart, same kernels, same member
+# count, depth the only lever). The shipped constant is the MEAN OF THE TWO MOST RECENT READS,
+# (0.937 + 0.529) / 2 = 0.733; the three-read mean is 0.689, and any Track-2 latency lever should be
+# bracketed with 0.53 and 0.94 rather than priced at a point.
+LOC_SLOPE_T2 = 0.733    # 0.60 until 09-16, 0.937 until 09-17; now mean(0.937, 0.529)
 
 # ROUND 25: A PRECISION CUT IS NOT CHARGED LIKE A FLOPs CUT (2026-09-14). R25 is R24's archive with
 # fp16 autocast baked in, and its error subscores moved by <= 3e-4 (the fingerprint that fp16 ran),

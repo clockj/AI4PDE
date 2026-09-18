@@ -125,10 +125,13 @@ LAT_INV = LAT_INV_T1                 # back-compat default; pass track=2 to lat_
 # same-day FLOPs pair (R16 -> R17, 1.76); Track 2 reads 0.60 on one noisier reading. The 0.336
 # above was refit ACROSS days, and Track 1's R17 -> R18 "0.25" was a host-write change -- host
 # work is cheap on the board, GPU compute is not.
-# LAT_LOC_T2 was 0.60 (T2R9 -> T2R11) until 2026-09-16, when T2R12 -> T2R13 (P2-L8) read 0.937:
-# -0.573 A100 ms/step = -1.060 4060-eq bought -0.992 board ms. One reading, and CROSS-DATE (09-13 vs
-# 09-16) on a machine that drifts by date -- see board_rounds.LOC_SLOPE_T2 for which is which.
-LAT_LOC_T1, LAT_LOC_T2 = 1.75, 0.937
+# LAT_LOC_T2 HAS THREE READINGS AND IS NOW THE MEAN OF THE TWO MOST RECENT (2026-09-17):
+#   T2R9 -> T2R11 0.60 | T2R12 -> T2R13 0.937 | T2R13 -> T2R14 (P2-L4) 0.529, the cleanest of the
+#   three (one day apart, same kernels, depth the only lever: -0.738 A100 ms/step = -1.366 4060-eq
+#   bought -0.723 board ms). T2R14's `time` came in BELOW the old 0.60 prediction, so 0.937 was a
+#   HIGH DRAW, not a slope change. Shipped: (0.937 + 0.529)/2 = 0.733; bracket any Track-2 latency
+#   lever with 0.53 and 0.94 instead of trusting the point. See board_rounds.LOC_SLOPE_T2.
+LAT_LOC_T1, LAT_LOC_T2 = 1.75, 0.733
 LAT_LOC = LAT_LOC_T1
 
 
@@ -261,6 +264,19 @@ ANCHORS = {
                 sps=41.995785, final=81.218444),
     "t2r13": dict(rel_l2=94.890753, tke=78.781089, mvpe=94.063576, time=91.638537,
                   sps=42.063113, final=81.314785),
+    # ROUND 27 / T2R14, 2026-09-17 -- both slots lost, and NEITHER is the anchor to use.
+    # `r27` is R25's archive with the CUDA graph on: errors BIT-IDENTICAL to R25, sps +8.2e-05 (the
+    # GRAPH_FP fingerprint, so the graph ran) and `time` 91.915 for 5.641 board ms against R25's
+    # 5.076 -- the graph made the package SLOWER. It exists here only to price the graph path; anchor
+    # every Track-1 candidate on **`r25`**, which is still Track 1's best and its accuracy reference.
+    # `t2r14` is P2-L4 (F-FNO w40 L4 x4 dense + ViT x2), T2R13 with depth as the only lever: the three
+    # errors are a wash (rel +0.024, tke -0.030, mvpe +0.073) and the -0.273 sps is CONTAINMENT
+    # (-0.310 after the +0.038 forced by the errors), so L8 stays. Anchor Track-2 work on **`t2r13`**;
+    # use `t2r14` only to price L4's latency (board step 5.346 ms at 2 invocations) or its containment.
+    "r27": dict(rel_l2=94.861790, tke=78.793380, mvpe=94.347508, time=91.914674,
+                sps=41.867769, final=81.307815),
+    "t2r14": dict(rel_l2=94.914425, tke=78.750833, mvpe=94.136582, time=92.111693,
+                  sps=41.790524, final=81.308359),
     "r10": R10,
 }
 
