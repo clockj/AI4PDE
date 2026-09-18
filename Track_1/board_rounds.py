@@ -454,6 +454,14 @@ LOC_SLOPE_T1 = 1.75     # board ms per 4060-equivalent local ms, Track 1 (R16->R
 # is that a cross-family Track-1 estimate belongs in a bracket [0, 1.75] with 0.89 as its only anchor.
 # One reading, and the eval machine ran fast on both boards that day (T2R15 came in under T2R8's floor).
 LOC_SLOPE_T1_XFAM = 0.89
+# AND THE TWO LOCAL INSTRUMENTS DISAGREE WITH EACH OTHER, not just with the board (rp_latCs, 09-18).
+# The SAME pair, R28's stack against R25's, reads +0.797 board ms at the KERNEL level (verify/fuse_ffno
+# §7, the fused stacks timed on their own) and only **+0.164** at the PACKAGE level (rp_latCs, whole
+# `predict()` interleaved in one process). The board delivered **+0.404**, between them. So the kernel
+# read is 2.0x heavy, the package read is 2.5x light, and NEITHER instrument alone is trustworthy for a
+# cross-family prediction -- quote both ends as the bracket and expect the board in the middle. (The
+# gap is real work the kernel timer does not see and the package timer amortizes: normalization, the
+# compose step, the band and the host write are common to both packages and dilute the stack's share.)
 # Track 2's FLOPs slope, FOUR READINGS, all single cross-date pairs on a machine that drifts by date:
 #   T2R9  -> T2R11  (09-10 -> 09-12)  +1.234 A100 ms/step  -> +1.373 board ms   = 0.60
 #   T2R12 -> T2R13  (09-13 -> 09-16)  -0.573 A100 ms/step  -> -0.992 board ms   = 0.937

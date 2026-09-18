@@ -1397,6 +1397,18 @@ implement self-normalization but measured it on a split blind to what it is for;
 
 ## Part 4 — Where things are
 
+### Build and gate a package — the detail moved out of `CLAUDE.md` 2026-09-19
+
+* **Gates:** `submit_fno/validate_strict.py` (inside the build: clean extract, extract dir off
+  `sys.path`, eval-image packages blocked, contract, permutation invariance, the kit scorer,
+  end-to-end timing; GPU) · `Track_2/validate_t2.py` (contract, isolation, no aliasing,
+  statelessness, bound consistency) · `verify/cpu_smoke_submission.py` (login node) ·
+  `verify/pkg_identity.py` (two archives, same arrays — give it the one uploaded) ·
+  `verify/amp_path.py` · `verify/fuse_vit.py`.
+* **Provenance:** scored bands in `Track_1/bands/` (+ `MANIFEST.md`), unscored ones in
+  `../sub_candidates/`, every uploaded archive byte for byte in `submitted/`.
+
+
 ### Evaluation containers (moved verbatim from `CLAUDE.md` 2026-09-17) — nothing is installed at eval time
 
 * Track 1, `pytorch/pytorch:2.2.2-cuda12.1-cudnn8-runtime`: no `scipy`, `h5py`, `matplotlib`,
