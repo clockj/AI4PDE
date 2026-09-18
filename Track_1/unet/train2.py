@@ -15,6 +15,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
+import sys
 import time
 
 import numpy as np
@@ -23,6 +25,34 @@ import torch
 from model import (C, H, HIST_CH, NORM_STATS, PHASES_ALL, T_IN, T_OUT, UNetTwoHead, VAL_TRAJ, W,
                    compose, from_ch, history_stats, load_trajectories, norm_history, rel_l2,
                    self_norm, std_t, tke, to_ch, trajectory_names, window_index, window_scale)
+
+
+def _git_rev() -> str:
+    """`<short hash>` of the tree that is about to train, `-dirty` when it has uncommitted edits.
+
+    The organizers re-train every shortlisted method from scratch, and REPRODUCE.md 6.7 found that
+    no checkpoint records the code that produced it -- `arch_vit_d384.pth`'s config is missing seven
+    keys today's argparse has, which is how we know the schema drifted under us. The hash is read
+    ONCE, at startup, because that is the code this run imported; a commit made while a 6-hour job
+    runs must not be credited with its weights. `-dirty` is not a footnote: most arms in this
+    project trained against an uncommitted tree, and a hash that hides that would be worse than no
+    hash at all. Never fatal -- a missing git, a tarball with no .git, a detached worktree all just
+    give "unknown".
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    try:
+        rev = subprocess.run(["git", "-C", here, "rev-parse", "--short", "HEAD"],
+                             capture_output=True, text=True, timeout=10)
+        if rev.returncode != 0:
+            return "unknown"
+        dirty = subprocess.run(["git", "-C", here, "status", "--porcelain", "--untracked-files=no"],
+                               capture_output=True, text=True, timeout=10)
+        return rev.stdout.strip() + ("-dirty" if dirty.stdout.strip() else "")
+    except Exception:
+        return "unknown"
+
+
+GIT_REV = _git_rev()
 
 # The scorer's wake probes on the 32x64 grid, derived in scoring.mvpe_rel_l2_per_sample from
 # d=16, center=(10, 32), n_probe=9, sub_s=2. Hard-coded because the geometry is fixed for the
@@ -781,6 +811,7 @@ def main() -> None:
         print(f"--aoa-boost {args.aoa_boost} on AoA {args.aoa_hi}: "
               f"{int(is_hi.sum())}/{len(idx)} windows -> "
               f"{float(w_samp[is_hi].sum() / w_samp.sum()):.1%} of draws", flush=True)
+    print(f"git: {GIT_REV}", flush=True)
     print(f"config: {vars(args)}", flush=True)
 
     # Trajectories stay on the CPU (~1 GB); windows are sliced per batch. Materializing them
@@ -1450,7 +1481,13 @@ def main() -> None:
                 "ctx": args.ctx, "arch": args.arch, "modes_y": args.modes_y,
                 "modes_x": args.modes_x, "n_layers": args.n_layers, "p": args.p,
                 "self_norm": self_norm_mode, "norm": args.norm,
-                "mean": stats[0], "std": stats[1], "config": vars(args)}, args.out)
+                "mean": stats[0], "std": stats[1],
+                # PROVENANCE (REPRODUCE.md 6.7). `config` is a COPY of vars(args) plus the two
+                # things the flags alone do not say: which commit's train2.py/models_alt.py/model.py
+                # produced these weights, and the exact command line -- including any flag whose
+                # DEFAULT later changes, which is the failure `arch_vit_d384.pth` already shows.
+                "config": {**vars(args), "git": GIT_REV, "train2_argv": " ".join(sys.argv)}},
+               args.out)
     print(f"saved {args.out}", flush=True)
 
 

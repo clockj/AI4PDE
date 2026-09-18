@@ -109,11 +109,8 @@ build_t1() {
 }
 build_t2() {
   echo "== band + build, Track 2 (T2R13 P2-L8) =="
-  # FFNO_PATH must be baked dense on BOTH tracks first. build_round13.sh does NOT do this --
-  # REPRODUCE.md 6.4. The script that did it is not in the repo; until it is, edit the two
-  # submission.py files by hand and check the value back out of the archive.
-  grep -H '^FFNO_PATH' Track_1/submit_fno/submission.py Track_2/submit/submission.py || true
-  echo "  ^ both must read FFNO_PATH = \"dense\" before this build (REPRODUCE.md 6.4)"
+  # FFNO_PATH is baked by the build itself since 09-18 (RPDE_FFNO_PATH below, REPRODUCE.md 6.4
+  # CLOSED): submit_fno/bake_ffno_path.py writes the same block T2R13 shipped, byte for byte.
   local A="$U/ffno_all_w40l8_s1.pth $U/ffno_all_w40l8_s2.pth $U/ffno_all_w40l8_s3.pth \
            $U/ffno_all_w40l8_s4.pth $U/arch_vit_all_s1.pth $U/arch_vit_all_cmb3sim_s3.pth"
   local M="$P2/p2_ffno_l8_s1.pth $P2/p2_ffno_l8_s2.pth $P2/p2_ffno_l8_s3.pth \
@@ -121,8 +118,23 @@ build_t2() {
   RPDE_FORCE=1 RPDE_A="$A" RPDE_M="$M" \
     ${RPDE_BAND_T2:+RPDE_BAND="$RPDE_BAND_T2"} \
     RPDE_INT8=1 RPDE_LINEAR=tensor RPDE_SHIP_AMP='"fp16"' RPDE_SPEC_PATH=bmm \
-    RPDE_HOST_WRITE=torch RPDE_TAG="r27_p2ffno4_a060" \
+    RPDE_HOST_WRITE=torch RPDE_FFNO_PATH=dense RPDE_TAG="r27_p2ffno4_a060" \
     bash Track_1/submit_fno/build_round13.sh 0.60
+}
+
+# ---------------------------------------------------------------------------------------------
+# OPTIONAL: the distilled single-model student (STUDENT=1; OFF by default).
+# Not a package of record -- no student has scored -- but a two-stage recipe is exactly the kind
+# of method the re-training step cannot reproduce from one train2.py line, so its driver lives
+# here beside the others rather than in a handoff. It reuses the teachers this script just
+# trained (stage 1 of the pipeline skips whatever is already present), labels every training
+# window with them, and trains one model against those labels: ~6 GPU-h on top of `both`.
+#   STUDENT=1 RPDE_REPRODUCE_GO=1 bash reproduce.sh both
+student() {
+  echo "== distilled student (heldout = the evidence pipeline; pass STUDENT_MODE=alldata to ship) =="
+  bash Track_1/unet/distill_pipeline.sh \
+      "${STUDENT_OUT:-/fs/scratch/PAS1187/qwu/tmp/realpde/distill/reproduce}" \
+      "${STUDENT_MODE:-heldout}"
 }
 
 case "$WHICH" in
@@ -131,6 +143,7 @@ case "$WHICH" in
   both) twins_t1; twins_t2;  members_t1; members_t2; build_t1; build_t2 ;;
   *) echo "usage: $0 [t1|t2|both]"; exit 2 ;;
 esac
+[ "${STUDENT:-0}" = "1" ] && student
 
 echo
 echo "DONE. Acceptance is a SCORE test, not a checksum (REPRODUCE.md section 7): the strict gates"

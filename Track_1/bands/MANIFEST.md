@@ -91,6 +91,28 @@ all-data F-FNO w40 L8 members plus the two ViTs. **T2R13 is the Track-2 best (81
 F-FNO family moved containment. A future Track-2 band is refit with its member set, never this one
 reused.
 
+**The two pins T2R13 shipped with, recorded here because they lived only on scratch**
+(`$SCRATCH/pkg_ffno/P2_ALPHA` and `P2_FNO_MD5`, REPRODUCE.md 6.5; scratch is purgeable, and a
+package of record whose constants are only on scratch cannot be re-verified):
+
+| | value | why it is a pin, not a note |
+|---|---|---|
+| `ALPHA` | **0.60** | it is a build ARGUMENT (`build_round13.sh 0.60`), not a default -- the script's own default is 0.90 -- and the band is only valid at the ALPHA it was fitted at |
+| `_fno.py` | **`73c83f572c477b8aaa17566f168f72b7`** | the gated inference module the archive carries; the build jobs refuse unless the tree's `_fno.py` matches it |
+
+Both were re-read from the uploaded archive on 09-18, not from the scratch files: unzipping
+`track2_r27_p2ffno4_a060.zip` gives `_fno.py` md5 `73c83f57…` and a `submission.py` carrying
+`ALPHA = 0.60`, `AMP = "fp16"`, `SPEC_PATH = "bmm"`, `FFNO_PATH = "dense"`. The repo's current
+`Track_1/submit_fno/_fno.py` still has that md5.
+
+**The Track-1 twin of this package, `track1_r31_p2ffnoL8_a060.zip`** (staged 09-18, zip md5
+`467a7bad22330bbf56228b3c435bc24b`, 30.28 MB), carries **the same band, byte for byte**, and the
+same two pins: `ALPHA = 0.60` and `_fno.py` `73c83f572c477b8aaa17566f168f72b7`, with `AMP = "fp16"`,
+`SPEC_PATH = "bmm"`, `FFNO_PATH = "dense"`, `HOST_WRITE = "torch"`, `GRAPH = False`,
+`BLEND_BETA = 0.0` and int8 `--linear tensor` packing. Its members are the same four all-data F-FNO
+w40 L8 plus R25's two ViTs, so **it and T2R13 differ only in the track they are built for** -- which
+is what makes the Track-2 board's accuracy and containment deltas transferable to Track 1.
+
 `t2r14_p2ffnoL4x4.npz` (promoted 2026-09-17) was fitted inside build job 7332924 on the held-out
 F-FNO **L4** twins `p2_ffno_l4_s1..s3` plus `arch_vit_d384` and `arch_vit_cmb3sim`, at ALPHA 0.60 and
 `--band-p 0.45`, for P2-L4's four all-data F-FNO w40 L4 members plus the same two ViTs. It shipped in

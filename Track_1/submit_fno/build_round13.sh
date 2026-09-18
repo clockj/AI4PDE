@@ -116,6 +116,21 @@ sed -i "s/^HOST_WRITE = .*/HOST_WRITE = \"$HOSTW\"/" Track_1/submit_fno/submissi
 grep -H "^SPEC_PATH = \|^HOST_WRITE = " \
     Track_1/submit_fno/submission.py Track_2/submit/submission.py
 
+# FFNO_PATH -- the F-FNO members' spectral path -- is the one constant T2R13 shipped that this
+# script could not produce: it was baked by a scratch-only helper, so the Track-2 record could not
+# be rebuilt from the repository alone (REPRODUCE.md section 6, scout's audit). It is now
+# `submit_fno/bake_ffno_path.py`, called from here like every other baked constant.
+#   RPDE_FFNO_PATH=dense          both tracks
+#   RPDE_FFNO_PATH="dense fft"    Track 1 dense, Track 2 fft
+# UNSET leaves both submission.py files untouched, so every build that has no F-FNO members is
+# byte-for-byte the build it was before this block existed. Callers restore the files the same way
+# they restore ALPHA / AMP / SPEC_PATH: `git checkout` on the two submission.py.
+if [ -n "${RPDE_FFNO_PATH:-}" ]; then
+  read -r _FP1 _FP2 <<< "$RPDE_FFNO_PATH"
+  $PY Track_1/submit_fno/bake_ffno_path.py --t1 "$_FP1" --t2 "${_FP2:-$_FP1}"
+  grep -H "^FFNO_PATH = " Track_1/submit_fno/submission.py Track_2/submit/submission.py
+fi
+
 # RPDE_FP16=1 stores the members' weights as float16. A width-24 package does not need it
 # (8 members = 32 MB); a width-96 one does -- 8 x 57.0 MB is 456 MB against a 256 MB cap, and
 # 8 x 28.5 MB is 228 MB. Measured cost: rel-L2 of the difference 5.5e-4 against a model rel-L2

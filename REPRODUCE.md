@@ -176,12 +176,11 @@ RPDE_FORCE=1 RPDE_A="$A" RPDE_M="$M" RPDE_BAND=Track_1/bands/r24_xfam6.npz \
 (`RPDE_BAND` unset), plus one step the script does not do:
 
 ```bash
-$PY $SCRATCH/jobs/patch_ffno_path.py --t1 dense --t2 dense      # bakes FFNO_PATH -- NOT IN THE REPO
 A="$U/ffno_all_w40l8_s1.pth … _s4.pth $U/arch_vit_all_s1.pth $U/arch_vit_all_cmb3sim_s3.pth"
 M="$P2/p2_ffno_l8_s1.pth $P2/p2_ffno_l8_s2.pth $P2/p2_ffno_l8_s3.pth \
    $U/arch_vit_d384.pth $U/arch_vit_cmb3sim.pth"
 RPDE_FORCE=1 RPDE_A="$A" RPDE_M="$M" RPDE_INT8=1 RPDE_LINEAR=tensor \
-  RPDE_SHIP_AMP='"fp16"' RPDE_SPEC_PATH=bmm RPDE_HOST_WRITE=torch \
+  RPDE_SHIP_AMP='"fp16"' RPDE_SPEC_PATH=bmm RPDE_HOST_WRITE=torch RPDE_FFNO_PATH=dense \
   RPDE_TAG="r27_p2ffno4_a060" bash Track_1/submit_fno/build_round13.sh 0.60
 ```
 
@@ -223,10 +222,10 @@ training set in host memory, so the node needs the full 12-core allocation.
 | 6.1 | **All 15 shipped checkpoints exist only as untracked `.pth` under `Track_1/unet/`** (`.gitignore` line 2). They were produced by one-off sbatch jobs on scratch, none of which is in the repo. | `reproduce.sh` (this commit) is the first end-to-end driver. It needs one real run to become evidence. |
 | 6.2 | **T2R13's three band twins `p2_ffno_l8_s{1,2,3}.pth` are only on `/fs/scratch/.../screen/p2/`** — not in the repo, not in any uploaded archive, and scratch is purgeable. Losing them loses the ability to refit that band. | `cp` them into `Track_1/unet/` (3 × 5.0 MB) today; or re-train, 5.5 GPU-h. |
 | 6.3 | **The band is not bit-reproducible** and a refit with a different twin set moves whole populations of elements (R9→R10 was +1.410 `sps`). | Already mitigated: scored bands are committed in `Track_1/bands/` and reproduction reuses them via `RPDE_BAND`. Keep it that way and never refit a package of record. |
-| 6.4 | **`FFNO_PATH` (dense / fft) is baked by `$SCRATCH/jobs/patch_ffno_path.py`**, which is not in the repo and is not called by `build_round13.sh`. T2R13 cannot be rebuilt without it. | Move the patch into `build_round13.sh` behind `RPDE_FFNO_PATH`, or commit the script. ~1 h, forge owns those files. |
-| 6.5 | **T2R13's `ALPHA` was read from `$SCRATCH/pkg_ffno/P2_ALPHA` and `_fno.py` was pinned by `$SCRATCH/pkg_ffno/P2_FNO_MD5`.** Both are scratch files; neither value is recorded in the repo next to the package. | Record ALPHA and the `_fno.py` md5 in `Track_1/bands/MANIFEST.md` beside each band. |
+| 6.4 | ~~**`FFNO_PATH` (dense / fft) is baked by `$SCRATCH/jobs/patch_ffno_path.py`**, which is not in the repo and is not called by `build_round13.sh`. T2R13 cannot be rebuilt without it.~~ | **CLOSED 09-18 (forge).** The helper is now `Track_1/submit_fno/bake_ffno_path.py` and `build_round13.sh` calls it behind **`RPDE_FFNO_PATH`** (unset = both `submission.py` untouched, so every non-F-FNO build is byte-for-byte what it was). Verified against the uploaded T2R13 archive: the block the repo now writes is **byte-identical** to the one it shipped. The scratch copy is deleted and the four `rp_pkg_*` job scripts point at the repo path. |
+| 6.5 | ~~**T2R13's `ALPHA` was read from `$SCRATCH/pkg_ffno/P2_ALPHA` and `_fno.py` was pinned by `$SCRATCH/pkg_ffno/P2_FNO_MD5`.** Both are scratch files; neither value is recorded in the repo next to the package.~~ | **CLOSED 09-18 (forge).** `ALPHA = 0.60` and `_fno.py` md5 `73c83f572c477b8aaa17566f168f72b7` are recorded in `Track_1/bands/MANIFEST.md` under the `t2r13` band, together with the same two pins for the staged Track-1 twin `track1_r31_p2ffnoL8_a060.zip`. Both were re-read **out of the uploaded archive**, not copied from the scratch files. |
 | 6.6 | **`build_round13.sh` `sed`s constants into `submission.py` and leaves them.** The committed `submission.py` reflects whichever build ran last, not any package of record; `git diff` on it is the only guard, and `rp_pkg_p2ffno.sbatch` checks it explicitly. | Print the full baked-constant set into the archive and assert it after the build; or have the script restore the tree itself, as the jobs currently do by hand. |
-| 6.7 | **No checkpoint records the `train2.py` commit that produced it.** `arch_vit_d384`'s config proves the schema has drifted. | Write `git rev-parse HEAD` into `config["git"]` at save time (forge owns `train2.py`). Until then, pin a single commit for the whole re-train. |
+| 6.7 | ~~**No checkpoint records the `train2.py` commit that produced it.** `arch_vit_d384`'s config proves the schema has drifted.~~ | **CLOSED 09-18 (forge)** for everything trained from now on: `train2.py` reads the short hash ONCE at startup (`GIT_REV`, `-dirty` when the tree has uncommitted edits, `unknown` when git is unavailable) and writes `config["git"]` and `config["train2_argv"]` -- the exact command line, which pins every flag whose DEFAULT may later move. It is also printed as a `git:` line at startup, so a running log carries it. **The 15 existing checkpoints keep no hash**, so a re-train of those still has to pin one commit by hand. |
 | 6.8 | **The archives, the staging README and the handoffs live outside the git tree** (`../sub_candidates/`, `../handoffs/`); the sim-map cache and `val_*.npz` are derived caches on scratch, and nothing asserts a rebuilt cache matches the one a checkpoint saw. | State the first in the fact sheet. For the second, the cache key covers `(phases, frames, mode)`; add `stride` and a data md5 if it ever matters. |
 
 ---
