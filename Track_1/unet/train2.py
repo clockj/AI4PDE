@@ -558,6 +558,28 @@ def main() -> None:
                          "split holds out 8 trajectories drawn from the INTERIOR of the Re "
                          "range, so it cannot see Re-extrapolation behaviour -- and the hidden "
                          "test set is at unseen Re. Pass a Re-extreme split to measure that.")
+    ap.add_argument("--ckpt-every", type=int, default=0,
+                    help="Write a RESUMABLE checkpoint every N epochs, next to --out as "
+                         "'<out>.resume.pt'. 0 (the default) writes nothing, so every run that "
+                         "does not ask for it is untouched. This exists for preemptible queues: "
+                         "a 6-hour student that is preempted at hour 5 and has to start over is "
+                         "worse than useless, because it also burns the slot. The file carries "
+                         "the model, the optimizer, the OneCycleLR schedule, the epoch counter, "
+                         "the SWA accumulator and the CPU / CUDA / numpy RNG states -- "
+                         "everything needed for the next epoch to be the epoch that would have "
+                         "run.")
+    ap.add_argument("--resume", action="store_true",
+                    help="Continue from '<out>.resume.pt' if it exists; a NO-OP when it does "
+                         "not, so the same command line works for the first launch and every "
+                         "requeue after it. Refuses when the saved run used a different epoch "
+                         "budget, because OneCycleLR's schedule is a function of --epochs and "
+                         "resuming into a different one would silently change the LR curve.")
+    ap.add_argument("--max-epoch", type=int, default=-1,
+                    help="Stop cleanly after this many epochs, writing the resume checkpoint "
+                         "first. Its point is a wall-clock limit that is shorter than the run: "
+                         "with --ckpt-every it turns one long job into a chain of short ones "
+                         "that backfill. It is also how the resume path is TESTED, since a "
+                         "partial run and its continuation must share the same --epochs.")
     ap.add_argument("--teacher", default="",
                     help="DISTILLATION. A directory written by distill_labels.py: the member-"
                          "averaged field and sigma of a TEACHER ENSEMBLE, in normalized space, "
@@ -1004,8 +1026,57 @@ def main() -> None:
         return xs.to(dev, non_blocking=True), ys.to(dev, non_blocking=True), cs
 
     swa_state, swa_n = None, 0
+    # ---- RESUME -------------------------------------------------------------------------------
+    # Everything that makes epoch N+1 deterministic: the weights, the optimizer moments, the
+    # OneCycleLR step count, the SWA accumulator, and the three RNG streams this file draws from
+    # (torch CPU for randperm / randint / the sim and aux draws, torch CUDA for dropout and
+    # --mode-drop, numpy for anything seeded at startup). Saved at an EPOCH BOUNDARY, where the
+    # only live state is these; nothing inside an epoch needs to be reconstructed.
+    RESUME = (args.out + ".resume.pt") if args.ckpt_every or args.resume else None
+    start_ep, elapsed0 = 0, 0.0
+    if args.resume and RESUME and os.path.exists(RESUME):
+        # map_location="cpu", not `dev`: the RNG states are CPU ByteTensors and
+        # torch.set_rng_state refuses a CUDA one. load_state_dict copies into the model's own
+        # (CUDA) parameters regardless, and the optimizer moves its state to each param's device.
+        ck = torch.load(RESUME, map_location="cpu")
+        if int(ck["epochs"]) != int(args.epochs):
+            raise SystemExit(f"--resume: {RESUME} was written by a run with --epochs "
+                             f"{ck['epochs']}, this one asks for {args.epochs}. OneCycleLR's "
+                             f"schedule is a function of --epochs, so continuing would change "
+                             f"the LR curve mid-run. Delete the file or match the budget.")
+        model.load_state_dict(ck["model"])
+        opt.load_state_dict(ck["opt"])
+        sched.load_state_dict(ck["sched"])
+        swa_state = ({k: v.to(dev) for k, v in ck["swa_state"].items()}
+                     if ck.get("swa_state") is not None else None)
+        swa_n = int(ck.get("swa_n", 0))
+        torch.set_rng_state(ck["rng_cpu"].cpu().to(torch.uint8))
+        if ck.get("rng_cuda") is not None and torch.cuda.is_available():
+            torch.cuda.set_rng_state_all([t.cpu() for t in ck["rng_cuda"]])
+        np.random.set_state(ck["rng_np"])
+        start_ep, elapsed0 = int(ck["epoch"]), float(ck.get("elapsed", 0.0))
+        print(f"resume: {RESUME} -> epoch {start_ep}/{args.epochs}, "
+              f"{elapsed0:.0f}s already spent, sched step {sched.last_epoch}", flush=True)
+        if start_ep >= args.epochs:
+            print("resume: that run already finished; nothing to do", flush=True)
+    elif args.resume:
+        print(f"resume: no checkpoint at {RESUME}; starting from scratch", flush=True)
+
+    def save_resume(ep_done):
+        """Atomic, because a preemption during the write would otherwise poison the restart."""
+        tmp = RESUME + ".tmp"
+        torch.save({"model": model.state_dict(), "opt": opt.state_dict(),
+                    "sched": sched.state_dict(), "epoch": ep_done, "epochs": args.epochs,
+                    "swa_state": swa_state, "swa_n": swa_n,
+                    "rng_cpu": torch.get_rng_state(),
+                    "rng_cuda": (torch.cuda.get_rng_state_all()
+                                 if torch.cuda.is_available() else None),
+                    "rng_np": np.random.get_state(),
+                    "elapsed": elapsed0 + time.time() - t0}, tmp)
+        os.replace(tmp, RESUME)
+
     t0 = time.time()
-    for ep in range(args.epochs):
+    for ep in range(start_ep, args.epochs):
         model.train()
         # With --aoa-boost this draws with replacement, so an epoch is the same number of
         # steps over a differently-weighted pool rather than one pass over every window.
@@ -1440,7 +1511,18 @@ def main() -> None:
                   f"svar {a[8]:.5f}  sim {a[9]:.5f}  tail {a[10]:.5f}  "
                   f"aux {a[11]:.5f}  psim {a[12]:.5f}  cov {a[13]:.5f}  "
                   f"sub {a[14]:.5f}  kd {a[15]:.5f}  "
-                  f"({time.time()-t0:.0f}s)", flush=True)
+                  f"({elapsed0 + time.time() - t0:.0f}s)", flush=True)
+
+        if RESUME and args.ckpt_every and (ep + 1) % args.ckpt_every == 0:
+            save_resume(ep + 1)
+        if args.max_epoch >= 0 and ep + 1 >= args.max_epoch:
+            # A clean stop, not a crash: write the checkpoint and leave WITHOUT saving the final
+            # model, so nothing downstream mistakes a partial run for a finished one.
+            if RESUME:
+                save_resume(ep + 1)
+            print(f"--max-epoch {args.max_epoch}: stopping after epoch {ep}; resume state in "
+                  f"{RESUME}", flush=True)
+            return
 
     if swa_state is not None:
         print(f"SWA: averaged the last {swa_n} epochs", flush=True)

@@ -131,9 +131,11 @@ simreal's `exclude=`, which drops those **sim** trajectories from the pool entir
 neither (`excl` is empty); the twins pass both.
 
 The map is deterministic given `(sim_dir, real_dir, phases, frames, mode)` and cached to one `.npy`; `exclude`
-is applied **after** the cache is read, so one cache serves every split. Building it reads ~10 GB of HDF5. The
-scalar cache the shipped members used (`work/simmap_p1_f0.npy`) is **no longer on scratch** — only the
-`meanstd` variant survives — so a reproduction rebuilds it once (~10 min, CPU).
+is applied **after** the cache is read, so one cache serves every split. Building it reads ~10 GB of HDF5.
+Both caches the shipped members need are present on scratch: `work/simmap_p1_f0.npy` (all-data) and
+`work/simmap_p1_f0_x476193e300.npy` (the `model.VAL_TRAJ` twins; the `_x` tag is `sha1("
+".join(sorted(real_exclude)))[:10]`). They sit on purgeable scratch, and rebuilding either costs ~10 min of
+CPU.
 
 ---
 
@@ -226,7 +228,7 @@ training set in host memory, so the node needs the full 12-core allocation.
 | 6.5 | ~~**T2R13's `ALPHA` was read from `$SCRATCH/pkg_ffno/P2_ALPHA` and `_fno.py` was pinned by `$SCRATCH/pkg_ffno/P2_FNO_MD5`.** Both are scratch files; neither value is recorded in the repo next to the package.~~ | **CLOSED 09-18 (forge).** `ALPHA = 0.60` and `_fno.py` md5 `73c83f572c477b8aaa17566f168f72b7` are recorded in `Track_1/bands/MANIFEST.md` under the `t2r13` band, together with the same two pins for the staged Track-1 twin `track1_r31_p2ffnoL8_a060.zip`. Both were re-read **out of the uploaded archive**, not copied from the scratch files. |
 | 6.6 | **`build_round13.sh` `sed`s constants into `submission.py` and leaves them.** The committed `submission.py` reflects whichever build ran last, not any package of record; `git diff` on it is the only guard, and `rp_pkg_p2ffno.sbatch` checks it explicitly. | Print the full baked-constant set into the archive and assert it after the build; or have the script restore the tree itself, as the jobs currently do by hand. |
 | 6.7 | ~~**No checkpoint records the `train2.py` commit that produced it.** `arch_vit_d384`'s config proves the schema has drifted.~~ | **CLOSED 09-18 (forge)** for everything trained from now on: `train2.py` reads the short hash ONCE at startup (`GIT_REV`, `-dirty` when the tree has uncommitted edits, `unknown` when git is unavailable) and writes `config["git"]` and `config["train2_argv"]` -- the exact command line, which pins every flag whose DEFAULT may later move. It is also printed as a `git:` line at startup, so a running log carries it. **The 15 existing checkpoints keep no hash**, so a re-train of those still has to pin one commit by hand. |
-| 6.8 | **The archives, the staging README and the handoffs live outside the git tree** (`../sub_candidates/`, `../handoffs/`); the sim-map cache and `val_*.npz` are derived caches on scratch, and nothing asserts a rebuilt cache matches the one a checkpoint saw. | State the first in the fact sheet. For the second, the cache key covers `(phases, frames, mode)`; add `stride` and a data md5 if it ever matters. |
+| 6.8 | **The archives, the staging README and the handoffs live outside the git tree** (`../sub_candidates/`, `../handoffs/`); the sim-map caches and `val_*.npz` sit on purgeable scratch, and nothing asserts a rebuilt cache matches the one a checkpoint saw. | State the first in the fact sheet. The key covers `(phases, frames, mode, real_exclude)`; add `stride` and a data md5 if it matters. `/fs/scratch/.../realpde/README.md` says which two caches are live. |
 
 ---
 

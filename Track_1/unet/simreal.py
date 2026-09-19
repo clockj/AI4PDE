@@ -169,6 +169,7 @@ def load_sim_mapped(sim_dir: str, real_dir: str, exclude: list[str] | None = Non
         by_aoa.setdefault(aoa, []).append((re_, nm))
 
     out, names, n_law, clamped = [], [], 0, []
+    skipped: dict[int, list[str]] = {}
     for p in sorted(glob.glob(os.path.join(sim_dir, "*.h5"))):
         nm = os.path.basename(p)[:-3]
         if key is None and nm in excl:      # when caching, build every condition once
@@ -186,6 +187,19 @@ def load_sim_mapped(sim_dir: str, real_dir: str, exclude: list[str] | None = Non
             # and the mask from the nearest Reynolds number at this angle of attack. There is
             # no per-pixel field to copy either, so this condition keeps the SCALAR map in
             # every mode -- round 14's leak guard, unchanged.
+            if aoa not in by_aoa:
+                # NO REAL TWIN AT THIS ANGLE AT ALL. The freestream still comes from the law, but
+                # the MASK does not: it is copied from the nearest Reynolds number at the same
+                # AoA, and there is no such trajectory left. This happens exactly once -- in the
+                # AoA-holdout screen, where every real trajectory at the held-out angle is in
+                # `real_exclude` (job 54376781 died here with KeyError: 20). Skipping is not a
+                # workaround, it is the right answer: a sim trajectory at the held-out angle can
+                # only be mapped through that angle's real geometry, which is precisely what the
+                # holdout forbids. The cache key carries a hash of `real_exclude`, so the
+                # shortened table lands in its own file and can never reach a run that has those
+                # twins.
+                skipped.setdefault(aoa, []).append(nm)
+                continue
             n_law += 1
             mu_r = C_AOA[aoa] * re_
             sd_r = TI_REF * mu_r
@@ -243,6 +257,11 @@ def load_sim_mapped(sim_dir: str, real_dir: str, exclude: list[str] | None = Non
               f"({n_law} condition(s) placed by the freestream law, the rest by their twin"
               + (f"; {len(rex)} real trajectories withheld from the twin table)" if rex
                  else ")"), flush=True)
+    for aoa_, nms_ in sorted(skipped.items()):
+        print(f"sim: SKIPPED {len(nms_)} trajectories at AoA {aoa_} -- every real trajectory at "
+              f"that angle is in real_exclude, so there is no twin to take a mask from. This is "
+              f"the AoA-holdout case; the map is built without them.", flush=True)
+
     if key is not None:
         os.makedirs(cache, exist_ok=True)
         np.save(key, np.stack(out))
