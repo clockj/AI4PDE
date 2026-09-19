@@ -21,52 +21,46 @@ working branch `qwu/dev`.
 4. The live record, above any table in prose: `Track_1/board_rounds.py` (every scored round),
    `final_v9.py` (the weight fit), `python leaderboard/lb.py --html`.
 
-## Current state — 2026-09-18
+## Current state — 2026-09-19
 
 | | `final` | package |
 |---|---|---|
-| Track 1 best | **81.401196** | **R28** P2-L8 on T1, F-FNO ×4 + ViT ×2 (09-18) |
-| Track 2 best | **81.314785** | T2R13 P2-L8, the same members + the same ViT ×2 (09-16) |
-| leader, read 09-17 | T1 81.9613 · T2 82.05275 | gaps 0.560 · 0.738 |
-| **top-10 cut, 09-18** | **T1 81.624 (we are #21, +0.223 away) · T2 81.511 (#14, +0.197)** | the shortlist is the objective |
+| Track 1 best | **81.401196** | **R28** F-FNO L8 ×4 + ViT ×2 (09-18) |
+| Track 2 best **by score** | **81.323990** | T2R16 (09-19) — **a time draw; the method of record is T2R13's package** (81.314785) |
+| leader, read 09-17 | T1 81.9613 · T2 82.05275 | |
+| **top-10 cut, read 09-18** | **T1 81.624 (we are #21, +0.223) · T2 81.511 (#14, +0.197)** | the shortlist is the objective |
 
-* **09-18: F-FNO took Track 1, and the ViT pair is worth keeping.** **R28** (R25's package with four
-  fused F-FNO w40 L8 in place of the cmb3sim FNOs, T2R13's band): **+0.057, a NEW TRACK-1 BEST**, inside
-  its bracket and 0.014 above the estimate. **The T2R13 − T2R12 board pair transferred at ≈ 0.85×** on
-  every row (sps +0.272 = **containment +0.253** against T2's +0.302): **a BOARD read of a family
-  transfers across tracks; a PROXY read does not** (R26). mvpe fell again (−0.142). **T2R15** (minus the
-  ViT pair, 1 inv): **−0.050** — the pair is **+0.155 of accuracy+containment against −0.105 of `time`**
-  and its containment −0.132 is **3× the −0.041 assumed**, so **it stays in every package**.
-* **Two calibration corrections.** (a) **"Halve the local deltas" is for arms that REMOVE error**; a
-  member REMOVAL is charged in full (T2R15's un-halved ratios were near-exact). (b) **`LOC_SLOPE_T2` is
-  back to 0.60** (0.60 / 0.937 / 0.529 / ≈0.28, **bracket 0.3–0.9**) and T1 gains **`LOC_SLOPE_T1_XFAM`
-  0.89** from R28. 09-18 was fast on both boards, so both are brackets.
-* **THE RULES PIVOT (09-17):** slots are **learning** slots aimed at the **top-10 cut**, not the leader;
-  every shipped checkpoint must be **re-creatable from the release** (`REPRODUCE.md`, `reproduce.sh`);
-  and the private set is OOD in AoA and Re, so an **AoA-holdout screen** replaces R14's "hidden set in
-  range" there. `plan/lit_20260917.md` §2, `plan_20260917.md` §6.
-* **09-19, two proof slots, neither a score attempt** (`../sub_candidates/README.md` §NOW). T1 =
-  `track1_r32_p2ffnoL8_tiled.zip`: R28's members, band and `submission.py` **byte-identical**, only the
-  tiled `_fno.py` differs — it proves the code path the students ship on, errors must return identical,
-  est. **81.40** (81.38–81.43). **The one permitted exception to "never resubmit for a timing draw"**: a
-  new code path under identical weights, with a fingerprint. T2 = the **filled-band** package (the §4.9
-  fix on T2R13's members) **if forge gates it by ~14:00 EDT, else HOLD**; `sps` up = the fill paid.
+* **09-19, two null levers, both fingerprints exact.** **R29** (R28's package on the batch-tiled
+  `_fno.py`): all four error subscores **bit-identical to R28**, `time` +0.016 board ms — inside drift,
+  and the package-level read had priced the tiling *below the board's resolution*. **The tiled path is
+  proven exact on the eval GPU and is the base of every later package; the tiling is closed as a lever
+  and kept as code.** **T2R16** (T2R13's package with the `--fill-unscored` band, prediction array
+  bit-identical): rel/tke/mvpe identical, **`sps` −0.0066 — the fill bought nothing here**, because the
+  hidden set's blanking matches the fit split's three recordings. Its +0.009 net is a **−0.177 ms time
+  draw**, not a method improvement. Dev-board cost of the fill: **−0.0016 `final`**; memo §4.9's −0.62
+  exposure on a *differently* blanked private recording is untouched, so **the fill stays in the
+  Decision-phase method as insurance with a measured price**.
+* **NO LEVER ≥ +0.05 REMAINS ON THE DEV BOARD.** 09-18 closed the last big one: distillation fails at
+  every configuration (the teacher's mean transfers, its **variance does not**, −0.5 at K1 against the
+  82.3198 ceiling), ALPHA is closed, a third family is +0.001 for −0.21, and the ViT pair is worth more
+  than three FNO members. **The shortlist needs +0.22 on Track 1 and +0.20 on Track 2, the cut is
+  drifting up, and there is no identified source.** Slots are not spent on timing draws.
+* **09-20: HOLD on both tracks** (`../sub_candidates/README.md` §NOW). `track1_r33_p2ffnoL8_fill.zip` is
+  staged but **is not a candidate** — T2R16 says the fill reads ≈ −0.002 on this hidden set; it is
+  retained for the Decision-phase method.
+* **Two calibration facts from 09-18.** (a) **A BOARD read of a family transfers across tracks at ≈ 0.85×;
+  a PROXY read does not** (R28 from the T2R13−T2R12 pair, every row the right sign). (b) **"Halve the
+  local deltas" is for arms that REMOVE error** — a member REMOVAL is charged in full (T2R15).
+* **THE RULES PIVOT (09-17):** slots are **learning** slots aimed at the **top-10 cut**; every shipped
+  checkpoint must be **re-creatable from the release** (`REPRODUCE.md`, `reproduce.sh`); the private set
+  is OOD in AoA and Re, so an **AoA-holdout screen** replaces R14's "hidden set in range" there.
+  `plan/lit_20260917.md` §2, `plan_20260917.md` §6.
 * **Packages of record — the same members on both boards.** 4 all-data F-FNO w40 L8 fused **dense** +
-  2 ViTs · int8 `tensor` · band `t2r13_p2ffnoL8x4.npz` · ALPHA 0.60 · fp16, bmm (T1 adds HOST_WRITE
-  torch) · 30 MB (R28) / 36 MB (T2R13).
-* **Where the remaining score is.** The backbone campaign is **closed** (`plan/screen_20260914.md` 6z);
-  09-17 closed the Track-1 graph and F-FNO depth, 09-18 the ViT-pair question (keep it). What is left is
-  in `plan_20260917.md` §2 and is all **same-family**: **distilling the ensemble into one model** (+0.2 /
-  +0.27 if the student loses < 0.05, pre-registered ship rule), the `StackedFFNO` batch-tiling fix, and
-  the AoA-holdout screen for the private set.
-* **THE BAND IS BLANKING-DEPENDENT — the largest private-set liability we know of**
-  (`plan/lit_20260917.md` §4.9). `optimal_band` is fitted on **three recordings**, and at an element
-  unscored in all of them `argmax` returns index 0 and **`base` collapses to ~0** (2,667 elements, 13.6×
-  below the frame median). Bounds stay well-formed, so nothing is zeroed — the containment indicator just
-  never fires there. **2,317 of them ARE scored somewhere in our own 82**, so a private recording that
-  blanks less costs **−2.5 sps ≈ −0.62 `final`**. The mask-independent fill (`w = clip(n_ok/8,0,1)` toward
-  a k=5 box mean of well-sampled neighbours) touches 4.4 % of elements, leaves the rest bit-identical,
-  costs −0.0016 sps here and is worth ≈ +0.04 on the dev board.
+  2 ViTs · int8 `tensor` · band `t2r13_p2ffnoL8x4.npz` (T2's Decision-phase method takes
+  `t2r16_p2ffnoL8_fill.npz`) · ALPHA 0.60 · fp16, bmm, tiled `_fno.py` (T1 adds HOST_WRITE torch).
+* **Where the remaining score is.** Everything package-level is closed (`ROADMAP.md` Part 2). What is
+  left is **generalization, not score**: the AoA-holdout screen for the private set, and
+  `reproduce.sh` verified end to end. See §Open questions in the newest handoff.
 
 ## Standing rules
 

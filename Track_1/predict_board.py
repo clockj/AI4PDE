@@ -295,6 +295,19 @@ ANCHORS = {
                 sps=42.139290, final=81.401196),
     "t2r15": dict(rel_l2=94.823177, tke=78.519336, mvpe=93.885731, time=92.730627,
                   sps=41.742474, final=81.265138),
+    # ROUND 29 / T2R16, 2026-09-19 -- TWO NULL LEVERS, both landing exactly on their pre-registered
+    # fingerprints. `r29` is R28's package on the batch-tiled `_fno.py`: all four error subscores
+    # BIT-IDENTICAL to R28, `time` +0.016 board ms (inside drift), net -0.001. The tiled path is proven
+    # exact on the eval GPU and is the base of every later package, but it is NOT a latency lever.
+    # `t2r16` is T2R13's package with the `--fill-unscored` band: rel/tke/mvpe bit-identical, sps
+    # -0.0066 (the fill bought nothing -- the hidden set's blanking matches the fit split's), and the
+    # +0.009 net is a -0.177 ms TIME DRAW. It is the Track-2 BEST BY SCORE (81.323990) and NOT a method
+    # improvement: **anchor Track-2 accuracy work on `t2r13`**, whose package is still the method of
+    # record. Anchor Track-1 work on `r28` (F-FNO) or `r25` (FNO), not on `r29`.
+    "r29": dict(rel_l2=94.890524, tke=78.952686, mvpe=94.205730, time=92.010936,
+                sps=42.139290, final=81.400174),
+    "t2r16": dict(rel_l2=94.890753, tke=78.781089, mvpe=94.063576, time=91.750947,
+                  sps=42.056535, final=81.323990),
     "r10": R10,
 }
 

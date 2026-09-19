@@ -2440,6 +2440,81 @@ batch-tiling fix (pure latency on R28's own members and band) and the distilled 
 
 ---
 
+### Round 29 / T2R16 BOARD RESULT (2026-09-19) — two null levers, and both fingerprints held exactly
+
+The most informative pair of nulls this campaign has produced. **Both slots were single-lever packages
+with pre-registered fingerprints, and both landed exactly on them.** Nothing moved that was not supposed
+to move, nothing we had priced below the board's resolution appeared, and the one number we had hoped
+would move did not. **The instrument works; the levers were null.**
+
+**Track 1, R29** = `track1_r32_p2ffnoL8_tiled.zip` (md5 `725445315f4181ae45577fcb393b5494`): R28's six
+`.pth`, `band.npz` and `submission.py` **byte-identical**, only `_fno.py` differing — `StackedFFNO`'s
+dense spectral stage batch-tiled in `ceil(b/16)` equal tiles (`c5e8730`).
+
+| | rel_l2 | tke | mvpe | time | sps | final |
+|---|---|---|---|---|---|---|
+| R28 on the board | 94.890524 | 78.952686 | 94.205730 | 92.021555 | 42.139290 | 81.401196 |
+| estimate of record | identical | identical | identical | 92.02 ± drift | identical | 81.40 (81.38–81.43) |
+| **actual** | 94.890524 | 78.952686 | 94.205730 | 92.010936 | 42.139290 | **81.400174** |
+| vs R28 | 0.000000 | 0.000000 | 0.000000 | −0.010619 | 0.000000 | **−0.001022** |
+
+* **All four error subscores bit-identical to R28**, `sps` included. **The tiled path is exact on the
+  eval GPU** — which is the whole point of the slot. It is now the **proven base of every later
+  package**, and the students will ship on it without a further board question.
+* **No `time` gain, exactly as priced.** 5.480 → 5.496 board ms, **+0.016**, inside Track 1's 0.03–0.30 ms
+  same-shape drift. The package-level read predicted **+0.004 to +0.009 `final`** — explicitly *below the
+  board's resolution* — and the board returned nothing. **A prediction of "you will not see this" is a
+  prediction, and it was right.**
+* **The tiling is closed as a lever and kept as code.** R28 (81.401196) stays the Track-1 best.
+
+**Track 2, T2R16** = `track2_r33_p2ffnoL8_fill.zip` (md5 `15a6e57d677e3d8eca1fbca1b2fcb1c0`): T2R13's
+package with **one change, the band** — `t2r16_p2ffnoL8_fill.npz`, T2R13's band refit with
+`fit_band.py --fill-unscored` (`7ff9054`). `pkg_identity` had already shown the prediction array is
+bit-identical, so the band alone could move the score.
+
+| | rel_l2 | tke | mvpe | time | sps | final |
+|---|---|---|---|---|---|---|
+| T2R13 on the board | 94.890753 | 78.781089 | 94.063576 | 91.638537 | 42.063113 | 81.314785 |
+| estimate of record | identical | identical | identical | 91.64 ± drift | **42.113** (42.04–42.36) | 81.327 (81.31–81.39) |
+| **actual** | 94.890753 | 78.781089 | 94.063576 | 91.750947 | **42.056535** | **81.323990** |
+| vs T2R13 | 0.000000 | 0.000000 | 0.000000 | +0.112410 | **−0.006578** | **+0.009205** |
+
+* **rel, tke and mvpe bit-identical to T2R13**: the fingerprint held, only the band moved.
+* **THE FILL BOUGHT NOTHING ON THIS HIDDEN SET.** `sps` −0.006578, **below even the 42.04 floor** of the
+  bracket. The reading is unambiguous: **the hidden set's blanking matches the fit split's three
+  recordings**, so the 2,667 elements the fill widens are unscored there too and recover nothing. The
+  small loss is the blend at elements with **1–7** scored fitting windows, where it widens a band that
+  was legitimately narrow.
+* **What that does and does not close.** The **measured dev-board cost of the fill is −0.0016 `final`**,
+  against memo §4.9's upper bound of **−0.62** if a private recording blanked less than ours. A null on
+  a hidden set that happens to share our blanking says nothing about a *differently* blanked private
+  recording — so **the fill stays in the Decision-phase method as insurance that now has a measured
+  price**, and the exposure argument is unchanged.
+* **The +0.009 is a TIME DRAW, not a method improvement.** 6.069 → 5.892 board ms, **−0.177 ms** of
+  same-shape drift, worth +0.0108 — more than the whole net. **T2R16 is the Track-2 best BY SCORE
+  (81.323990); the method of record is still T2R13's package.** Do not anchor accuracy work on it, and
+  do not report it as progress.
+
+**The calibration point, which is worth more than either score.** Two slots, two pre-registered
+fingerprints, two exact hits: R29's four error subscores identical to the last decimal, T2R16's three
+identical with the band's own number moving alone. When a package is built so that only one quantity
+*can* move, the board answers the question asked and nothing else — and it answered both with a null.
+Neither slot cost more than 0.001, and between them they retired a code-path risk and priced a piece of
+private-set insurance.
+
+* **Weights after 40 pooled rounds** (`Track_1/final_v9.py`): rel_l2 **0.47783** · tke **0.10102** · mvpe
+  **0.09208** · time **0.09655** · sps **0.24981**, Σw 1.0173, max |residual| **0.0032** (R6).
+  **The self-check's precision allowance changed today**: it is now a *full* unit in the last recorded
+  decimal rather than half of one. R6 — the only row read off Codabench to 3–4 decimals — crossed the
+  half-unit line at 40 rounds (0.003165 against 0.003096) when the two new rows moved the weights by
+  ≤ 1e-04. The half-unit convention was simply wrong for this quantity: a residual compares R6's own
+  rounded `final` against a fit built from thirty-nine *other* rounded values, so the two errors add.
+  Against a fit that excludes it, R6 sits at +0.005041 — it is and always was the outlier. A six-decimal
+  row's allowance moves 0.0025010 → 0.0025020 and the worst such row still has 0.000417 of margin, so a
+  mistyped modern round fails as loudly as before.
+
+---
+
 ## CLAUDE.md detail moved here on 2026-09-15 (verbatim)
 
 `CLAUDE.md` was trimmed back under 30,000 characters on 2026-09-15, when the two 09-15 packages, the

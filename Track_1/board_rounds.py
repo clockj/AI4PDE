@@ -175,6 +175,18 @@ ROUNDS = [
     #      +0.80 is same-day drift.
     #   R28 IS THE TRACK-1 ANCHOR FOR F-FNO PACKAGES; `r25` stays the anchor for FNO packages.
     ("R28 p2ffnoL8 ffnox4+ViT2/2inv", "2026-09-18", 0, 94.890524, 78.952686, 94.205730, 92.021555, 42.139290, 81.401196),
+    # R29 = R28's PACKAGE ON A NEW CODE PATH: all six .pth, band.npz and submission.py byte-identical to
+    # R28's uploaded archive, only `_fno.py` differs -- StackedFFNO's dense spectral stage batch-tiled in
+    # ceil(b/16) equal tiles (c5e8730). Archive `track1_r32_p2ffnoL8_tiled.zip` (md5 72544531...). Not a
+    # lever: it is the board proof of the code path every later package rides on. Submission id not reported.
+    #   THE FINGERPRINT HELD EXACTLY. All FOUR error subscores came back BIT-IDENTICAL to R28 to six
+    #   decimals, sps included (42.139290). The tiled path is exact on the eval GPU, and that is what the
+    #   slot was bought for: it is now the PROVEN BASE of every later package.
+    #   AND THERE IS NO TIME GAIN, AS PRICED. 5.480 -> 5.496 board ms, +0.016, inside Track 1's 0.03-0.30 ms
+    #   same-shape drift. The package-level read predicted +0.004 to +0.009 `final` -- below the board's
+    #   resolution -- and the board agreed by returning nothing. Net -0.001022, all of it that drift.
+    #   THE TILING IS CLOSED AS A LEVER AND KEPT AS CODE. R28 (81.401196) stays the Track-1 best.
+    ("R29 p2ffnoL8 TILED/2inv", "2026-09-19", 0, 94.890524, 78.952686, 94.205730, 92.010936, 42.139290, 81.400174),
 ]
 
 UNSCORED = []   # every round on both tracks now has full subscores
@@ -336,6 +348,23 @@ ROUNDS_T2 = [
     #   LOC_SLOPE_T2 goes back to 0.60 with an explicit 0.3-0.9 bracket (see below). T2R13
     #   (81.314785) remains the Track-2 best.
     ("T2R15 l8x4 ffnox4 noViT/1inv", "2026-09-18", 0, 94.823177, 78.519336, 93.885731, 92.730627, 41.742474, 81.265138),
+    # T2R16 = T2R13's PACKAGE WITH ONE CHANGE, THE BAND: `t2r16_p2ffnoL8_fill.npz`, which is
+    # `t2r13_p2ffnoL8x4.npz` refit with `fit_band.py --fill-unscored` (7ff9054). Every .pth and
+    # submission.py byte-identical; `pkg_identity` gave a prediction max|A-B| of 0.0, so the band ALONE
+    # decided this round. Archive `track2_r33_p2ffnoL8_fill.zip` (md5 15a6e57d...). Estimate of record
+    # 81.327 with sps 42.113 (bracket 42.04-42.36). Submission id not reported.
+    #   THE FINGERPRINT HELD: rel, tke and mvpe came back BIT-IDENTICAL to T2R13, so only the band moved.
+    #   THE FILL BOUGHT NOTHING ON THIS HIDDEN SET. sps 42.063113 -> 42.056535, **-0.006578**, below even
+    #   the 42.04 floor of the bracket. The hidden set's blanking evidently MATCHES the fit split's three
+    #   recordings, so the filled elements are unscored there too and recover nothing; the small loss is
+    #   the blend at elements with 1-7 scored fitting windows widening a legitimately narrow band.
+    #   Measured dev-board cost of the fill: **-0.0016 `final`**, against memo §4.9's upper bound of -0.62
+    #   if a private recording blanked less. It stays in the Decision-phase method as cheap insurance.
+    #   THE +0.009 IS A TIME DRAW, NOT A METHOD IMPROVEMENT. 6.069 -> 5.892 board ms (-0.177) is
+    #   same-shape drift, worth +0.0108, and it is the whole of the net +0.009205. So T2R16 is the
+    #   BEST-BY-SCORE on Track 2 (81.323990) while **the method of record is still T2R13's package**.
+    #   Do not read this row as progress and do not anchor accuracy work on it.
+    ("T2R16 p2ffnoL8 FILLBAND/2inv", "2026-09-19", 0, 94.890753, 78.781089, 94.063576, 91.750947, 42.056535, 81.323990),
 ]
 
 # The fit pools both tracks -- see the module docstring.  ROUNDS first, then ROUNDS_T2;
