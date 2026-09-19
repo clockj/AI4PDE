@@ -235,6 +235,11 @@ def main() -> None:
           f"mean weight {float(g.mean()):.4f}")
     out.append(row(f"  + blend beta={a.beta} GATED", blend(Ph, Xh, a.beta * g), Yh, half_h))
     out.append(row(f"  + blend beta={a.beta} ungated", blend(Ph, Xh, a.beta), Yh, half_h))
+    # THE IN-DISTRIBUTION PRICE of shipping the blend ungated (forge 09-19, main). The gate fires on
+    # 0/756 and 42/643 held-out-AoA windows -- a novel ANGLE is invisible to a SPEED gate -- so if the
+    # blend is to help the private set it has to ship ungated, and then it also applies to every
+    # in-distribution window. This row is what that costs, on the fit split, at the same beta.
+    out.append(row(f"  fit + blend beta={a.beta} ungated", blend(Pf, Xf, a.beta), Yf, half_f))
     print("\nThe band is fitted on this run's own in-distribution held-out windows, not on "
           "held-out twins\nof the scored models, so `sps` compares ACROSS ARMS of this screen "
           "and not against a board round.")
