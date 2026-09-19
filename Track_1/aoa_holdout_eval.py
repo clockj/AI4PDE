@@ -139,6 +139,10 @@ def main() -> None:
     ap.add_argument("--band-p", type=float, default=0.45)
     ap.add_argument("--inflate", type=float, default=1.39)
     ap.add_argument("--band-smooth", type=int, default=3)
+    ap.add_argument("--inflate-sweep", type=float, nargs="*", default=[],
+                    help="extra band stretches to report after the main table: the band is refitted "
+                         "on the fit split at each and `sps` is read on BOTH splits, so the width "
+                         "that is right for a novel angle arrives with its in-distribution price")
     ap.add_argument("--ms", type=float, default=5.08,
                     help="board ms/window used only for `time`; identical across rows, so it "
                          "shifts wfinal rather than reordering the arms")
@@ -190,19 +194,24 @@ def main() -> None:
     sigma_ref = np.maximum(sig_f.mean(0, keepdims=True), 1e-8).astype(np.float32)
     ratio_f = np.clip(sig_f / sigma_ref, 0.3, 3.0)
     As, as_, scored_s, ns = prep(Pf, Yf)
-    Adef = np.float32(a.inflate) * As
-    if a.band_p:
-        Adef = (Adef / ratio_f[..., :2] ** a.band_p).astype(np.float32)
-    base = optimal_band(Adef, as_, scored_s)
-    if a.band_smooth > 1:
-        k, o = a.band_smooth, base.astype(np.float64)
-        for ax in (1, 2, 3):
-            pad = [(0, 0)] * 5
-            pad[ax] = (k // 2, k // 2)
-            q = np.pad(o, pad, mode="edge")
-            o = np.mean([np.take(q, range(i, i + base.shape[ax]), axis=ax) for i in range(k)],
-                        axis=0)
-        base = o.astype(np.float32)
+
+    def fit_base(inflate):
+        Adef = np.float32(inflate) * As
+        if a.band_p:
+            Adef = (Adef / ratio_f[..., :2] ** a.band_p).astype(np.float32)
+        base = optimal_band(Adef, as_, scored_s)
+        if a.band_smooth > 1:
+            k, o = a.band_smooth, base.astype(np.float64)
+            for ax in (1, 2, 3):
+                pad = [(0, 0)] * 5
+                pad[ax] = (k // 2, k // 2)
+                q = np.pad(o, pad, mode="edge")
+                o = np.mean([np.take(q, range(i, i + base.shape[ax]), axis=ax) for i in range(k)],
+                            axis=0)
+            base = o.astype(np.float32)
+        return base
+
+    base = fit_base(a.inflate)
     ratio_h = np.clip(sigma(Xh) / sigma_ref, 0.3, 3.0)
     half_h = (base * ratio_h[..., :2] ** a.band_p).astype(np.float32)
     half_f = (base * ratio_f[..., :2] ** a.band_p).astype(np.float32)
@@ -240,6 +249,22 @@ def main() -> None:
     # blend is to help the private set it has to ship ungated, and then it also applies to every
     # in-distribution window. This row is what that costs, on the fit split, at the same beta.
     out.append(row(f"  fit + blend beta={a.beta} ungated", blend(Pf, Xf, a.beta), Yf, half_f))
+    # THE BAND WIDTH A NOVEL ANGLE WANTS (main 09-19). `--inflate` 1.39 is the PUBLIC hidden set's
+    # measured tail; the private set is out of distribution, where the error field is larger than
+    # the fit split's by more than that, and `sps` is the subscore that pays for it (48 -> 38-40 on
+    # the AoA-20 holdout). Same predictions, band refitted per stretch, both splits.
+    sweep = []
+    if a.inflate_sweep:
+        Uf, Uh = prep(Pf, Yf), prep(Ph, Yh)
+        print(f"\n{'inflate':>8s} {'sps fit':>8s} {'sps HELD-OUT':>13s}")
+        for f_ in a.inflate_sweep:
+            b = fit_base(f_)
+            sf = sps_score(Uf[0], Uf[1], Uf[2], Uf[3],
+                           (b * ratio_f[..., :2] ** a.band_p).astype(np.float32))
+            sh = sps_score(Uh[0], Uh[1], Uh[2], Uh[3],
+                           (b * ratio_h[..., :2] ** a.band_p).astype(np.float32))
+            print(f"{f_:8.2f} {sf:8.3f} {sh:13.3f}")
+            sweep.append(dict(inflate=f_, sps_fit=float(sf), sps_held=float(sh)))
     print("\nThe band is fitted on this run's own in-distribution held-out windows, not on "
           "held-out twins\nof the scored models, so `sps` compares ACROSS ARMS of this screen "
           "and not against a board round.")
@@ -251,7 +276,7 @@ def main() -> None:
                            alpha=a.alpha, band_p=a.band_p, inflate=a.inflate, ms=a.ms,
                            beta=a.beta, ref=a.ref, n_held=len(Xh), n_fit=len(Xf),
                            speed_range=[lo, hi], gate_fired=int((g > 0).sum()),
-                           rows=out), f, indent=1)
+                           rows=out, inflate_sweep=sweep), f, indent=1)
         print(f"wrote {a.json}")
 
 
