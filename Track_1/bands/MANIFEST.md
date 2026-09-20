@@ -158,3 +158,24 @@ identical at all four error stretches (1.00× 51.72 · 1.05× 50.75 · 1.15× 48
 `mvpe` and `time` are T2R13's exactly and this band alone decides the round; `lower`/`upper` differ only
 at filled elements and only outward, by ≤ 2.146e-2. It ships in `track2_r33_p2ffnoL8_fill.zip`
 (`15a6e57d…`) and in the Track-1 twin `track1_r33_p2ffnoL8_fill.zip` (`b5abf139…`).
+
+| `r34_p2ffnoL8sim_fill.npz` | `91530ae82f1754f04d19d3828840b7cf` | R30 / T2R17 (staged 09-20, not yet scored) |
+
+`r34_p2ffnoL8sim_fill.npz` (promoted 2026-09-20, **before** its result, for the same reason
+`t2r16_p2ffnoL8_fill.npz` was: it is the band of the Decision-phase method of record, and the
+method is what the organizers re-train). Provenance: the **SIM twins** `p2_ffno_l8_sim_s1..s3`
+(F-FNO w40 L8 with `--sim … --lam-sim 0.3 --sim-loss full --sim-exclude-held`) plus the unchanged
+`arch_vit_d384` and `arch_vit_cmb3sim`, `sigma_ref` from the four all-data `ffno_all_w40l8_sim_s1..s4`
+plus the two all-data ViTs, ALPHA 0.60, `--band-p 0.45`, `--fit-on seen --fit-aoa 15 20`,
+`--inflate 1.39`, `--band-smooth 3`, `--fill-unscored`. Job `rp_pkg_r34` (7412354), `_fno.py` md5
+`2290194ac46d444274fba70ada6e4931`, `ALPHA = 0.60`.
+
+This is a **different twin set**, so unlike `t2r16` it is not a one-flag diff against a committed
+band and it is not bit-reproducible from one (MANIFEST's own rule, `REPRODUCE.md` §6.3): it must be
+reused through `RPDE_BAND`, never refitted. The fill behaved exactly as it did on the no-sim twins —
+**3,665 of 81,920 elements changed (4.47 %)**, their median 0.00111 → 0.00597, the band minimum
+3.21e-7 → **2.77e-4**, the median 0.00940 → 0.00953, the maximum unchanged, every untouched element
+bit-identical and every change outward. Against `t2r16_p2ffnoL8_fill.npz` the whole table moved very
+little — median +0.19 %, mean |Δ| 1.80e-4, max |Δ| 3.71e-3, narrower at 30.1 % of elements — which is
+what a member swap inside one family and one recipe should look like. It ships in
+`track1_r34_p2ffnoL8sim_fill.zip` (`7193a4ac…`) and `track2_r34_p2ffnoL8sim_fill.zip` (`67c2db05…`).

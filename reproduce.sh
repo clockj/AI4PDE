@@ -1,9 +1,13 @@
 #!/bin/bash
 # Rebuild both packages of record from the released data. READ REPRODUCE.md FIRST.
 #
-#   RPDE_REPRODUCE_GO=1 bash reproduce.sh [t1|t2|both]        # default: both
+#   RPDE_REPRODUCE_GO=1 bash reproduce.sh [t1|t2|both|r25|r28]    # default: both
 #
-# ~43 A100-hours for `both` (29.5 for t1 alone, 24.6 for t2 alone; REPRODUCE.md section 5).
+# t1, t2 and both are the method of record (R30 / T2R17, tag r34): ONE member set, both archives.
+# r25 and r28 rebuild the superseded packages the board actually scored (REPRODUCE.md section 4).
+#
+# ~37 A100-hours for `both`: since 09-20 the two tracks ship the SAME member set, so `t1`, `t2`
+# and `both` differ only in which archive is built at the end (REPRODUCE.md section 5).
 # It runs the stages SEQUENTIALLY in one process and is meant to be launched from a single
 # long job, or split across the 4-job cap by running the `train_*` functions separately.
 #
@@ -17,7 +21,7 @@ set -uo pipefail
 cd "$(dirname "$0")"
 
 [ "${RPDE_REPRODUCE_GO:-0}" = "1" ] || {
-  echo "REFUSING: this is a ~43 A100-hour pipeline. Re-run with RPDE_REPRODUCE_GO=1."
+  echo "REFUSING: this is a ~37 A100-hour pipeline. Re-run with RPDE_REPRODUCE_GO=1."
   echo "See REPRODUCE.md. It needs a GPU node -- run it from an sbatch job, not a login shell."
   exit 1; }
 
@@ -61,32 +65,52 @@ run() {                      # run <out.pth> <flags...>
 
 # ============================== stage 1: TWINS (the band's error field) =====================
 # First on purpose: a package whose band came from all-data models scored sps 36.94 (R6), so the
-# twins are the part you cannot skip. Held out = model.VAL_TRAJ (no --exclude, no --all-data).
-twins_t1() {
-  echo "== twins, Track 1 (5) =="
+# twins are the part you cannot skip. Held out = model.VAL_TRAJ (no --exclude, no --all-data),
+# and wherever --sim is present the twin adds --sim-exclude-held.
+twins_vit() {
+  echo "== ViT twins (2), shared by every package below =="
+  run $U/arch_vit_d384.pth    $VITP --seed 1
+  run $U/arch_vit_cmb3sim.pth $VITC --seed 1 $SIMF --sim-exclude-held
+}
+twins_ffno() {
+  echo "== F-FNO + sim twins (3) -- the band's error field on BOTH tracks =="
+  for s in 1 2 3; do
+    run $P2/p2_ffno_l8_sim_s$s.pth $FFNO $SIMF --sim-exclude-held --seed $s
+  done
+}
+
+# ============================== stage 2: ALL-DATA MEMBERS (what ships) ======================
+members_vit() {
+  echo "== all-data ViT members (2), shared by every package below =="
+  run $U/arch_vit_all_s1.pth         $VITP --seed 1 --all-data
+  run $U/arch_vit_all_cmb3sim_s3.pth $VITC --seed 3 --all-data $SIMF
+}
+members_ffno() {
+  echo "== all-data F-FNO + sim members (4) =="
+  for s in 1 2 3 4; do run $U/ffno_all_w40l8_sim_s$s.pth $FFNO $SIMF --seed $s --all-data; done
+}
+
+# ---- SUPERSEDED recipes, kept because they are what the board actually scored ---------------
+# R25 (Track 1, 81.344644): FNO w96 L8 cmb3sim x4 + the same ViT pair, band r24_xfam6.npz.
+# R28 / T2R13 (81.401196 / 81.314785): the F-FNO members and twins WITHOUT the sim flags.
+# Reachable as `bash reproduce.sh r25` and `bash reproduce.sh r28`; not on the default path.
+twins_fno_w96() {
+  echo "== SUPERSEDED: FNO w96 L8 cmb3sim twins (3), R25 =="
   for s in 1 2 3; do
     o=$U/fno_r18_cmb3sim$([ "$s" = 1 ] || echo _s$s).pth
     run "$o" $FNO --seed $s $SIMF --sim-exclude-held
   done
-  run $U/arch_vit_d384.pth    $VITP --seed 1
-  run $U/arch_vit_cmb3sim.pth $VITC --seed 1 $SIMF --sim-exclude-held
 }
-twins_t2() {
-  echo "== twins, Track 2 (3 F-FNO; the two ViT twins are shared with Track 1) =="
+members_fno_w96() {
+  echo "== SUPERSEDED: all-data FNO w96 L8 cmb3sim members (4), R25 =="
+  for s in 1 2 3 4; do run $U/fno_all_w96L8cmb3sim_s$s.pth $FNO --seed $s --all-data $SIMF; done
+}
+twins_ffno_nosim() {
+  echo "== SUPERSEDED: F-FNO twins WITHOUT sim (3), R28 / T2R13 =="
   for s in 1 2 3; do run $P2/p2_ffno_l8_s$s.pth $FFNO --seed $s; done
 }
-
-# ============================== stage 2: ALL-DATA MEMBERS (what ships) ======================
-members_t1() {
-  echo "== all-data members, Track 1 (6) =="
-  for s in 1 2 3 4; do
-    run $U/fno_all_w96L8cmb3sim_s$s.pth $FNO --seed $s --all-data $SIMF
-  done
-  run $U/arch_vit_all_s1.pth           $VITP --seed 1 --all-data
-  run $U/arch_vit_all_cmb3sim_s3.pth   $VITC --seed 3 --all-data $SIMF
-}
-members_t2() {
-  echo "== all-data members, Track 2 (4 F-FNO; the two ViTs are shared with Track 1) =="
+members_ffno_nosim() {
+  echo "== SUPERSEDED: all-data F-FNO members WITHOUT sim (4), R28 / T2R13 =="
   for s in 1 2 3 4; do run $U/ffno_all_w40l8_s$s.pth $FFNO --seed $s --all-data; done
 }
 
@@ -94,8 +118,27 @@ members_t2() {
 # build_round13.sh does the band and both tracks' archives in one pass. RPDE_BAND reuses a
 # committed band instead of refitting -- which is what a reproduction of a SCORED package must
 # do, because a refit is not bit-reproducible (Track_1/bands/MANIFEST.md).
-build_t1() {
-  echo "== band + build, Track 1 (R25 xfam6fp16) =="
+build_r34() {
+  echo "== band + build, BOTH tracks (R30 / T2R17, r34_p2ffnoL8sim_fill) =="
+  # One call builds and gates both archives from one member set. FFNO_PATH is baked by the build
+  # itself since 09-18 (RPDE_FFNO_PATH below, REPRODUCE.md 6.4 CLOSED): bake_ffno_path.py writes
+  # the same block T2R13 shipped, byte for byte.
+  # RPDE_BAND reuses the COMMITTED band, which is what reproducing a scored package must do -- a
+  # refit is not bit-reproducible with a different twin set (REPRODUCE.md 3, bands/MANIFEST.md).
+  # To fit it instead: drop RPDE_BAND and pass RPDE_BAND_FILL=1.
+  local A="$U/ffno_all_w40l8_sim_s1.pth $U/ffno_all_w40l8_sim_s2.pth \
+           $U/ffno_all_w40l8_sim_s3.pth $U/ffno_all_w40l8_sim_s4.pth \
+           $U/arch_vit_all_s1.pth $U/arch_vit_all_cmb3sim_s3.pth"
+  local M="$P2/p2_ffno_l8_sim_s1.pth $P2/p2_ffno_l8_sim_s2.pth $P2/p2_ffno_l8_sim_s3.pth \
+           $U/arch_vit_d384.pth $U/arch_vit_cmb3sim.pth"
+  RPDE_FORCE=1 RPDE_A="$A" RPDE_M="$M" \
+    RPDE_BAND="${RPDE_BAND_R34:-Track_1/bands/r34_p2ffnoL8sim_fill.npz}" \
+    RPDE_INT8=1 RPDE_LINEAR=tensor RPDE_SHIP_AMP='"fp16"' RPDE_SPEC_PATH=bmm \
+    RPDE_HOST_WRITE=torch RPDE_FFNO_PATH=dense RPDE_TAG="r34_p2ffnoL8sim_fill" \
+    bash Track_1/submit_fno/build_round13.sh 0.60
+}
+build_r25() {
+  echo "== SUPERSEDED: band + build, Track 1 (R25 xfam6fp16) =="
   local A="$U/fno_all_w96L8cmb3sim_s1.pth $U/fno_all_w96L8cmb3sim_s2.pth \
            $U/fno_all_w96L8cmb3sim_s3.pth $U/fno_all_w96L8cmb3sim_s4.pth \
            $U/arch_vit_all_s1.pth $U/arch_vit_all_cmb3sim_s3.pth"
@@ -107,16 +150,14 @@ build_t1() {
     RPDE_HOST_WRITE=torch RPDE_TAG="r25_xfam6fp16_a060" \
     bash Track_1/submit_fno/build_round13.sh 0.60
 }
-build_t2() {
-  echo "== band + build, Track 2 (T2R13 P2-L8) =="
-  # FFNO_PATH is baked by the build itself since 09-18 (RPDE_FFNO_PATH below, REPRODUCE.md 6.4
-  # CLOSED): submit_fno/bake_ffno_path.py writes the same block T2R13 shipped, byte for byte.
+build_r28() {
+  echo "== SUPERSEDED: band + build, R28 / T2R13 (P2-L8, no sim) =="
   local A="$U/ffno_all_w40l8_s1.pth $U/ffno_all_w40l8_s2.pth $U/ffno_all_w40l8_s3.pth \
            $U/ffno_all_w40l8_s4.pth $U/arch_vit_all_s1.pth $U/arch_vit_all_cmb3sim_s3.pth"
   local M="$P2/p2_ffno_l8_s1.pth $P2/p2_ffno_l8_s2.pth $P2/p2_ffno_l8_s3.pth \
            $U/arch_vit_d384.pth $U/arch_vit_cmb3sim.pth"
   RPDE_FORCE=1 RPDE_A="$A" RPDE_M="$M" \
-    ${RPDE_BAND_T2:+RPDE_BAND="$RPDE_BAND_T2"} \
+    RPDE_BAND="${RPDE_BAND_T2:-Track_1/bands/t2r13_p2ffnoL8x4.npz}" \
     RPDE_INT8=1 RPDE_LINEAR=tensor RPDE_SHIP_AMP='"fp16"' RPDE_SPEC_PATH=bmm \
     RPDE_HOST_WRITE=torch RPDE_FFNO_PATH=dense RPDE_TAG="r27_p2ffno4_a060" \
     bash Track_1/submit_fno/build_round13.sh 0.60
@@ -137,11 +178,12 @@ student() {
       "${STUDENT_MODE:-heldout}"
 }
 
+# t1, t2 and both are the SAME pipeline since 09-20: one member set, one build, two archives.
 case "$WHICH" in
-  t1)   twins_t1;            members_t1;            build_t1 ;;
-  t2)   twins_t1; twins_t2;  members_t1; members_t2; build_t2 ;;   # t2 needs T1's four ViTs
-  both) twins_t1; twins_t2;  members_t1; members_t2; build_t1; build_t2 ;;
-  *) echo "usage: $0 [t1|t2|both]"; exit 2 ;;
+  t1|t2|both) twins_vit; twins_ffno; members_vit; members_ffno; build_r34 ;;
+  r25)        twins_vit; twins_fno_w96;    members_vit; members_fno_w96;    build_r25 ;;
+  r28)        twins_vit; twins_ffno_nosim; members_vit; members_ffno_nosim; build_r28 ;;
+  *) echo "usage: $0 [t1|t2|both|r25|r28]   (r25 and r28 are the superseded packages)"; exit 2 ;;
 esac
 [ "${STUDENT:-0}" = "1" ] && student
 
