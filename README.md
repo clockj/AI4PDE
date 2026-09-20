@@ -6,10 +6,10 @@ CFD simulations of the same airfoil are available for training, never at test ti
 
 | track | protocol | entry point | best board score |
 |---|---|---|---|
-| [1 — Sim2Real](https://www.codabench.org/competitions/17363/) | one batched call over every test window, raw physical units | `predict(input_array, metadata)` | 81.345 |
-| [2 — LTTTA](https://www.codabench.org/competitions/17385/) | streaming at batch 1, normalized units, the previous window's truth revealed | `get_ttt_model(dir, device)` → `ttt_step(...)` | 81.164 |
+| [1 — Sim2Real](https://www.codabench.org/competitions/17363/) | one batched call over every test window, raw physical units | `predict(input_array, metadata)` | 81.401 |
+| [2 — LTTTA](https://www.codabench.org/competitions/17385/) | streaming at batch 1, normalized units, the previous window's truth revealed | `get_ttt_model(dir, device)` → `ttt_step(...)` | 81.324 |
 
-Board scores as of 2026-09-14; the live record is `Track_1/board_rounds.py`, rendered by
+Board scores as of 2026-09-19; the live record is `Track_1/board_rounds.py`, rendered by
 `python leaderboard/lb.py --html`. A board score blends five subscores: relative L2 error,
 turbulent kinetic energy, mean velocity at wake probes, latency, and an interval-coverage score
 (SPS).
@@ -42,7 +42,9 @@ The measured reasons for each choice, and the long list of things that did not w
 | `Track_1/submit_fno/` | the shipped `submission.py` and `_fno.py`, band fitting, build and gates — see its `README.md` |
 | `Track_2/` | the streaming submission, its gate and evaluator, and the closed adaptation studies — see `Track_2/README.md` |
 | `leaderboard/` | submission and experiment ledgers, and the calibration-log page — see `leaderboard/README.md` |
+| `Track_1/closed/`, `Track_2/closed/` | one-off experiments whose question is closed, each with a one-line verdict in the directory's `README.md` |
 | `CLAUDE.md` | the working manual: contracts, scoring, the current package, standing rules |
+| **`EVALUATION.md`** | **how we evaluate locally and how each board result corrects it**: the scorer and its verifiers, the held-out splits, the instrument catalogue, every calibration constant with the rounds it came from, and the before-upload / after-a-result checklists |
 | `ROADMAP.md` | what the board says, what is closed, what is next |
 | `ROUNDS.md` | the detailed record, round by round |
 
@@ -87,7 +89,8 @@ RPDE_A="..." RPDE_M="..." RPDE_INT8=1 RPDE_TAG=... bash Track_1/submit_fno/build
 
 Every submission's five subscores are predicted and written down before it is uploaded (in
 `../sub_candidates/README.md`, then ledgered in `leaderboard/board.jsonl`). That record is what
-turns the leaderboard into a measurement instrument.
+turns the leaderboard into a measurement instrument. **`EVALUATION.md` is the full account** —
+what each instrument reads, how far its number carries, and which measured constant corrects it.
 
 ## Two things that shaped the code
 

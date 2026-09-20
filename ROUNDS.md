@@ -12,6 +12,11 @@ reached 163 k characters, and Claude Code loads that file into every session and
   "CLAUDE.md, 'Units'" and the like — in code comments, reports and plans — name sections below.
 * **New rounds are appended at the end, newest last**: the round's detail here, its rules in
   `ROADMAP.md` Part 1, and only the facts that changed in `CLAUDE.md`.
+* **Script paths below are as of the round that wrote them.** On 2026-09-19 the one-off
+  experiments were moved out of `Track_1/`'s and `Track_2/`'s top level: **a script cited as
+  `Track_1/<name>.py` or `Track_2/<name>.py` that is no longer there lives in
+  `Track_1/closed/` or `Track_2/closed/`**, each with a README table of verdicts. What is still
+  worth running, and how the board calibrates it, is `EVALUATION.md`.
 * The archived part is not strictly chronological (reference sections sit between round 12 and
   round 13, as they did in the original). Search by heading.
 

@@ -1402,6 +1402,15 @@ implement self-normalization but measured it on a split blind to what it is for;
 
 ## Part 4 — Where things are
 
+> **Paths, 2026-09-19.** The one-off experiments were moved out of `Track_1/`'s and `Track_2/`'s
+> top level: **a script cited anywhere in this file, in `ROUNDS.md`, in `plan/` or in `report/` as
+> `Track_1/<name>.py` or `Track_2/<name>.py` that is no longer there lives in `Track_1/closed/`
+> or `Track_2/closed/`** — see those directories' `README.md` for the verdict behind each. The
+> paths in the table below are current. **`EVALUATION.md` at the repo root** is the account of how
+> local evaluation works and how each board result corrects it: the scorer and its verifiers, the
+> splits, the instrument catalogue with its operating-point invocations, every calibration
+> constant with the rounds it came from, and the before-upload / after-a-result checklists.
+
 ### Build and gate a package — the detail moved out of `CLAUDE.md` 2026-09-19
 
 * **Gates:** `submit_fno/validate_strict.py` (inside the build: clean extract, extract dir off
@@ -1449,10 +1458,13 @@ implement self-normalization but measured it on a split blind to what it is for;
 | Round-13 evidence, §1–§23 | `Track_1/report/report_20260831_round13.md` |
 | Re-extrapolation split | `Track_1/re_split.py` |
 | Out-of-fold local eval over all 82 trajectories | `Track_1/kfold.py` (`--split re` for Re bands) |
+| **OOD screen for the private set: a novel angle of attack** | `Track_1/aoa_holdout_eval.py` (`--inflate-sweep` prices the band width there) |
+| **How local evaluation works, and how the board corrects it** | `EVALUATION.md` |
 | Proxy-vs-board calibration | `Track_1/proxy_calib.py` |
 | What a submission is WORTH as information | `Track_1/sub_value.py` |
 | Normalizer-path gate | `Track_1/verify/selfnorm_path.py` |
-| What the oscillatory head learned | `Track_1/osc_probe.py` |
+| What the oscillatory head learned | `Track_1/closed/osc_probe.py` |
+| Closed one-off experiments, with the verdict behind each | `Track_1/closed/README.md`, `Track_2/closed/README.md` |
 
 **Machine.** OSC; data at `/users/PAS1187/qwu/RealPDE/`, env `realpde` (torch 2.2.2+cu121).
 Training needs an A100 Slurm allocation — the login/OnDemand node has no GPU. The **12-core
