@@ -16,7 +16,8 @@ same baked constants; the two archives differ only in the entry point (`predict`
 | Track 1 | **R30 `r34`** — F-FNO w40 L8 **+ sim** ×4 (dense) + ViT ×2, fp16, band `r34_p2ffnoL8sim_fill.npz` | `../sub_candidates/track1_r34_p2ffnoL8sim_fill.zip` |
 | Track 2 | **T2R17 `r34`** — the identical member set and band | `../sub_candidates/track2_r34_p2ffnoL8sim_fill.zip` |
 
-Built and gated 2026-09-20 (job `rp_pkg_r34`, 7412354); staged, not yet scored. It is R28 / T2R13 with
+Built and gated 2026-09-20 (job `rp_pkg_r34`, 7412354) and **scored the same day: 81.418569 on Track 1 and
+81.333776 on Track 2, the best on both boards** (`board_rounds.py` R30 / T2R17). It is R28 / T2R13 with
 **one** change, the sim co-training of the four F-FNO members and their three twins: the AoA-holdout
 screen prices that at **+0.281 at a held-out AoA 10 and +1.12 at a held-out AoA 20** (two seeds), which
 is the private set's regime, against **+0.02** on the dev board (`Track_1/plan/plan_20260917.md` §11.3,
@@ -29,10 +30,14 @@ is the private set's regime, against **+0.02** on the dev board (`Track_1/plan/p
 | Track 2 | **T2R13 `P2-L8`** — the same no-sim members and band (81.314785) | `../sub_candidates/submitted/track2_r27_p2ffno4_a060.zip` |
 | Track 2 | **T2R16** — T2R13 with the filled band `t2r16_p2ffnoL8_fill.npz` (81.323990, the Track-2 best by score) | `../sub_candidates/submitted/track2_r33_p2ffnoL8_fill.zip` |
 
-`reproduce.sh` next to this file is a sequential driver for the whole thing; **it has never been run end to
-end** — it is this audit written as a script, not a tested pipeline. Throughout:
+`reproduce.sh` next to this file is a sequential driver for the whole thing. **It has now been run**: end to
+end in a 2-epoch smoke (every stage, both builds, both strict gates) and, for the F-FNO twin seed 1, at full
+fidelity against the shipped checkpoint, and its build re-creates **both uploaded archives array for array**
+— **§8** is the procedure, the five knobs that make it runnable without touching the shipped tree, and what
+came out. Throughout:
 `PY=…/.conda/envs/realpde/bin/python`, `REAL=$RPDE/train_real/train_real`, `SIM=$RPDE/train_sim/train_sim`,
-`U=Track_1/unet`; training commands run from `Track_1/unet/`.
+`U=Track_1/unet` for the code and `OUT=${RPDE_REPRO_OUT:-$U}` for the checkpoints; training commands run
+from `Track_1/unet/`.
 
 ---
 
@@ -99,9 +104,13 @@ band's error field; the three `fno_r18_cmb3sim*` are R25's and are superseded by
 # arch_vit_cmb3sim   : §1.2's second minus `--all-data`, plus `--sim-exclude-held`.  (seed 1)
 ```
 
-**`arch_vit_d384.pth` was written by an older `train2.py`**: its `config` has no `lam_cov`, `cov_c`, `mixup`,
-`sam_rho`, `subpix`, `aug_mask` or `aux_*` keys. Today's default for each is the off value, so the *recipe* is
-recoverable; the *code* that made the weights is pinned nowhere (§6.7).
+**All four ViTs were written by an older `train2.py`** (verified key by key against today's parser, §8):
+every one of them lacks `drop_path`, `max_epoch`, `oracle_cond` and `teacher*`, and `arch_vit_d384.pth` —
+the oldest — also lacks `lam_cov`, `cov_c`, `mixup`, `sam_rho`, `subpix`, `aug_mask`, `mode_drop`,
+`lam_tail`, `sim_map`, `sim_p_*`, `lam_p_sim` and `aux_*`. Today's default for each is the off value, so the
+*recipe* is recoverable and the commands above are exact; what is not pinned is the *code* that made the
+weights (§6.7), and a feature that is off today may still consume a random draw that the older code did not,
+so a re-train is a score match, not a checksum match (§7).
 
 ### 1.4 Both tracks — the four F-FNO members (`ffno_all_w40l8_sim_s1..s4`)
 
@@ -120,6 +129,12 @@ done
 No `--var-mlp`, no `--lift-mlp`, no `--drop-path`; `--sim-exclude-held` is **absent**, as for every
 all-data run (§1.1). Jobs `pz_ffnosimAll1..4` on Pitzer, 2026-09-20; `config["git"]` records the
 `train2.py` commit (`7ea0a86-dirty` for s1/s2, `d8926cb-dirty` for s3/s4 — §6.7).
+
+Those seven jobs also passed **`--ckpt-every 20 --resume`** (it is in their `train2_argv`), which
+`reproduce.sh` does not: it writes an epoch-boundary resume file so a preempted 4½-hour run restarts where
+it stopped. Every one of the seven logs `resume: no checkpoint … starting from scratch`, so **none of them
+resumed and the two flags changed nothing about the weights** — but add them to any re-train on a
+`--requeue` partition.
 
 **Superseded, R28 / T2R13:** the same command **without the `--sim …` line**, written as
 `ffno_all_w40l8_s$s.pth` (`sim: ""`), jobs `rp_ffnoAll1..4`. Those four are still in `Track_1/unet/`
@@ -302,7 +317,7 @@ Superseded stages, kept because they are what the scored packages cost:
 
 | # | gap | what it would take |
 |---|---|---|
-| 6.1 | **Every shipped checkpoint exists only as an untracked `.pth` under `Track_1/unet/`** (`.gitignore` line 2) — 15 for the superseded packages, plus the 7 sim files of the current one. They were produced by one-off sbatch jobs on scratch, none of which is in the repo. | `reproduce.sh` is the end-to-end driver. It needs one real run to become evidence. |
+| 6.1 | **Every shipped checkpoint exists only as an untracked `.pth` under `Track_1/unet/`** (`.gitignore` line 2) — 15 for the superseded packages, plus the 7 sim files of the current one. They were produced by one-off sbatch jobs on scratch, none of which is in the repo. | **HALF CLOSED 09-20 (verifier, §8):** `reproduce.sh` now runs — every stage, both builds, both gates, in a 2-epoch smoke; its build re-creates both uploaded archives array for array from the shipped `.pth` (§8.4); and one training stage re-run at 400 epochs reproduces its shipped checkpoint's score to four decimals (§8.5). What is still unrun is the other 10 full-fidelity stages, ~32 GPU-h. The `.pth` files themselves are still untracked and still exist in one place. |
 | 6.2 | ~~**T2R13's three band twins `p2_ffno_l8_s{1,2,3}.pth` are only on `/fs/scratch/.../screen/p2/`** — not in the repo, not in any uploaded archive, and scratch is purgeable.~~ | **CLOSED.** All six F-FNO twins are now in `Track_1/unet/` alongside the members: the no-sim `p2_ffno_l8_s{1,2,3}.pth` and, since 2026-09-20, the sim twins `p2_ffno_l8_sim_s{1,2,3}.pth` the current band was fitted from (copied, not moved; the scratch originals stay under `members/ffno_sim/` and `screen/p2sim/`). They are still untracked (6.1), so the scratch copies remain the only redundancy. |
 | 6.3 | **The band's bit-reproducibility, corrected 2026-09-18.** It *is* bit-reproducible for the band of record: refitting `t2r13_p2ffnoL8x4.npz` from its own inputs (the L8 twins + the two ViT twins, ALPHA 0.60, `--band-p 0.45`, `--fit-on seen --fit-aoa 15 20`) **reproduces it bitwise, md5 `b99d177d889126b0734bee0680bc69b0`** — verified while building the `--fill-unscored` variant. What is *not* reproducible is a refit with a **different twin set**, which moves whole populations of elements (R9→R10 was +1.410 `sps`). | Unchanged in practice: scored bands stay committed in `Track_1/bands/` and reproduction reuses them via `RPDE_BAND`; never refit a package of record with a different twin set. The bitwise result means an organizer re-running our recipe gets our band, which is what the reproducibility gate actually asks. |
 | 6.4 | ~~**`FFNO_PATH` (dense / fft) is baked by `$SCRATCH/jobs/patch_ffno_path.py`**, which is not in the repo and is not called by `build_round13.sh`. T2R13 cannot be rebuilt without it.~~ | **CLOSED 09-18 (forge).** The helper is now `Track_1/submit_fno/bake_ffno_path.py` and `build_round13.sh` calls it behind **`RPDE_FFNO_PATH`** (unset = both `submission.py` untouched, so every non-F-FNO build is byte-for-byte what it was). Verified against the uploaded T2R13 archive: the block the repo now writes is **byte-identical** to the one it shipped. The scratch copy is deleted and the four `rp_pkg_*` job scripts point at the repo path. |
@@ -325,7 +340,144 @@ CUDA/cuDNN version or `OMP_NUM_THREADS`. A re-train on the organizers' A800s wil
 the same seed, so the acceptance test must be a **score** test, not a checksum: rebuild, run both strict
 gates, and require the four error subscores inside the seed spread (±0.017 `wfinal` per member, ~±0.01 at
 four). Everything downstream of training *is* deterministic: the band solve is a sort, `_fno.fuse()` is exact
-to ~1e-8 with TF32 off, int8 packing is deterministic, and `AMP` self-checks at import.
+to ~1e-8 with TF32 off, int8 packing is deterministic, and `AMP` self-checks at import — **measured 09-20**,
+both archives rebuilt to arrays identical to the uploaded ones at 0.0e+00 (§8.4).
+
+**Measured on the same GPU model, 09-20 (§8.5):** re-training one twin from the same code and seed on
+another node of the same cluster is bit-identical for ~40 epochs and then drifts in the 5th decimal, and
+after 400 epochs it scores **the same `wfinal` to four decimals** (81.9865). So the nondeterminism above is
+real but far below the seed floor; the cross-*hardware* case is the one that still needs the score test.
 
 Also worth telling the organizers: **`time` is measured on their cluster**, so `board_rounds.py`'s latency
 constants do not transfer, and `AMP_ACTIVE` is the only fingerprint of which precision path ran.
+
+---
+
+## 8. Running `reproduce.sh` — the knobs, the smoke, and what it proved (2026-09-20)
+
+### 8.1 The five knobs
+
+All five are no-ops when unset, so the default invocation is byte-for-byte the pipeline of record.
+
+| knob | what it does |
+|---|---|
+| `RPDE_REPRO_OUT=<dir>` | write **and read back** every checkpoint there instead of `Track_1/unet`. `U` stays the *code* dir (`train2.py` imports `model.py` as a sibling); `OUT` is the *output* dir, and `--out` is now the absolute path. Before this they were one variable, and the `P2` knob §6.2 documents was broken: with `P2` outside `U` the run wrote into `U` and then failed its own existence check. |
+| `RPDE_REPRO_EPOCHS=<n>` | `--epochs` for every training stage. 400 is the recipe; anything else is a **smoke** and the script then refuses to write into `Track_1/unet`, or to run at all in a tree that has `../sub_candidates` beside it. |
+| `RPDE_REPRO_STAGE="a b"` | run only these stage functions, in order, and no build — the header's "split across the job cap", which until now had no way to call one function. |
+| `RPDE_REPRO_SEEDS="1 2"` | narrow every seed loop (default `1 2 3` twins, `1 2 3 4` members). |
+| `RPDE_REPRO_FITBAND=1` | **fit** the band from the twins this run trained (`RPDE_BAND_FILL=1`, `--fill-unscored`) instead of reusing the committed one. Reuse is right for reproducing a *scored* package (§3); the fit is what a new member set needs, and it is what the smoke exercises. |
+
+`reproduce.sh` also reads the two `SUBMITTABLE` lines out of the build's own log and **fails if either gate
+did not pass** — `build_round13.sh` does not propagate its gates' exit codes (CLAUDE.md), and before this
+the script printed `DONE` over a failed gate.
+
+### 8.2 The smoke must run from a copy of the repo
+
+`build_round13.sh` stages both archives into `../sub_candidates` and **its `SUB` is not overridable**; the
+band it writes lands in `Track_2/submit/band8.npz` and it `sed`s both `submission.py` files (§6.6). So a
+smoke runs in a detached worktree on scratch, where `../sub_candidates` does not exist and nothing it
+touches is the working tree:
+
+```bash
+git worktree add --detach /fs/scratch/PAS1187/qwu/tmp/realpde/repro/repo HEAD
+cd /fs/scratch/PAS1187/qwu/tmp/realpde/repro/repo
+ln -s /users/PAS1187/qwu/workspace/realpde/main/Track_1/val_{seen,unseen}.npz Track_1/   # derived caches
+RPDE_REPRODUCE_GO=1 RPDE_REPRO_EPOCHS=2 RPDE_REPRO_FITBAND=1 \
+  RPDE_REPRO_OUT=/fs/scratch/PAS1187/qwu/tmp/realpde/repro/smoke_unet bash reproduce.sh both
+```
+
+on one GPU node (`pz_repro_smoke`, `-p gpu-exp -c 4`). The sim-map caches (§2) and `val_{seen,unseen}.npz`
+are absolute scratch paths, so they are found from anywhere; nothing else in the pipeline is.
+
+The smoke's two archives carry the package-of-record's `RPDE_TAG`, because the tag is the recipe's, not the
+run's — they are renamed `SMOKE_2EPOCH_*` on scratch so nothing can confuse them with an upload.
+
+### 8.3 The smoke: every stage runs (job `pz_repro_smoke` 54416675, V100-32G, 1 513 s = 0.42 GPU-h)
+
+`reproduce.sh both` at `--epochs 2` exited **0** with **2/2 SUBMITTABLE**, having run, in order: the 2 ViT
+twins, the 3 F-FNO+sim twins, the 2 ViT members, the 4 F-FNO+sim members (11 checkpoints, ~2 min each),
+`fit_band.py --fill-unscored` (touched 3 436 of 81 920 elements, `untouched elements bit-identical: True`),
+the ALPHA / FUSE / AMP / GRAPH / SPEC_PATH / HOST_WRITE / `FFNO_PATH` bake, `build_zip.py` +
+`validate_strict.py` (36.40 MB extracted, all four contract checks, order-independence at 0.0e+00 drift),
+and `build_t2.py` + `validate_t2.py` (336 streamed steps, no aliasing, CUDA/CPU paths bit-identical,
+stateless replay bit-identical). Nothing reached `Track_1/unet`, `Track_1/bands` or `../sub_candidates`.
+
+The gates' error subscores are **worthless** at 2 epochs (rel_l2 0.2100 against the shipped 0.0592) — they
+are there to prove the code path, not the model. **Neither timing is board evidence**: `2.696 ms/window` on
+Track 1 and `4.932 ms/step` on Track 2 are a V100S, where the board is A100-class and the private set is an
+A800, and the 6 members were 2-epoch weights.
+
+Three plumbing bugs the smoke and the static pass found, all fixed in `reproduce.sh` and none in a recipe:
+the `--out` basename that broke `P2`/`RPDE_REPRO_OUT` (§8.1), the unchecked gate exit codes (§8.1), and the
+missing way to run one stage. **The recipes themselves need no change**: all 11 command lines were parsed
+with today's `train2.py` parser and compared key by key against the shipped checkpoints' `config` —
+**0 mismatches** on every shared key, and the only absent keys are the ViT schema drift of §1.3.
+
+### 8.4 The build, at full fidelity: the archives rebuild bit for bit (job `pz_repro_ident` 54416918, 47 s)
+
+The smoke proves the build *runs*; this proves it rebuilds **the package of record**. The same
+`reproduce.sh both`, with `RPDE_REPRO_OUT` pointed at the shipped `Track_1/unet` so all eleven training
+stages `SKIP  … (exists)`, ran the band reuse, the constant bake and both gates in **47 s** from the
+worktree of HEAD — **2/2 SUBMITTABLE** — and `verify/pkg_identity.py` then compared the two archives it
+produced against `sub_candidates/submitted/track{1,2}_r34_p2ffnoL8sim_fill.zip`:
+
+| | prediction | lower | upper | verdict |
+|---|---|---|---|---|
+| Track 1 | 0.000e+00 | 0.000e+00 | 0.000e+00 | **IDENTICAL** (tolerance 1e-5) |
+| Track 2 | 0.000e+00 | 0.000e+00 | 0.000e+00 | **IDENTICAL**, CUDA graph active in both |
+
+So everything downstream of the weights — band, ALPHA, `fuse`, int8 packing, `AMP`, `SPEC_PATH`,
+`HOST_WRITE`, `FFNO_PATH`, both entry points — is reproduced exactly by the committed script, on a GPU that
+is not the one the package was built on. The rebuilt Track-1 zip is even the same 30 282 465 bytes.
+
+This also measures §6.6: the committed `submission.py` carries **`AMP = None` and no `FFNO_PATH`** — the
+tree was restored after the r34 build — so the shipped constants exist *only* as `build_round13.sh`
+arguments. `reproduce.sh` passes all of them, and the identity above is the proof that it passes them
+right; editing the constants by hand instead is how a reproduction silently ships fp32.
+
+### 8.5 Fidelity: one stage at 400 epochs against its shipped twin (job `pz_repro_fid` 54416670)
+
+The build reproduces exactly because nothing in it is stochastic. Training is the part that can drift, so
+the script's **own** `twins_ffno` stage was re-run at full fidelity —
+`RPDE_REPRO_STAGE=twins_ffno RPDE_REPRO_SEEDS=1`, 400 epochs, into a scratch `RPDE_REPRO_OUT` — and scored
+with the instrument the shipped twin was scored with, `screen_sets.py --arm repro_p2_ffno_l8_sim_s1`.
+Same code (worktree of 9e8f868 against the shipped `d7492c7-dirty`), same seed, same cluster and same GPU
+model (Pitzer V100S-32G), 15 750 s against the shipped 15 743 s.
+
+| `p045_full`, K1 | shipped `p2_ffno_l8_sim_s1` | re-trained | Δ |
+|---|---|---|---|
+| rel | 0.075748 | 0.075748 | **+0.000000** |
+| tke | 0.495154 | 0.495176 | +0.000022 |
+| mvpe | 0.068372 | 0.068371 | −0.000001 |
+| sps | 45.5413 | 45.5419 | +0.0006 |
+| **wfinal** | **81.9865** | **81.9865** | **+0.0000** |
+
+against a seed spread of **0.011** over the three sim twins (81.9865 / 81.9944 / 81.9973) — the
+reproduction is three orders of magnitude inside it. The training trace is *bit-identical* for the first
+~40 epochs (`loss 4.73662 → 2.70188 → 1.74383 …`, every component) and then drifts in the 5th decimal,
+which is cuDNN's non-determinism (§7), not the recipe: the final epoch reads `loss 0.76131 field 0.06190
+var 0.37984 tke 0.37793` on both runs and differs only in `div`, at 1.12507 against 1.12508.
+
+**What this does and does not prove.** It proves the driver trains *the shipped recipe* — one member, on
+the same hardware. It does not prove the other ten stages (~32 GPU-h, unrun), and it says nothing about
+the organizers' A800s, where §7's score test is still the acceptance criterion.
+
+### 8.6 What the audit cost, and what it left unverified
+
+Three Pitzer jobs, **4.87 GPU-h**: `pz_repro_smoke` 54416675 (0:25:14), `pz_repro_ident` 54416918
+(0:01:31), `pz_repro_fid` 54416670 (4:24:56). Scratch under `/fs/scratch/.../realpde/repro/`, sbatch
+scripts in `/fs/scratch/.../realpde/jobs/pz_repro_*.sbatch`.
+
+Still unverified, in the order it would matter if a shortlist arrives:
+
+1. **The other ten training stages at 400 epochs** (~32 GPU-h). One was checked; the two ViT recipes are
+   the ones with schema drift behind them (§1.3), so they are the ones worth checking next.
+2. **`time` on the evaluation GPU.** Every latency number in this file's §8 is a Pitzer V100S. The board
+   is A100-class, the private set an A800, and `validate_strict`'s ms/window is not a board prediction
+   even on the right card — the gate exists for the contracts, not the clock.
+3. **Anything trained before 09-18 cannot be pinned to a commit** (§6.7), so an exact re-creation of the
+   four ViTs is a score match at best.
+4. **`../sub_candidates` is still not redirectable** without editing `build_round13.sh`; the worktree of
+   §8.2 is a workaround, not a fix.
+5. **The derived caches** `Track_1/val_{seen,unseen}.npz` and the two sim maps were reused, not rebuilt,
+   so §6.8's "nothing asserts a rebuilt cache matches the one a checkpoint saw" is untouched.
