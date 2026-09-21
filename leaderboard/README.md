@@ -112,7 +112,7 @@ declared once, side by side, through `lb.py`'s `t(en, zh)`; ledger strings go th
 
 | quantity | source | last measured |
 |---|---|---|
-| subscore weights | `Track_1/board_rounds.py` → `Track_1/final_v9.py`: free linear fit (no Σw = 1) over every board round, **pooled across both tracks** | 32 rounds, max residual 0.0025 (R6; the gate allows each row its recording precision) |
+| subscore weights | `Track_1/board_rounds.py` → `Track_1/final_v9.py`: free linear fit (no Σw = 1) over every board round, **pooled across both tracks** | **42 rounds** (2026-09-20), max residual 0.0033 (R6; the gate allows each row a full unit of its recording precision) |
 | `w_time`, read directly | pairs of rounds whose four error subscores are identical, so only `time` moved (first R13 → R14, largest R20 → R23) | 0.0956–0.0962 over five pairs (fit 0.0965) |
 | proxy → board ratios | `Track_1/predict_board.py --anchor` / `Track_1/proxy_calib.py` (GPU; once per round) | rel 1.068 · tke 1.136 · mvpe 1.454 |
 | SPS element tail `f` | `Track_1/calib_band13.py`, inverted from a board SPS for a known band | 1.360 (T1) / 1.350 (T2) |

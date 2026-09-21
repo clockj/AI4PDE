@@ -23,45 +23,44 @@ working branch `qwu/dev`.
 5. The live record, above any table in prose: `Track_1/board_rounds.py` (every scored round),
    `final_v9.py` (the weight fit), `python leaderboard/lb.py --html`.
 
-## Current state — 2026-09-19
+## Current state — 2026-09-20
 
 | | `final` | package |
 |---|---|---|
-| Track 1 best | **81.401196** | **R28** F-FNO L8 ×4 + ViT ×2 (09-18) |
-| Track 2 best **by score** | **81.323990** | T2R16 (09-19) — **a time draw; the method of record is T2R13's** (81.314785) |
-| leader, read 09-17 | T1 81.9613 · T2 82.05275 | |
-| **top-10 cut, read 09-18** | **T1 81.624 (we are #21, +0.223) · T2 81.511 (#14, +0.197)** | the shortlist is the objective |
+| Track 1 best | **81.418569** | **R30** = r34, F-FNO+sim ×4 + ViT ×2 (09-20) |
+| Track 2 best | **81.333776** | **T2R17** = the same archive contents (09-20) |
+| **method of record, BOTH tracks** | **r34** `p2ffnoL8sim_fill` | members `ffno_all_w40l8_sim_s1..s4` + the two ViTs · band `r34_p2ffnoL8sim_fill.npz` |
+| rank, read 09-20 | **T1 #23** (was #21) · **T2 #15** (was #14) | cut not reported this read; 09-18 it was T1 81.624 / T2 81.511 |
 
-* **09-19, two null levers, both fingerprints exact** (detail: `ROUNDS.md`, `ROADMAP.md` Part 2).
-  **R29** (R28's package on the batch-tiled `_fno.py`): all four error subscores **bit-identical to
-  R28**, `time` +0.016 board ms — inside drift. **The tiled path is proven exact on the eval GPU and
-  is the base of every later package; the tiling is closed as a lever and kept as code.** **T2R16**
-  (T2R13's package with the `--fill-unscored` band, prediction array bit-identical): **`sps` −0.0066,
-  so the fill bought nothing here** — the hidden set's blanking matches the fit split's three
-  recordings. Its +0.009 net is a **−0.177 ms time draw**, not a method improvement. Dev-board cost
-  **−0.0016 `final`**; memo §4.9's −0.62 exposure on a *differently* blanked private recording is
-  untouched, so **the fill stays in the Decision-phase method as insurance with a measured price**.
-* **NO LEVER ≥ +0.05 REMAINS ON THE DEV BOARD.** 09-18 closed the last big one: distillation fails at
-  every configuration (the teacher's mean transfers, its **variance does not**, −0.5 at K1 against the
-  82.3198 ceiling), ALPHA is closed, a third family is +0.001 for −0.21, and the ViT pair beats three
-  FNO members. **The shortlist needs +0.22 on Track 1 and +0.20 on Track 2, the cut is drifting up,
-  and there is no identified source.** Slots are not spent on timing draws.
-* **09-20: HOLD on both tracks** (`../sub_candidates/README.md` §NOW). `track1_r33_p2ffnoL8_fill.zip`
-  is staged but **is not a candidate** — T2R16 says the fill reads ≈ −0.002 here; it is retained for
-  the Decision-phase method.
-* **Two calibration facts from 09-18.** (a) **A BOARD read of a family transfers across tracks at
-  ≈ 0.85×; a PROXY read does not** (R28, from the T2R13−T2R12 pair). (b) **"Halve the local deltas"
-  is for arms that REMOVE error** — a member REMOVAL is charged in full (T2R15).
+* **09-20, sim co-training ships and is the best on both boards.** R30 **+0.017** over R28, hitting its
+  81.4179 estimate **to 0.0007**; T2R17 **+0.010** over T2R16 and **+0.052 at equal time** — its miss is
+  entirely a **+0.704 ms `time` draw**, the top of Track 2's drift range. Three readings. (a) **The mean
+  field transfers at ~1:1 and `rel`/`tke` do not**: `mvpe` **+0.056 / +0.068**, the *un-halved* twin
+  delta, while `rel` came back slightly worse on both and `tke` split (−0.069 T1, +0.026 T2). That is
+  the AoA-holdout mechanism (`plan_20260917.md` §11) confirmed on the board. (b) **`sps` beat its
+  a-factor: containment +0.134 / +0.160** from the band refit on the sim twins, reproduced on both
+  boards, so it is real. (c) **Every row except `tke` has the same sign across tracks.**
+* **The sim lever is small here and large out of distribution: +0.02 on the board against +1.12 mean at
+  a held-out AoA** (§11.4: AoA 10 +0.281, AoA 20 +1.251, seed 2 +0.981). **Shipped for the private set,
+  not for the board number.**
+* **We gained score on both boards and lost a place on both** (#21→#23, #14→#15): the field is moving
+  faster than we are, and **no lever ≥ +0.05 remains on the dev board** (distillation, ALPHA, a third
+  family, the ViT-pair drop, the tiling and the band fill are all closed — `ROADMAP.md` Part 2).
+* **09-21: HOLD on both tracks.** Nothing staged beats r34, and **a timing draw is not resubmitted** —
+  T2R17's own `time` row is what one costs.
+* **Calibration.** A **board** read of a family transfers across tracks at ≈ 0.85×; a **proxy** read
+  does not (R28). "Halve the local deltas" is for arms that REMOVE error — a member REMOVAL (T2R15) and
+  **a mean-field gain (R30) are charged in full**.
 * **THE RULES PIVOT (09-17):** slots are **learning** slots aimed at the **top-10 cut**; every shipped
-  checkpoint must be **re-creatable from the release** (`REPRODUCE.md`, `reproduce.sh`); the private
-  set is OOD in AoA and Re, so an **AoA-holdout screen** replaces R14's "hidden set in range" there
-  (`plan/lit_20260917.md` §2, `plan_20260917.md` §6).
-* **Packages of record — the same members on both boards.** 4 all-data F-FNO w40 L8 fused **dense** +
-  2 ViTs · int8 `tensor` · band `t2r13_p2ffnoL8x4.npz` (T2's Decision-phase method takes
-  `t2r16_p2ffnoL8_fill.npz`) · ALPHA 0.60 · fp16, bmm, tiled `_fno.py` (T1 adds HOST_WRITE torch).
+  checkpoint must be **re-creatable from the release** (`REPRODUCE.md`, `reproduce.sh`); the private set
+  is OOD in AoA and Re, so the **AoA-holdout screen** replaces R14's "hidden set in range" there.
+* **Packages of record — one package, both boards.** 4 all-data **sim-co-trained** F-FNO w40 L8 fused
+  **dense** + 2 ViTs · int8 `tensor` · band **`r34_p2ffnoL8sim_fill.npz`** (the `--fill-unscored` refit
+  on the sim twins) · ALPHA 0.60 · `BLEND_BETA 0` · fp16, bmm, tiled `_fno.py` (T1 adds HOST_WRITE
+  torch). Twins `p2_ffno_l8_sim_s1..s3` + the two ViT twins.
 * **Where the remaining score is.** Everything package-level is closed (`ROADMAP.md` Part 2); what is
-  left is **generalization, not score** — the AoA-holdout screen for the private set, and
-  `reproduce.sh` verified end to end. See §Open questions in the newest handoff.
+  left is **generalization, not score** — `reproduce.sh` end to end and Decision-phase release
+  readiness. Local evaluation and the board constants that correct it: `EVALUATION.md`.
 
 ## Standing rules
 
@@ -210,9 +209,10 @@ Constants in `board_rounds.py` (`INV_MS_T1/T2`, `LOC_SLOPE_*`, `PREC_SLOPE_T1`, 
 * **ViT ×2** (`ViT2d`, dim 384, 8 layers, 6 heads, dropout 0.3, no `--var-mlp`/`--lift-mlp`):
   `arch_vit_all_s1.pth` (plain MSE field, `--lam-grad 1.0 --lam-v 0.3`, no sim) and
   `arch_vit_all_cmb3sim_s3.pth` (cmb3sim losses and sim).
-* **The shipped members are F-FNO** (`ffno_all_w40l8_s1..s4.pth`, w40 L8 modes 16×32, screen recipe +
-  `--all-data`) on BOTH tracks. **Held-out twins** (the band's error field): `p2_ffno_l8_s1..s3.pth`,
-  `fno_r18_cmb3sim{,_s2,_s3}.pth` for FNO work, `arch_vit_d384.pth`, `arch_vit_cmb3sim.pth`.
+* **The shipped members are F-FNO WITH SIM CO-TRAINING** (`ffno_all_w40l8_sim_s1..s4.pth`, w40 L8 modes
+  16×32, screen recipe + sim + `--all-data`) on BOTH tracks; the no-sim `ffno_all_w40l8_s*` are the
+  superseded R28/T2R13 members. **Held-out twins** (the band's error field): `p2_ffno_l8_sim_s1..s3.pth`,
+  plus `arch_vit_d384.pth` and `arch_vit_cmb3sim.pth`; `fno_r18_cmb3sim{,_s2,_s3}.pth` for FNO work.
 * **`train2.py`'s argparse defaults are NOT the recipe:** `--alpha-train` 1.0 (collapses the model),
   `--sim-loss shape`, `--lam-f` 1.0, `--lam-v/--lam-t` 1.0/0.5, `--loss rel`, `--width` 64,
   `--n-layers` 4, modes (12,16), `--epochs` 150.

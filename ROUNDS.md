@@ -2520,6 +2520,67 @@ private-set insurance.
 
 ---
 
+### Round 30 / T2R17 BOARD RESULT (2026-09-20) — sim co-training ships, and it is worth +0.02 here and +1.12 out of distribution
+
+One package, `r34_p2ffnoL8sim_fill`, on both boards: R28's/T2R13's package with the four F-FNO w40 L8
+members **and their three band twins** retrained with sim co-training, the band refit from the sim twins
+with `--fill-unscored`, everything else byte-identical to r33 (build 7412354, `9e8f868`). **It is the new
+best on both tracks and the method of record on both.**
+
+| | rel_l2 | tke | mvpe | time | sps | final |
+|---|---|---|---|---|---|---|
+| R28 on the board | 94.890524 | 78.952686 | 94.205730 | 92.021555 | 42.139290 | 81.401196 |
+| R30 estimate of record | 94.9009 | 78.9878 | 94.2336 | 92.0216 | 42.1617 | 81.4179 [81.381, 81.456] |
+| **R30 actual** | 94.878882 | 78.883397 | 94.261277 | 91.959093 | 42.263813 | **81.418569** |
+| vs R28 | −0.011642 | −0.069289 | **+0.055547** | −0.062462 | **+0.124523** | **+0.017373** |
+| T2R16 on the board | 94.890753 | 78.781089 | 94.063576 | 91.750947 | 42.056535 | 81.323990 |
+| T2R17 estimate of record | 94.9011 | 78.8165 | 94.0921 | 91.7509 | 42.0847 | 81.3422 [81.282, 81.405] |
+| **T2R17 actual** | 94.885309 | 78.806628 | 94.131921 | 91.313614 | 42.241165 | **81.333776** |
+| vs T2R16 | −0.005444 | +0.025539 | **+0.068345** | **−0.437333** | **+0.184630** | **+0.009786** |
+
+**R30 hit its estimate to 0.0007** — the closest prediction this project has made — and it did so while
+getting the *composition* of the gain wrong, which is the interesting part.
+
+1. **Not a null round.** All four error subscores differ from the anchors on both tracks; the
+   `pkg_identity` fingerprint was 8e-2 max |Δ|. Every previous 09-19 slot was built so that nothing
+   *could* move; this one moved everything, and the predictions were still inside their brackets.
+2. **The mean field transfers at ~1:1; `rel` and `tke` do not.** `mvpe` came back **+0.0555 / +0.0683**,
+   essentially the **un-halved** twin delta, where the standing rule would have halved it. `rel` was
+   **−0.0116 / −0.0054** — slightly *worse* on both boards — against a predicted +0.010, and `tke` split:
+   **−0.0693 on Track 1, +0.0255 on Track 2**, against a predicted +0.035. This is exactly what the
+   AoA-holdout screen said (`plan_20260917.md` §11): **sim teaches the mean field.** The board has now
+   confirmed the mechanism on the metric that measures the mean field, and refuted it on the two that do
+   not.
+3. **`sps` beat its a-factor and containment is why.** Forced −0.0096 / +0.0251 against actual +0.1245 /
+   +0.1846, i.e. **containment +0.1342 on Track 1 and +0.1595 on Track 2**. The band refit on the sim
+   twins moved containment on its own, and **it reproduced across both boards**, which is what makes it
+   a finding rather than a draw. Add both to the containment ledger.
+4. **Cross-track: every row except `tke` has the same sign.** With R28's 0.85× transfer this is the
+   second consecutive package where the two boards agree on direction, and `tke` is the one place they
+   do not.
+5. **T2R17's miss is entirely `time`, and it is a bad draw.** 5.892 → **6.596 board ms, +0.704** — the
+   top of Track 2's 0.4–0.7 ms drift range — worth −0.042 `final`. **At equal time the package is
+   +0.052 on Track 2**, which is what it is actually worth; the +0.010 on the scoreboard understates it.
+   Track 1's `time` moved +0.094 ms, ordinary drift. **Price Track-2 latency from `t2r16`'s 5.892 ms,
+   not from this row's level.**
+
+**The size of the sim lever, stated honestly.** On the dev board it is **+0.02** (Track 1) and **+0.05
+at equal time** (Track 2). At a **held-out AoA** it is **+0.281 at AoA 10, +1.251 at AoA 20, replicated
+at +0.981 on seed 2 — mean +1.12** (`plan_20260917.md` §11.4). **It was shipped for the private set, not
+for this number**, and the board result is consistent with that: a small, real, mean-field gain here and
+a large one where the angle is novel. The pre-registered rule it passed is in ROADMAP Part 1.
+
+* **Weights after 42 pooled rounds** (`Track_1/final_v9.py`): rel_l2 **0.47792** · tke **0.10094** · mvpe
+  **0.09204** · time **0.09659** · sps **0.24975**, Σw 1.0172, max |residual| **0.0033** (R6).
+* **Ranks, read 09-20:** Track 1 **#23** (was #21 on 09-18), Track 2 **#15** (was #14) — we gained score
+  on both boards and lost a place on both, which is the clearest statement yet that **the field is
+  moving faster than we are**. The user did not report the #10 cut this time, so `lb.py:RANK_READS`
+  carries these two rows with the cut recorded as unknown and the page still draws the **09-18** cut
+  line, labelled with its date.
+* **The containment ledger** gains **sim band refit +0.134 (R30) / +0.160 (T2R17)**.
+
+---
+
 ## CLAUDE.md detail moved here on 2026-09-15 (verbatim)
 
 `CLAUDE.md` was trimmed back under 30,000 characters on 2026-09-15, when the two 09-15 packages, the

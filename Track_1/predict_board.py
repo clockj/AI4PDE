@@ -306,8 +306,21 @@ ANCHORS = {
     # record. Anchor Track-1 work on `r28` (F-FNO) or `r25` (FNO), not on `r29`.
     "r29": dict(rel_l2=94.890524, tke=78.952686, mvpe=94.205730, time=92.010936,
                 sps=42.139290, final=81.400174),
+    # ROUND 30 / T2R17, 2026-09-20 -- r34, the SIM-CO-TRAINED members, and the new best on BOTH boards.
+    # R28's/T2R13's package with the four F-FNO w40 L8 members and their three band twins retrained with
+    # sim co-training and the band refit from the sim twins (`r34_p2ffnoL8sim_fill.npz`). **THESE ARE THE
+    # DEFAULT ANCHORS FROM NOW ON**, `r30` for Track 1 and `t2r17` for Track 2: they are the method of
+    # record on both boards. Note when pricing from them: the sim lever moved the MEAN FIELD (mvpe
+    # +0.056 / +0.068, the un-halved twin delta) and NOT rel or tke, and its `sps` gain is containment
+    # (+0.134 / +0.160) from the band refit. `t2r17`'s `time` is a BAD DRAW -- 6.596 board ms, +0.704 on
+    # the anchor, the top of Track 2's drift range -- so price Track-2 latency from `t2r16`'s 5.892 ms
+    # or bracket it, never from this row's level.
     "t2r16": dict(rel_l2=94.890753, tke=78.781089, mvpe=94.063576, time=91.750947,
                   sps=42.056535, final=81.323990),
+    "r30": dict(rel_l2=94.878882, tke=78.883397, mvpe=94.261277, time=91.959093,
+                sps=42.263813, final=81.418569),
+    "t2r17": dict(rel_l2=94.885309, tke=78.806628, mvpe=94.131921, time=91.313614,
+                  sps=42.241165, final=81.333776),
     "r10": R10,
 }
 

@@ -187,6 +187,23 @@ ROUNDS = [
     #   resolution -- and the board agreed by returning nothing. Net -0.001022, all of it that drift.
     #   THE TILING IS CLOSED AS A LEVER AND KEPT AS CODE. R28 (81.401196) stays the Track-1 best.
     ("R29 p2ffnoL8 TILED/2inv", "2026-09-19", 0, 94.890524, 78.952686, 94.205730, 92.010936, 42.139290, 81.400174),
+    # R30 = r34 = THE SIM-CO-TRAINED MEMBERS, and a NEW TRACK-1 BEST. R28's package with the four F-FNO
+    # w40 L8 members and their three band twins retrained with sim co-training, the band refit from the
+    # sim twins with --fill-unscored (`r34_p2ffnoL8sim_fill.npz`); everything else byte-identical to r33.
+    # Archive `track1_r34_p2ffnoL8sim_fill.zip`, build 7412354 (9e8f868). Submission id not reported.
+    #   81.418569, +0.017373 over R28, against an estimate of record of 81.4179 [81.381, 81.456] -- HIT
+    #   TO 0.0007, the closest prediction this project has made.
+    #   1. NOT A NULL ROUND: all four error subscores differ from R28 (pkg_identity fingerprint 8e-2).
+    #   2. THE MEAN FIELD TRANSFERS AT ~1:1, rel AND tke DO NOT. mvpe +0.0555 is the UN-HALVED twin
+    #      delta; rel came back -0.0116 and tke -0.0693, both slightly WORSE, where +0.010 / +0.035 was
+    #      predicted. That is exactly the AoA-holdout finding (plan §11): sim teaches the MEAN FIELD.
+    #   3. sps +0.1245 = forced -0.0096 + CONTAINMENT +0.1342. The band refit on the sim twins moved
+    #      containment on its own, and T2R17 reproduces it (+0.1595), so it is real and not a draw.
+    #   4. `time` -0.0625 (5.480 -> 5.573 board ms, +0.094) is drift; at equal time the package is
+    #      +0.0237.
+    #   THE SIM LEVER IS SMALL ON THE BOARD AND LARGE OUT OF DISTRIBUTION: +0.02 here against +1.12 mean
+    #   at a held-out AoA (plan §11.4). It is shipped for the private set, not for this number.
+    ("R30 p2ffnoL8sim fill/2inv", "2026-09-20", 0, 94.878882, 78.883397, 94.261277, 91.959093, 42.263813, 81.418569),
 ]
 
 UNSCORED = []   # every round on both tracks now has full subscores
@@ -365,6 +382,18 @@ ROUNDS_T2 = [
     #   BEST-BY-SCORE on Track 2 (81.323990) while **the method of record is still T2R13's package**.
     #   Do not read this row as progress and do not anchor accuracy work on it.
     ("T2R16 p2ffnoL8 FILLBAND/2inv", "2026-09-19", 0, 94.890753, 78.781089, 94.063576, 91.750947, 42.056535, 81.323990),
+    # T2R17 = r34 on Track 2, the same archive contents as R30: sim-co-trained F-FNO members, band
+    # `r34_p2ffnoL8sim_fill.npz`. Archive `track2_r34_p2ffnoL8sim_fill.zip` (9e8f868). Submission id not
+    # reported. NEW TRACK-2 BEST BY SCORE, 81.333776: +0.009786 over T2R16 and +0.018991 over T2R13,
+    # which is the last package whose `time` was not a draw.
+    #   Estimate of record 81.3422 [81.282, 81.405] -- INSIDE the bracket, and THE WHOLE MISS IS `time`:
+    #   6.596 board ms against the anchor's 5.892, **+0.704 ms, the top of Track 2's 0.4-0.7 drift
+    #   range**. AT EQUAL TIME THE PACKAGE IS +0.052, which is what it is worth.
+    #   The accuracy rows agree with Track 1's: mvpe +0.0683 (the mean field, un-halved), rel -0.0054
+    #   (slightly worse), sps +0.1846 = forced +0.0251 + CONTAINMENT +0.1595 -- the same band-refit gain
+    #   R30 saw. **Every row except tke has the same sign across the two boards**; tke is +0.0255 here
+    #   against -0.0693 on Track 1, the one place the two boards disagree on this package.
+    ("T2R17 p2ffnoL8sim fill/2inv", "2026-09-20", 0, 94.885309, 78.806628, 94.131921, 91.313614, 42.241165, 81.333776),
 ]
 
 # The fit pools both tracks -- see the module docstring.  ROUNDS first, then ROUNDS_T2;

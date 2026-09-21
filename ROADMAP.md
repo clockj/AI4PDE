@@ -997,6 +997,30 @@ Sources: `realpdecompetition.github.io`, Codabench 17363 / 17385, quoted in `Tra
    `INV_MS_*` and every latency constant in `board_rounds.py` price the **dev board only**. And DINOv2
    initialization, already closed for being useless, is now closed on the rules as well.
 
+### 1.30 Sim co-training, measured on the board and out of distribution (2026-09-20)
+
+R30 / T2R17 shipped `r34`: R28's/T2R13's package with the four F-FNO w40 L8 members **and their three
+band twins** retrained with sim co-training, the band refit from the sim twins. Both are new bests.
+Detail in `ROUNDS.md`, "Round 30 / T2R17". The rule:
+
+* **Sim co-training is +0.02 on the dev board and +1.1 at a held-out AoA.** Board: +0.017 (T1) and
+  +0.010 (+0.052 at equal time) on T2. Held out (`plan_20260917.md` §11.4, the pre-registered rule it
+  passed in full): **AoA 10 +0.281, AoA 20 +1.251, seed 2 +0.981 — mean +1.12**, with `C3sim_vit2`
+  82.360 against 82.320. **Ship it for the private set; do not expect it to move the board.**
+* **The mean field transfers 1:1 to the board; `rel` and `tke` do not.** `mvpe` +0.056 / +0.068, the
+  **un-halved** twin delta, while `rel` came back slightly worse on both boards and `tke` split (−0.069
+  T1, +0.026 T2). The mechanism the AoA screen identified — sim teaches the mean field — is now
+  confirmed on the metric that measures it and refuted on the two that do not. **Charge a mean-field
+  gain in full, like a member removal, not halved.**
+* **Refitting the band on the new twins moved containment, on both boards: +0.134 / +0.160.** It
+  reproduced across tracks, which is what separates it from a draw. Refit the band whenever the twins
+  change — this is now a *measured* reason, not just the standing rule.
+* **`time` drift can swallow a real gain.** T2R17 drew +0.704 board ms, the top of Track 2's 0.4–0.7 ms
+  range, turning +0.052 into +0.010. Price Track-2 latency from `t2r16`'s 5.892 ms, not from T2R17's
+  level — and do not resubmit for a better draw.
+* **We gained on both boards and lost a place on both** (#21→#23, #14→#15). The dev board is a
+  qualifier and the field is moving faster than we are; the private-set method is the remaining work.
+
 ## Part 2 — Closed. Do not re-propose without new evidence.
 
 Everything here was closed by measurement, with the file that measured it. The list exists so a
@@ -1017,6 +1041,10 @@ new session does not spend a week re-deriving a negative.
 | **`StackedFFNO` batch tiling as a LEVER** | R29 = R28's package on the tiled `_fno.py`, all four error subscores bit-identical: `time` +0.016 board ms, inside drift. The package-level read had priced it at +0.004–0.009 `final`, below the board's resolution, and the board returned nothing. **Closed as a lever, KEPT as code** — the tiled path is the proven base of every later package. |
 | **Distillation of the shipping ensemble** | Four configurations (09-18, `plan_20260917.md` §10–10.2). The teacher's **mean** transfers and its **variance does not**, so the student cannot reproduce the σ head the band is fitted to: **−0.5 at K1** against the 82.3198 ceiling, far outside the −0.06 ship rule. The largest lever we had identified, and it is gone. |
 | **A third family in one package (F-FNO + FNO + ViT)** | **+0.001 of accuracy for −0.21 of `time`** (09-18). The invocation and the FLOPs are never repaid; two families plus the ViT pair is the ceiling. |
+| **Sim at the exact held-out cell** | The matched AoA-holdout read (arm S2in, `plan_20260917.md` §11.4): keeping sim at the held-out cell is **a wash, −0.004**, so the gain is sim's *general* mean-field teaching and not leakage of the held-out condition. Arm dropped. |
+| **Band width for a novel angle** | `--inflate-sweep` over the AoA-holdout reads (§11.2): **1.39 is already the held-out optimum**, so the shipped stretch needs no OOD correction. |
+| **Gating the blend on angle** | **No scalar window feature separates a novel angle** (§11.2) — there is nothing to gate on, so an angle-gated blend cannot be built, let alone tuned. |
+| **The ungated mean blend for the sim method** | Closed again for `r34` specifically (§11.3, `cddecd9`): F-FNO+sim passes all three pre-registered criteria and the ungated blend does not. `BLEND_BETA` stays 0. |
 
 **Closed on PHYSICS, not on an experiment (2026-09-17, `Track_1/plan/lit_20260917.md` §3.4):
 σ-amplitude modelling, i.e. every arm whose mechanism is "predict the fluctuation amplitude better".**
@@ -1136,6 +1164,32 @@ confirmed it from five directions.
 ---
 
 ## Part 3 — What to do next
+
+### THE LAST WEEK, 2026-09-21 → 09-27 (written 09-20; this supersedes everything below it)
+
+**Main Development closes 09-27.** The position: r34 is the method of record on both boards
+(81.418569 / 81.333776), we are **#23 / #15**, and **no lever ≥ +0.05 remains on the dev board** —
+Part 2 now closes distillation, ALPHA, a third family, the ViT-pair drop, the tiling, the band fill,
+and every AoA-screen arm except sim itself, which shipped. The dev board is a **qualifier**; the
+private set decides the prizes. So:
+
+1. **HOLD both slots unless a lever appears.** Nothing staged beats r34, and **a timing draw is not
+   resubmitted** — T2R17 lost 0.042 to one and that is what re-rolling buys. A slot spent on a package
+   we expect to score the same or worse costs a day and teaches nothing. If a lever does appear, it
+   must be a single controlled change with a pre-registered fingerprint, as R29/T2R16/R30 were.
+2. **Verify `reproduce.sh` end to end — this is the highest-value work left.** An irreproducible method
+   is **disqualified**, which is worth more than any board delta we could still find. A partial
+   verification (the twins and one all-data member from fresh seeds, then the band fit and the build)
+   is **≈ 15 GPU-h** and answers the question that matters: does the recipe in the repo rebuild the
+   package we shipped? `REPRODUCE.md` tracks what is verified and what is not.
+3. **Release readiness for the Decision phase.** Winners open-source two weeks before presenting, so
+   the repo has to be handed over as it stands: `EVALUATION.md` and `REPRODUCE.md` current, the closed
+   experiments filed under `Track_1/closed/` and `Track_2/closed/` with their verdicts, every shipped
+   band in `Track_1/bands/` with MANIFEST provenance, and every uploaded archive byte for byte in
+   `../sub_candidates/submitted/`.
+4. **Do not start anything that cannot finish and be verified by 09-27.** A half-trained arm is worse
+   than no arm: it cannot ship and it cannot be reproduced.
+
 
 > **As of 2026-09-14 the live plan is `Track_1/plan/plan_20260914.md`, the backbone campaign**,
 > with `../handoffs/HANDOFF_20260913.md` §4 for the latency levers. The P0–P4 below are the
@@ -1438,7 +1492,7 @@ implement self-normalization but measured it on a split blind to what it is for;
 |---|---|
 | Contracts, current measurements, standing rules | `CLAUDE.md` |
 | Per-round detail and measured baselines (the old `CLAUDE.md` through round 25, verbatim; new rounds appended) | `ROUNDS.md` |
-| **Every board round** (32, both tracks) + the free weight fit + the measured invocation cost | `Track_1/board_rounds.py`, `Track_1/final_v9.py` |
+| **Every board round** (42, both tracks) + the free weight fit + the measured invocation cost | `Track_1/board_rounds.py`, `Track_1/final_v9.py`; the fit and the constants that correct local evaluation are written up in `EVALUATION.md` |
 | Published calibration log (bilingual, regenerate + republish after every board result) | `leaderboard/lb.py --html` |
 | Board latency constants, MEASURED: invocation 1.151 / 0.866 board ms; FLOPs 1.75 / 0.60 board ms per 4060-eq local ms | `Track_1/board_rounds.py` (`INV_MS_*`, `LOC_SLOPE_*`, `board_ms()`, `time_score()`), `Track_1/predict_board.py` (`LAT_INV_*`, `LAT_LOC_*`) |
 | Every scored band, versioned (the one part of a package that cannot be rebuilt) | `Track_1/bands/` + `MANIFEST.md` |
