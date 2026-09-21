@@ -79,6 +79,131 @@ ROUNDS = [
     # frontier.  The prediction (81.188) over-read tke and sps, as the FNO-family proxy has
     # now done twice at this operating point.
     ("R17 L8do45x4/1inv a60", "2026-09-04", 915380, 94.745531, 78.635462, 93.974234, 92.988361, 41.324574, 81.169843),
+    ("R18 L8do45x4 hostw   ", "2026-09-06", 917177, 94.745531, 78.635462, 93.974234, 93.058602, 41.324574, 81.176572),
+    # R19 = the SIM members: four all-data w96 L8 do45 FNOs CO-TRAINED on mapped sim
+    # (--lam-sim 0.3 --sim-loss full), R18's exact shape so `time` is a pure draw.  It reads
+    # sim's ACCURACY, and the answer is: real, half the size the proxy said, and TKE goes the
+    # WRONG WAY.  rel_l2 -0.63 % of error (proxy said -1.19 %), mvpe -1.02 % (proxy -0.99 %,
+    # nearly exact), tke **+0.61 % WORSE** where both the proxy (-1.04 %) and the interior
+    # k-fold (+0.03 %, null) said otherwise, and `sps` +0.008 against a predicted +0.361.
+    ("R19 simx4/1inv a60 fp16", "2026-09-08", 918587, 94.776881, 78.532564, 94.031877, 93.030936, 41.332982, 81.186041),
+    # R20 = cmb3sim: R19's recipe plus round 18's three wave-1 winners (--lam-tgrad 0.3,
+    # --lam-v 0.15, --lam-cov 2.0/--cov-c 0.25).  Same shape, member count, invocation count and
+    # fast paths, so it is a single-variable A/B and the latency is R19's by construction.
+    # THE ACCOUNT'S BEST SCORE ON EITHER BOARD.  Recorded prediction 81.195 (per-sample factor)
+    # / 81.226 (local sps transferred 1:1); actual 81.240, i.e. above the optimistic end -- but
+    # +0.023 of that is a favourable `time` draw (93.031 predicted, 93.270 delivered).  At
+    # constant latency the accuracy part is +0.031 on this board and +0.049 on Track 2.
+    ("R20 cmb3simx4/1inv a60", "2026-09-09", 920369, 94.794521, 78.518609, 94.081696, 93.270089, 41.410372, 81.239831),
+    ("R21 xfam5 cmb3x4+ViT/2inv", "2026-09-10", 921000, 94.847008, 78.684381, 94.298686, 92.676031, 41.755710, 81.330636),
+    # R23 = R20's FOUR MEMBERS, UNFUSED.  The same checkpoints, the same fp16 packing, R20's own
+    # band byte for byte (md5 2eed9e6b...), `FUSE = False` the only difference -- 1 invocation
+    # becomes 4.  Deliberately NOT a score attempt: it is the only way to measure the invocation
+    # term, which had been FITTED since round 10 and never tested.
+    #   THE DESIGN HELD.  rel/tke/mvpe came back bit-identical to six decimals and `sps` moved
+    #   1.8e-05, so every point of the -0.225 is `time`.  3.795 -> 7.249 board ms for +3
+    #   invocations = **1.151 ms each**, against the fitted 0.435: the model was 2.65x LIGHT.
+    ("R23 cmb3simx4 UNFUSED/4inv", "2026-09-11", 921706, 94.794522, 78.518609, 94.081696, 90.932390, 41.410354, 81.015201),
+    # R24 = xfam6: R21's UPLOADED archive plus one cmb3sim-recipe ViT fused into the ViT group by
+    # StackedViT (fno.pth-fno_5.pth tensor-identical to R21; 2 invocations). Submission id not
+    # reported. ACCURACY +0.050 -- rel -0.30 %, tke -0.65 %, mvpe -0.91 % of error, sps +0.111 =
+    # forced +0.058 + CONTAINMENT +0.053, a third of the first ViT's, as the local curve said.
+    # TIME -0.069: 4.553 -> 5.570 board ms for +0.316 A100 ms/window of local compute. Net
+    # -0.019. Both this and T2R11 missed their estimates in the `time` row -- see the FLOPs block.
+    ("R24 xfam6 R21+ViT/2inv", "2026-09-12", 0, 94.861827, 78.793104, 94.347768, 91.961259, 41.866674, 81.312041),
+    # R25 = R24's EXACT archive with `AMP = "fp16"` baked in (autocast, checked against fp32 at load
+    # time and dropped on any failure). Submission id not reported. THE FINGERPRINT SAYS fp16 RAN:
+    # against R24, rel -0.000037, tke +0.000276, mvpe -0.000260, sps +0.001013 -- not identical to six
+    # decimals, and none near the 0.01 void line. So `time` reads the precision change alone: 5.570 ->
+    # 5.076 board ms (-0.494), 37 % of the -1.321 that the A100's interleaved -21 % (1.918 -> 1.510
+    # ms/window) would give at LOC_SLOPE_T1 (15-60 % across Track 1's 0.03-0.30 ms drift). Estimate of
+    # record 81.356 assumed 50 %; actual 81.345, the miss all `time`. NEW TRACK-1 BEST, +0.014 over R21.
+    ("R25 xfam6 fp16/2inv", "2026-09-13", 0, 94.861790, 78.793380, 94.347508, 92.297891, 41.867687, 81.344644),
+    # R26 = P1: the FIRST non-FNO primary family to ship. Four all-data Swin U-Net w64 L2 fused by
+    # StackedSwin + R25's two ViTs, 2 invocations; band refit from the Swin twins; archive tagged
+    # r27_p1swin4_a060 (the r26-tagged graph archive was never uploaded). Submission id not reported.
+    #   IT LOST ON ACCURACY AND ON TIME. Against R25: rel -0.114, tke -0.126, mvpe -0.174, sps +0.128,
+    #   `time` -0.770, net -0.126. Estimate of record 81.453 (rel 94.855, tke 78.871, mvpe 94.399,
+    #   time 93.240, sps 41.900): every error row landed on the WRONG SIDE of R25.
+    #   THE PROXY INVERTED. It read Swin as equal-or-better on all three error metrics; the board moved
+    #   all three DOWN. That is the U-FNO failure a second time -- across model FAMILIES the proxy
+    #   predicts neither size nor sign, only that something changed.
+    #   TIME WENT BACKWARDS. The fused Swin step measured 0.63x R25's interleaved (1.019 vs 1.404
+    #   ms/window), which predicted -1.245 board ms at LOC_SLOPE_T1; the board came back at 6.245 ms
+    #   against R25's 5.076, i.e. +1.17. Even the fp32-fallback band (time 91.79-92.66) is above the
+    #   91.528 actual, so a load-time fallback alone cannot explain it: Swin's kernels transfer badly
+    #   to the eval GPU. RULE: a local latency cut measured on kernels UNLIKE the anchor's does not
+    #   transfer, and LOC_SLOPE / PREC_SLOPE hold only WITHIN a kernel family.
+    ("R26 p1swin4 swinx4+ViT2/2inv", "2026-09-16", 0, 94.747724, 78.667443, 94.173298, 91.528039, 41.995785, 81.218444),
+    # R27 = R25's ARCHIVE WITH `GRAPH = True`, nothing else: predict()'s device-side chunk replays
+    # from a CUDA graph captured at import and verified bit-exact against eager, and the band's `base`
+    # is scaled by 1 + GRAPH_FP (1e-4) on the graph path so the run leaves a fingerprint. Archive
+    # `track1_r26_xfam6fp16graph_a060.zip` (md5 4f83127266...), staged 09-14. Submission id not reported.
+    #   THE FINGERPRINT SAYS THE GRAPH RAN. rel, tke and mvpe came back BIT-IDENTICAL to R25 to six
+    #   decimals, and sps moved +8.2e-05 (41.867687 -> 41.867769): not identical, so the capture did not
+    #   fall back to eager. The predicted sign was -1.35e-04 at the LOCAL 1.36 error stretch; the board's
+    #   own tail gives the derivative the other sign. The MAGNITUDE (~1e-4) is what identifies the path.
+    #   AND THE GRAPH MADE IT SLOWER. 5.076 -> 5.641 board ms, +0.565, where the estimate of record
+    #   (81.428, bracket 81.37-81.52) assumed one invocation's launch overhead came OFF (-1.151 ms,
+    #   R23). +0.565 is outside Track 1's 0.03-0.30 ms same-shape drift in the wrong direction, so
+    #   either the eval GPU charges the capture/replay path more than the launches it removes, or the
+    #   day's drift is larger than anything recorded. Net -0.037 against R25, ALL of it `time`.
+    #   THE TRACK-1 GRAPH IS CLOSED. With R26's Swin step (+1.17 where -1.245 was predicted) and R25's
+    #   fp16 (37 % of the local cut), this is the THIRD consecutive local latency read that did not
+    #   transfer to the board -- and the first one on the SAME kernels as its anchor, which is what
+    #   makes it the strongest of the three: host-side launch accounting does not transfer either.
+    ("R27 xfam6fp16 GRAPH/2inv", "2026-09-17", 0, 94.861790, 78.793380, 94.347508, 91.914674, 41.867769, 81.307815),
+    # R28 = THE F-FNO L8 TWIN ON TRACK 1, and a NEW TRACK-1 BEST: R25's package with the primary family
+    # swapped -- four all-data F-FNO w40 L8 members fused by StackedFFNO on the dense path + R25's two
+    # ViTs, 2 invocations, band `t2r13_p2ffnoL8x4.npz` byte for byte. The exact cross-track twin of
+    # T2R13. Archive `track1_r31_p2ffnoL8_a060.zip` (md5 467a7bad...). Submission id not reported.
+    #   81.401196, +0.056552 over R25, INSIDE its 81.25-81.44 bracket and 0.014 ABOVE the 81.387
+    #   estimate of record -- the first Track-1 slot this campaign has both predicted and won.
+    #   1. THE FAMILY TRANSFERRED ACROSS BOARDS AT 0.85x. Predicting from the T2R13 - T2R12 board pair
+    #      gave rel +0.029 / tke +0.194 / mvpe -0.161 / sps +0.302; the board delivered +0.029 / +0.159
+    #      / -0.142 / +0.272. Every row has the right SIGN and ~85 % of the size. `sps` +0.272 is
+    #      forced only +0.019, so CONTAINMENT MOVED +0.253 here against +0.302 on Track 2 -- the same
+    #      mechanism, the same fraction. A board read of a family DOES transfer; a proxy read does not.
+    #   2. MVPE IS STILL THE EXCEPTION (-0.142, +2.66 % of error). It has now fallen on every package
+    #      that replaced the cmb3sim FNO: Swin -0.174, F-FNO -0.161 (T2) and -0.142 (T1).
+    #   3. THE FIRST CROSS-FAMILY LATENCY READ THAT LANDED ON THE RIGHT SIDE. 5.076 -> 5.480 board ms,
+    #      +0.404, for the fused stack's +0.246 A100 ms/window (+0.455 4060-eq) = 0.89 board ms per
+    #      4060-eq ms -- HALF of LOC_SLOPE_T1. Swin inverted outright; this one is merely cheap. Kept
+    #      as LOC_SLOPE_T1_XFAM below, NOT as a change to LOC_SLOPE_T1. The estimate assumed the full
+    #      1.75 and so under-read `time` by 0.26 subscore, which is where the +0.014 beat came from.
+    #      Caveat: the eval machine ran fast on BOTH boards today (see T2R15), so part of the +0.40 vs
+    #      +0.80 is same-day drift.
+    #   R28 IS THE TRACK-1 ANCHOR FOR F-FNO PACKAGES; `r25` stays the anchor for FNO packages.
+    ("R28 p2ffnoL8 ffnox4+ViT2/2inv", "2026-09-18", 0, 94.890524, 78.952686, 94.205730, 92.021555, 42.139290, 81.401196),
+    # R29 = R28's PACKAGE ON A NEW CODE PATH: all six .pth, band.npz and submission.py byte-identical to
+    # R28's uploaded archive, only `_fno.py` differs -- StackedFFNO's dense spectral stage batch-tiled in
+    # ceil(b/16) equal tiles (c5e8730). Archive `track1_r32_p2ffnoL8_tiled.zip` (md5 72544531...). Not a
+    # lever: it is the board proof of the code path every later package rides on. Submission id not reported.
+    #   THE FINGERPRINT HELD EXACTLY. All FOUR error subscores came back BIT-IDENTICAL to R28 to six
+    #   decimals, sps included (42.139290). The tiled path is exact on the eval GPU, and that is what the
+    #   slot was bought for: it is now the PROVEN BASE of every later package.
+    #   AND THERE IS NO TIME GAIN, AS PRICED. 5.480 -> 5.496 board ms, +0.016, inside Track 1's 0.03-0.30 ms
+    #   same-shape drift. The package-level read predicted +0.004 to +0.009 `final` -- below the board's
+    #   resolution -- and the board agreed by returning nothing. Net -0.001022, all of it that drift.
+    #   THE TILING IS CLOSED AS A LEVER AND KEPT AS CODE. R28 (81.401196) stays the Track-1 best.
+    ("R29 p2ffnoL8 TILED/2inv", "2026-09-19", 0, 94.890524, 78.952686, 94.205730, 92.010936, 42.139290, 81.400174),
+    # R30 = r34 = THE SIM-CO-TRAINED MEMBERS, and a NEW TRACK-1 BEST. R28's package with the four F-FNO
+    # w40 L8 members and their three band twins retrained with sim co-training, the band refit from the
+    # sim twins with --fill-unscored (`r34_p2ffnoL8sim_fill.npz`); everything else byte-identical to r33.
+    # Archive `track1_r34_p2ffnoL8sim_fill.zip`, build 7412354 (9e8f868). Submission id not reported.
+    #   81.418569, +0.017373 over R28, against an estimate of record of 81.4179 [81.381, 81.456] -- HIT
+    #   TO 0.0007, the closest prediction this project has made.
+    #   1. NOT A NULL ROUND: all four error subscores differ from R28 (pkg_identity fingerprint 8e-2).
+    #   2. THE MEAN FIELD TRANSFERS AT ~1:1, rel AND tke DO NOT. mvpe +0.0555 is the UN-HALVED twin
+    #      delta; rel came back -0.0116 and tke -0.0693, both slightly WORSE, where +0.010 / +0.035 was
+    #      predicted. That is exactly the AoA-holdout finding (plan §11): sim teaches the MEAN FIELD.
+    #   3. sps +0.1245 = forced -0.0096 + CONTAINMENT +0.1342. The band refit on the sim twins moved
+    #      containment on its own, and T2R17 reproduces it (+0.1595), so it is real and not a draw.
+    #   4. `time` -0.0625 (5.480 -> 5.573 board ms, +0.094) is drift; at equal time the package is
+    #      +0.0237.
+    #   THE SIM LEVER IS SMALL ON THE BOARD AND LARGE OUT OF DISTRIBUTION: +0.02 here against +1.12 mean
+    #   at a held-out AoA (plan §11.4). It is shipped for the private set, not for this number.
+    ("R30 p2ffnoL8sim fill/2inv", "2026-09-20", 0, 94.878882, 78.883397, 94.261277, 91.959093, 42.263813, 81.418569),
 ]
 
 UNSCORED = []   # every round on both tracks now has full subscores
@@ -148,20 +273,276 @@ ROUNDS_T2 = [
     # 81.019298; 81.019298 is the consistent value -- hold it out of the fit and the other 17
     # rounds predict 81.02032, which is 0.8 sigma from 81.019298 and 35 sigma from 80.97843.
     ("T2R5 L8do45x4/1inv a60", "2026-09-04", 915381, 94.727329, 78.357043, 93.692366, 92.427051, 41.191134, 81.019298),
+    ("T2R6 L8do45x4 bmm     ", "2026-09-06", 917178, 94.727329, 78.357043, 93.692366, 92.399134, 41.191137, 81.016621),
+    # T2R7 = R19's IDENTICAL members and band on the other board -- the SIXTH cross-track
+    # identity check, and the second reading of sim.  Every error subscore moves in the same
+    # direction as R19's and by a similar amount (rel -0.71 % vs -0.63 %, tke +0.83 % WORSE vs
+    # +0.61 %, mvpe -2.61 % vs -1.02 %, sps +0.020 vs +0.008), so the sim reading is not a
+    # single-board accident.  Its larger `final` is a `time` draw (+0.497 score), not accuracy.
+    ("T2R7 simx4/1inv a60 fp16", "2026-09-08", 918588, 94.762818, 78.220131, 93.843944, 92.896212, 41.210644, 81.086639),
+    # T2R8 = R20's IDENTICAL members and band -- the SEVENTH cross-track identity check, and the
+    # second reading of cmb3sim.  Every error subscore moves in the same direction as R20's and
+    # by a similar amount (rel -0.39 % vs -0.36 %, tke -0.34 % vs +0.08 %, mvpe -1.54 % vs
+    # -0.89 %, sps +0.100 vs +0.077), so cmb3sim is not a single-board accident.  Its SMALLER
+    # `final` gain is a `time` draw (-0.299 score against R20's +0.239): at constant latency
+    # this board's accuracy gain is the LARGER of the two, +0.049 against +0.031.
+    ("T2R8 cmb3simx4/1inv a60", "2026-09-09", 920370, 94.782311, 78.278425, 93.933159, 92.597588, 41.310588, 81.106430),
+    ("T2R9 xfam5 cmb3x4+ViT/2inv", "2026-09-10", 921001, 94.841673, 78.469938, 94.157190, 91.521812, 41.649497, 81.155762),
+    # T2R10 = the same unfused experiment on the streaming board, run the same day.  Identity
+    # held here too (rel/tke/mvpe to six decimals, sps 3e-06).  4.659 -> 7.255 board ms =
+    # **0.866 ms per invocation**, 1.99x the fitted 0.435.
+    #   AND THE TWO TRACKS MEET.  At 1 invocation T2 costs +0.864 ms more than T1; at 4 they are
+    #   7.249 vs 7.255.  So Track 2's streaming penalty is a FIXED per-step overhead, not a
+    #   per-invocation one, and Track 1 actually pays MORE per invocation (1.151 vs 0.866).
+    #   Round 22's reading -- "the invocation tax is 2.4x heavier on Track 2" -- is withdrawn:
+    #   what was heavier on Track 2 that round was the ViT member, not the invocation.
+    ("T2R10 cmb3simx4 UNFUSED/4inv", "2026-09-11", 921707, 94.782311, 78.278425, 93.933159, 90.928559, 41.310591, 80.945935),
+    # T2R11 = x8v: R21's UPLOADED archive plus FNO s5-s8 fused into the FNO group, with fno.pth-
+    # fno_5.pth AND the band byte-identical to T2R9's. Submission id not reported. MEMBER COUNT
+    # IS CLOSED: accuracy -0.020 (rel -0.09 %, tke +0.44 % worse, mvpe +1.64 % worse; sps -0.023 =
+    # forced -0.046 + containment +0.023, inside noise), exactly the null the local K-curve
+    # extrapolation gave once the ViT is in the set. TIME -0.077: 6.255 -> 7.628 board ms. Net -0.097.
+    ("T2R11 x8v R21+4FNO/2inv", "2026-09-12", 0, 94.845935, 78.395628, 94.066988, 90.720061, 41.626260, 81.058649),
+    # T2R12 = R25's archive on the streaming board, read against T2R9: the second ViT AND fp16 at once.
+    # Submission id not reported. The errors landed on the cross-track prediction (rel +0.004, tke
+    # +0.008, mvpe +0.017, sps -0.0003) and sps +0.111 against T2R9 = forced +0.070 + containment
+    # +0.041, the second ViT as on R24 (+0.053). `time` 91.040 is below the 91.52 line: fp16 did NOT
+    # pay for the second ViT's FLOPs here -- 6.255 -> 7.061 board ms, against 7.795 with no fp16
+    # transfer, so ~0.73 of a possible 3.61 ms came back (inside Track 2's drift). Net +0.009 over T2R9:
+    # NEW TRACK-2 BEST. Estimate of record 81.223; the miss is the `time` row (-0.063).
+    ("T2R12 xfam6 fp16/2inv", "2026-09-13", 0, 94.861391, 78.587250, 94.224322, 91.039757, 41.760694, 81.164374),
+    # T2R13 = P2-L8: four all-data F-FNO w40 L8 fused by StackedFFNO on the DENSE spectral path +
+    # T2R12's two ViTs (tensor-identical), 2 invocations; band refit from the L8 twins; archive tagged
+    # r27_p2ffno4_a060. Submission id not reported. NEW TRACK-2 BEST, +0.150 over T2R12, board 6.069 ms.
+    #   Against T2R12: rel +0.029, tke +0.194, mvpe -0.161, `time` +0.599, sps +0.302, net +0.150.
+    #   It landed at the OPTIMISTIC end of its bracket (estimate of record 81.237, optimistic 81.329,
+    #   actual 81.315), the first package this campaign has UNDER-predicted.
+    #   THE FAMILY TRANSFERRED ON TRACK 2 where it inverted on Track 1's Swin: rel and tke both up,
+    #   and sps +0.302 is far above the per-sample factor alone, so the F-FNO family moved CONTAINMENT.
+    #   `time` +0.599 for a step measured at 0.861x T2R12's -- the first latency cut this project has
+    #   predicted and collected inside its bracket, and the pair that re-measures LOC_SLOPE_T2 below.
+    #   MVPE IS THE EXCEPTION: -0.161 here and -0.174 on Swin the same day, the only metric to fall on
+    #   BOTH tracks. FNO holds mvpe better than either new family.
+    ("T2R13 p2ffnoL8 ffnox4+ViT2/2inv", "2026-09-16", 0, 94.890753, 78.781089, 94.063576, 91.638537, 42.063113, 81.314785),
+    # T2R14 = P2-L4: T2R13 with ONE lever, DEPTH. Four all-data F-FNO w40 **L4** members fused by
+    # StackedFFNO on the dense path + T2R13's two ViTs, band refit from the held-out L4 twins, ALPHA
+    # 0.60, fp16 / bmm / dense, 2 invocations. Archive `track2_r30_p2ffnoL4_a060.zip` (md5 38c15783...,
+    # build job 7332924). Submission id not reported. Estimate of record 81.371, bracket 81.34-81.41.
+    #   IT LANDED AT 81.308, BELOW ITS OWN BRACKET, for -0.006 against T2R13: rel +0.024, tke -0.030,
+    #   mvpe +0.073, `time` +0.473, sps -0.273.
+    #   1. DEPTH IS A WASH ON THE THREE ERRORS, exactly as the L8->L4 screen said it would be. The
+    #      predicted tke cost (-0.166) came in at -0.030, rel rose 0.024 and mvpe 0.073. Halving the
+    #      cost of the stack costs nothing measurable in rms error.
+    #   2. THE SLOT WAS LOST IN CONTAINMENT. With the a-factor computed from the three actual errors
+    #      (a = 0.5g(rel) + 0.3g(tke) + 0.2g(mvpe), g(m) = 0.5/(0.5+m)), the FORCED part of sps is
+    #      +0.038; the board returned -0.273, so CONTAINMENT FELL -0.310. The L4 sigma head is worse
+    #      calibrated than L8's, and NO local instrument reads containment across depth -- the band is
+    #      refit per package, and every refit scores well on its own twins.
+    #   3. THE 0.937 SLOPE WAS A HIGH DRAW. The interleaved build read -0.738 A100 ms/step (2.6325 vs
+    #      P2-L8's 3.3707) = -1.366 4060-eq; the board saved 0.723 ms (6.069 -> 5.346), i.e. **0.529
+    #      board ms per 4060-eq ms**. Predicted `time` was 92.502 at 0.937 and 92.178 at the old 0.60;
+    #      the actual 92.112 is below BOTH. See LOC_SLOPE_T2 -- it is now the mean of the two reads.
+    #   VERDICT: F-FNO DEPTH IS CLOSED ON THE BOARD TOO. L8 stays the Track-2 package and T2R13
+    #   (81.314785) remains the Track-2 best; L4 buys latency and hands it straight back in containment.
+    ("T2R14 p2ffnoL4 ffnoL4x4+ViT2/2inv", "2026-09-17", 0, 94.914425, 78.750833, 94.136582, 92.111693, 41.790524, 81.308359),
+    # T2R15 = T2R13 WITH THE ViT PAIR REMOVED: the same four all-data F-FNO w40 L8 members fused on the
+    # dense path, ALONE, at ONE invocation, band refit from the L8 twins only. Archive
+    # `track2_r28_l8x4_a060.zip` (md5 db1808de..., built and gated 09-15). Submission id not reported.
+    #   81.265138, -0.049647 against T2R13, AT THE FLOOR of its 81.26-81.48 bracket (estimate 81.431).
+    #   1. THE ViT PAIR STAYS IN EVERY PACKAGE. Priced at the fitted weights, dropping it costs
+    #      -0.155 of accuracy+containment and returns +0.105 of `time`, i.e. NET -0.050. sps -0.321 is
+    #      forced -0.188 plus CONTAINMENT -0.132 -- three times the -0.041 the estimate assumed from
+    #      T2R12. Two ViTs at 14.8 MB each buy containment no F-FNO member reproduces.
+    #   2. "HALVE THE LOCAL DELTAS" UNDER-READ THIS ONE. The un-halved AoA 15-20 ratios (rel x1.0165,
+    #      tke x1.0195, mvpe x1.0297) predict rel 94.811 / tke 78.457 / mvpe 93.886 against the actual
+    #      94.823 / 78.519 / 93.886 -- essentially exact, where the halved version missed all three.
+    #      The 2x over-read rule is for an arm that REMOVES error; a member REMOVAL is charged in full.
+    #   3. A FOURTH TRACK-2 LATENCY READING, AND THE LOWEST YET. 6.069 -> 4.480 board ms, -1.589,
+    #      against -2.736 predicted (58 % realized). Charging the dropped invocation at INV_MS_T2
+    #      0.866 leaves -0.723 board ms for -2.551 4060-eq = 0.28 -- and if the invocation term is
+    #      itself smaller today, both are. 4.480 ms is also BELOW T2R8's 4.659 ms floor for a
+    #      one-invocation FNO x4 package, so the machine was fast: same-day drift on both boards.
+    #   LOC_SLOPE_T2 goes back to 0.60 with an explicit 0.3-0.9 bracket (see below). T2R13
+    #   (81.314785) remains the Track-2 best.
+    ("T2R15 l8x4 ffnox4 noViT/1inv", "2026-09-18", 0, 94.823177, 78.519336, 93.885731, 92.730627, 41.742474, 81.265138),
+    # T2R16 = T2R13's PACKAGE WITH ONE CHANGE, THE BAND: `t2r16_p2ffnoL8_fill.npz`, which is
+    # `t2r13_p2ffnoL8x4.npz` refit with `fit_band.py --fill-unscored` (7ff9054). Every .pth and
+    # submission.py byte-identical; `pkg_identity` gave a prediction max|A-B| of 0.0, so the band ALONE
+    # decided this round. Archive `track2_r33_p2ffnoL8_fill.zip` (md5 15a6e57d...). Estimate of record
+    # 81.327 with sps 42.113 (bracket 42.04-42.36). Submission id not reported.
+    #   THE FINGERPRINT HELD: rel, tke and mvpe came back BIT-IDENTICAL to T2R13, so only the band moved.
+    #   THE FILL BOUGHT NOTHING ON THIS HIDDEN SET. sps 42.063113 -> 42.056535, **-0.006578**, below even
+    #   the 42.04 floor of the bracket. The hidden set's blanking evidently MATCHES the fit split's three
+    #   recordings, so the filled elements are unscored there too and recover nothing; the small loss is
+    #   the blend at elements with 1-7 scored fitting windows widening a legitimately narrow band.
+    #   Measured dev-board cost of the fill: **-0.0016 `final`**, against memo §4.9's upper bound of -0.62
+    #   if a private recording blanked less. It stays in the Decision-phase method as cheap insurance.
+    #   THE +0.009 IS A TIME DRAW, NOT A METHOD IMPROVEMENT. 6.069 -> 5.892 board ms (-0.177) is
+    #   same-shape drift, worth +0.0108, and it is the whole of the net +0.009205. So T2R16 is the
+    #   BEST-BY-SCORE on Track 2 (81.323990) while **the method of record is still T2R13's package**.
+    #   Do not read this row as progress and do not anchor accuracy work on it.
+    ("T2R16 p2ffnoL8 FILLBAND/2inv", "2026-09-19", 0, 94.890753, 78.781089, 94.063576, 91.750947, 42.056535, 81.323990),
+    # T2R17 = r34 on Track 2, the same archive contents as R30: sim-co-trained F-FNO members, band
+    # `r34_p2ffnoL8sim_fill.npz`. Archive `track2_r34_p2ffnoL8sim_fill.zip` (9e8f868). Submission id not
+    # reported. NEW TRACK-2 BEST BY SCORE, 81.333776: +0.009786 over T2R16 and +0.018991 over T2R13,
+    # which is the last package whose `time` was not a draw.
+    #   Estimate of record 81.3422 [81.282, 81.405] -- INSIDE the bracket, and THE WHOLE MISS IS `time`:
+    #   6.596 board ms against the anchor's 5.892, **+0.704 ms, the top of Track 2's 0.4-0.7 drift
+    #   range**. AT EQUAL TIME THE PACKAGE IS +0.052, which is what it is worth.
+    #   The accuracy rows agree with Track 1's: mvpe +0.0683 (the mean field, un-halved), rel -0.0054
+    #   (slightly worse), sps +0.1846 = forced +0.0251 + CONTAINMENT +0.1595 -- the same band-refit gain
+    #   R30 saw. **Every row except tke has the same sign across the two boards**; tke is +0.0255 here
+    #   against -0.0693 on Track 1, the one place the two boards disagree on this package.
+    ("T2R17 p2ffnoL8sim fill/2inv", "2026-09-20", 0, 94.885309, 78.806628, 94.131921, 91.313614, 42.241165, 81.333776),
 ]
 
-# The fit pools both tracks -- see the module docstring.  ROUNDS first, then ROUNDS_T2, so the
-# row order matches Track_1/final_v9.py:BOARD exactly.
+# The fit pools both tracks -- see the module docstring.  ROUNDS first, then ROUNDS_T2;
+# `final_v9.BOARD` lists the same rounds by submission date instead, which is harmless (least
+# squares does not see row order) and is checked as a multiset by `final_v9._check_sync`.
 POOL_TRACKS = True
 
 FIT_ROUNDS = ROUNDS + ROUNDS_T2 if POOL_TRACKS else ROUNDS
 X = np.array([r[3:8] for r in FIT_ROUNDS], float)
 Y = np.array([r[8] for r in FIT_ROUNDS], float)
 
-# `w_time`, MEASURED DIRECTLY rather than fitted.  R13 and R14 differ in `time_score` alone
-# (the blend gate never fired, so the four error subscores are bit-identical):
-#   d time = 92.978725 - 93.115432 = -0.136707,   d final = 80.630755 - 80.643823 = -0.013068
-W_TIME_DIRECT = (80.630755 - 80.643823) / (92.978725 - 93.115432)   # = 0.0956
+# `w_time`, MEASURED DIRECTLY rather than fitted -- now FIVE TIMES, by five single-subscore
+# A/Bs in which the four error subscores came back bit-identical and only `time` moved:
+#   R13   -> R14   the gated mean-blend fired on ZERO hidden windows
+#   R17   -> R18   HOST_WRITE="torch": the same bytes to the same place, threaded
+#   T2R5  -> T2R6  SPEC_PATH="bmm": the spectral product as one batched real matmul (2e-06)
+#   R20   -> R23   FUSE=False.  dtime -2.338, the largest single-subscore move ever submitted
+#   T2R8  -> T2R10 the same, on the other board
+# The first three had `dtime` of 0.03-0.14 score points, so each divided two small numbers; the
+# round-23 pair moved `time` by 1.7-2.3 points and lands at 0.09609 / 0.09616 -- 0.07 % apart,
+# and the free fit's 0.0965 sits between them.  This weight is now MEASURED, not estimated, and
+# the constrained fit's 0.085 is excluded by 15 %.
+W_TIME_AB = [
+    ("R13->R14  ", 92.978725 - 93.115432, 80.630755 - 80.643823),
+    ("R17->R18  ", 93.058602 - 92.988361, 81.176572 - 81.169843),
+    ("T2R5->T2R6", 92.399134 - 92.427051, 81.016621 - 81.019298),
+    ("R20->R23  ", 90.932390 - 93.270089, 81.015201 - 81.239831),
+    ("T2R8->T2R10", 90.928559 - 92.597588, 80.945935 - 81.106430),
+]
+W_TIME_DIRECT = float(np.mean([f / t for _, t, f in W_TIME_AB]))   # = 0.0958
+# R24 -> R25 (fp16 autocast) is a sixth, NEAR-single-subscore pair, kept OUT of the mean: the error
+# subscores moved by <= 3e-4 and sps by 1.0e-3, so it is not bit-identical. Raw dfinal/dtime 0.0969;
+# with those small moves priced out at the fitted weights, 0.0961 -- inside the five readings above.
+
+
+# ---------------------------------------------------------------------------------------
+# THE INVOCATION, MEASURED (round 23, 2026-09-11).
+#
+# `board ms = a + b*invocations + c*local ms` had been FITTED since round 10 and never tested.
+# Round 23 tested it the only way it can be tested: ship a package that differs from one
+# already on the board in the invocation count and in NOTHING else.  `track{1,2}_r23_nofuse4
+# fp16_a060.zip` are round 20's four checkpoints, round 20's fp16 packing and round 20's band
+# byte for byte, with `FUSE = False` -- so `_fno.fuse()` does not collapse the four width-96
+# L8 members into one grouped StackedFNO and the shipped path runs four sequential forwards.
+#
+#   the gate:  rel_l2, tke and mvpe came back IDENTICAL TO SIX DECIMALS on both boards and
+#              `sps` moved 1.8e-05 / 3e-06.  Nothing but `time` moved, which is what makes the
+#              rest of this block a measurement instead of an inference.
+#   the read:  T1  3.795 -> 7.249 ms over +3 invocations = 1.151 ms each  (fitted 0.435: x2.65)
+#              T2  4.659 -> 7.255 ms over +3 invocations = 0.866 ms each  (fitted 0.435: x1.99)
+#
+# Two things fall out that no fit could have given:
+#
+#   1. AN INVOCATION IS EXPENSIVE.  Priced through `w_time` at round 20's operating point, the
+#      FIRST extra invocation costs -0.085 `final` on Track 1 and -0.058 on Track 2 (the curve
+#      is convex, so the fourth costs -0.066 / -0.049).  That is the size of a good accuracy
+#      arm.  Any package with more than one architecture family has to earn it back.
+#   2. TRACK 2'S PENALTY IS FIXED, NOT PER-INVOCATION -- and round 22's reading is WITHDRAWN.
+#      At 1 invocation Track 2 costs +0.864 ms more than Track 1; at 4 the two boards land at
+#      7.249 and 7.255.  So the streaming path's cost is a per-STEP overhead that the member
+#      set does not multiply, and Track 1 actually pays MORE per invocation.  "The invocation
+#      tax is 2.4x heavier on Track 2" (round 22, from R21/T2R9) was reading the VIT's forward
+#      pass, which is heavier at batch 1, not the invocation.
+#
+# Use these as DELTAS against a recent anchor of the same shape.  The level model is withdrawn:
+# its residuals reach -2.5 ms and are ordered by date.
+INV_MS_T1 = (0.72896 * (100.0 / 90.932390 - 1.0) ** 2
+             - 0.72896 * (100.0 / 93.270089 - 1.0) ** 2) * 1000.0 / 3.0     # = 1.151
+INV_MS_T2 = (0.72896 * (100.0 / 90.928559 - 1.0) ** 2
+             - 0.72896 * (100.0 / 92.597588 - 1.0) ** 2) * 1000.0 / 3.0     # = 0.866
+
+
+def board_ms(time_score: float) -> float:
+    """Invert `time_score = 100/(1+sqrt(t/0.72896))` back to board milliseconds."""
+    return 0.72896 * (100.0 / float(time_score) - 1.0) ** 2 * 1000.0
+
+
+def time_score(ms: float) -> float:
+    """Forward: board milliseconds -> `time_score`."""
+    return 100.0 / (1.0 + (float(ms) / 1000.0 / 0.72896) ** 0.5)
+
+
+def invocation_cost(anchor_time_score: float, n: int = 1, track: int = 1) -> tuple:
+    """(d time_score, d final) of adding `n` sequential forwards to a package scoring `anchor`.
+
+    The time curve is convex, so this depends on where you already are -- a second invocation
+    on a 3.8 ms package costs more than a fifth one on a 7 ms package.  Always pass the
+    anchor's own `time_score`.
+    """
+    per = INV_MS_T1 if track == 1 else INV_MS_T2
+    d = time_score(board_ms(anchor_time_score) + n * per) - anchor_time_score
+    return d, d * W_TIME_DIRECT
+
+
+# ---------------------------------------------------------------------------------------
+# ROUND 24 CORRECTS ROUND 23: FLOPs ARE CHARGED TOO (2026-09-12).
+#
+# Round 23 read "the board is launch-bound, not FLOP-bound" off the unfused package. What it
+# measured was that LAUNCHES are expensive; it could not show that FLOPs are free, and they are
+# not. Round 24 added compute INSIDE fused groups, on both boards, the same day:
+#   R21  -> R24     + one ViT in the ViT group    local +0.316 A100 ms/window   4.553 -> 5.570 ms
+#   T2R9 -> T2R11   + four FNOs in the FNO group  local +1.234 A100 ms/step     6.255 -> 7.628 ms
+# Both boards +22 %. On Track 1 that is 1.74 board ms per 4060-equivalent local ms, and the only
+# SAME-DAY FLOPs pair ever submitted (R16 -> R17, w96 L4 x8 -> L8 x4) reads 1.76. Track 1's
+# board/local ratio has sat at 1.48-1.66 across the four rounds with a trusted local timing, and
+# its identical-shape day-to-day drift has been 0.03-0.30 ms, so +1.02 ms is not drift. Track 2
+# reads 0.60, one reading at ~2.7 sigma of its 0.4-0.7 ms drift. The 0.336 "local slope" was a
+# cross-day refit over residuals ordered by date, and on Track 1 it was 5x light.
+# At R21's operating point, +0.1 A100 ms/window of local compute is ~ -0.023 `final` on Track 1,
+# and a board ms saved is ~ +0.072.
+LOC_SLOPE_T1 = 1.75     # board ms per 4060-equivalent local ms, Track 1 (R16->R17 1.76, R21->R24 1.74)
+# ...but only WITHIN a kernel family. R28 (2026-09-18) is the first CROSS-FAMILY Track-1 read that did
+# not invert: swapping the four fused cmb3sim FNOs for four fused F-FNO w40 L8 cost +0.246 A100
+# ms/window (+0.455 4060-eq) and the board charged +0.404 ms, i.e. 0.89 -- HALF of LOC_SLOPE_T1. Swin
+# (R26) inverted outright and the CUDA graph (R27) inverted on the SAME kernels, so the honest reading
+# is that a cross-family Track-1 estimate belongs in a bracket [0, 1.75] with 0.89 as its only anchor.
+# One reading, and the eval machine ran fast on both boards that day (T2R15 came in under T2R8's floor).
+LOC_SLOPE_T1_XFAM = 0.89
+# AND THE TWO LOCAL INSTRUMENTS DISAGREE WITH EACH OTHER, not just with the board (rp_latCs, 09-18).
+# The SAME pair, R28's stack against R25's, reads +0.797 board ms at the KERNEL level (verify/fuse_ffno
+# §7, the fused stacks timed on their own) and only **+0.164** at the PACKAGE level (rp_latCs, whole
+# `predict()` interleaved in one process). The board delivered **+0.404**, between them. So the kernel
+# read is 2.0x heavy, the package read is 2.5x light, and NEITHER instrument alone is trustworthy for a
+# cross-family prediction -- quote both ends as the bracket and expect the board in the middle. (The
+# gap is real work the kernel timer does not see and the package timer amortizes: normalization, the
+# compose step, the band and the host write are common to both packages and dilute the stack's share.)
+# Track 2's FLOPs slope, FOUR READINGS, all single cross-date pairs on a machine that drifts by date:
+#   T2R9  -> T2R11  (09-10 -> 09-12)  +1.234 A100 ms/step  -> +1.373 board ms   = 0.60
+#   T2R12 -> T2R13  (09-13 -> 09-16)  -0.573 A100 ms/step  -> -0.992 board ms   = 0.937
+#   T2R13 -> T2R14  (09-16 -> 09-17)  -0.738 A100 ms/step  -> -0.723 board ms   = 0.529
+#   T2R13 -> T2R15  (09-16 -> 09-18)  -1.379 A100 ms/step  -> -1.589 board ms, of which -0.866 is the
+#                                     dropped invocation, leaving -0.723 over -2.551 4060-eq = ~0.28
+#                                     (and if INV_MS_T2 is smaller today, both terms are)
+# 0.937 was a HIGH DRAW: three of the four readings sit at or below 0.60, and the two most recent are
+# the lowest. The shipped constant goes BACK TO 0.60, which is the median and the only value with two
+# readings near it; bracket every Track-2 latency lever with **0.3 and 0.9** rather than pricing it at
+# a point. T2R15 also came in at 4.480 board ms, BELOW T2R8's 4.659 one-invocation floor, so part of
+# its cut is same-day machine speed and the ~0.28 is the low end of what a slope can mean.
+LOC_SLOPE_T2 = 0.60     # 0.60 -> 0.937 (09-16) -> 0.733 (09-17) -> back to 0.60 (09-18); bracket 0.3-0.9
+
+# ROUND 25: A PRECISION CUT IS NOT CHARGED LIKE A FLOPs CUT (2026-09-14). R25 is R24's archive with
+# fp16 autocast baked in, and its error subscores moved by <= 3e-4 (the fingerprint that fp16 ran),
+# so `time` reads the precision change alone: 5.570 -> 5.076 board ms for -0.408 A100 ms/window
+# measured interleaved (-0.755 4060-eq). That is 0.65 board ms per 4060-eq local ms, 37 % of
+# LOC_SLOPE_T1: the board realises much less of fp16 than the A100's tensor cores do. One reading;
+# Track 1's 0.03-0.30 ms drift brackets it at 0.26-1.05. On Track 2, T2R12 moved fp16 and the second
+# ViT together; charging the ViT at LOC_SLOPE_T2, fp16 recovered ~0.73 of 3.61 board ms (~0.12 per
+# 4060-eq ms), which is inside that board's 0.4-0.7 ms drift of zero.
+PREC_SLOPE_T1 = 0.65    # board ms per 4060-eq local ms saved by a PRECISION change, Track 1 (R24 -> R25)
 
 
 def fit(constrained: bool = False, nonneg: bool = True):
@@ -280,11 +661,12 @@ def main():
     print(f"  {'sum':<10s} {w.sum():>8.4f}"
           f"   -- NOT 1, and nothing forces it to be; see the module docstring")
 
-    print("\n  --- and one weight is MEASURED, not fitted ---")
-    print("  R13 and R14 differ in `time_score` alone: the gated mean-blend never fired on a")
-    print("  single hidden window, so all four error subscores came back bit-identical.")
-    print(f"    d time  {92.978725 - 93.115432:+.6f}")
-    print(f"    d final {80.630755 - 80.643823:+.6f}")
+    print("\n  --- and one weight is MEASURED, not fitted: THREE single-subscore A/Bs ---")
+    print("  Each pair shipped the SAME prediction array by a different route, so all four")
+    print("  error subscores came back identical and only `time` moved.")
+    print(f"    {'pair':<11s} {'d time':>10s} {'d final':>10s} {'w_time':>8s}")
+    for nm, dt, df in W_TIME_AB:
+        print(f"    {nm:<11s} {dt:>+10.6f} {df:>+10.6f} {df / dt:>8.5f}")
     print(f"    => w_time = {W_TIME_DIRECT:.4f}   (FREE fit {w[3]:.4f}, "
           f"admissible {bounds['time'][0]:.4f}-{bounds['time'][1]:.4f}; "
           f"sum=1 fit {wc[3]:.4f})")
@@ -330,6 +712,15 @@ def main():
     print(f"\n  best at constant latency: {best[0].strip()} ({best[3]:.3f})")
 
     print("\n=== Board latency, inverted from time_score ===")
+    print("  THE LEVEL MODEL IS WITHDRAWN (round 23).  `4.447 + 0.324*inv + 0.431*local` is")
+    print("  kept in the `model` column only to show HOW wrong it is: its residuals reach")
+    print("  -2.5 ms and are ordered by date, i.e. the eval machine drifts and the intercept")
+    print("  is not a constant.  Never predict a board LEVEL with it.")
+    print("  What IS measured, from the round-23 unfused pair (same checkpoints, same fp16")
+    print("  packing, same band bytes, FUSE=False the only change, both tracks the same day):")
+    print(f"     one extra sequential model forward = +{INV_MS_T1:.3f} board ms on Track 1,")
+    print(f"                                          +{INV_MS_T2:.3f} board ms on Track 2.")
+    print("  Anchor on a RECENT round of the same shape and move only in deltas.")
     print(f"  {'round':<24s} {'inv':>4s} {'local ms':>9s} {'board ms':>9s} "
           f"{'model':>7s} {'miss':>7s}")
     # local ms are 4060-EQUIVALENT (the A100 runs 1.850x faster; CLAUDE.md round 12).
@@ -357,14 +748,50 @@ def main():
              "R17": (1, 2.803),
              # T2R5: the same four members through the Track-2 streaming path, batch 1.
              # 2.904 ms/step measured (validate_t2, log slurm-7156902.out) x1.850 = 5.37.
-             "T2R5": (1, 5.37)}
+             "T2R5": (1, 5.37),
+             # R18 / T2R6: R17 / T2R5's IDENTICAL members and band, with only the shipped
+             # path's arithmetic changed -- HOST_WRITE="torch" on Track 1 (bit-identical) and
+             # SPEC_PATH="bmm" on Track 2 (2e-06 relative).  The four error subscores came back
+             # EXACTLY equal on Track 1 and equal to 3e-06 of sps on Track 2, which is the gate
+             # the pair was designed around, so each round is a single-subscore A/B on `time`.
+             # Both local figures are RATIO-scaled from a contended build job (x0.834 measured
+             # back to back in one process), not measured idle.  THE BOARD FALSIFIED BOTH
+             # PREDICTIONS: Track 1 predicted -0.283 board ms and returned -0.089 (31 %), and
+             # Track 2 predicted -0.81 and returned +0.039 (a small move the WRONG way).
+             "R18": (1, 2.451), "T2R6": (1, 4.480),
+             # R19 / T2R7: R18 / T2R6's shape with different weights.
+             "R19": (1, 2.451), "T2R7": (1, 4.480),
+             # R20 / T2R8: cmb3sim, the same shape again.
+             "R20": (1, 2.450), "T2R8": (1, 4.480),
+             # R21 / T2R9: xfam5 -- R20's four FNOs (one fused group) plus a ViT (a second
+             # group), and int8 instead of fp16 to fit the cap.  Two variables at once, so its
+             # +0.758 / +1.596 ms cannot be split between the ViT's forward and the packing.
+             "R21": (2, None), "T2R9": (2, None),
+             # R23 / T2R10: THE MEASUREMENT.  R20 / T2R8's own checkpoints, own fp16 packing
+             # and own band (md5 2eed9e6b...), `FUSE = False` the only difference, uploaded to
+             # both boards on one day.  Verified before upload by verify/pkg_identity.py at
+             # 4.66e-06 / 4.27e-06 against the archives actually uploaded in round 20; verified
+             # after by the board, which returned rel/tke/mvpe bit-identical to six decimals
+             # and sps to 2e-05.  Local ms is NOT recorded: every reading available (1.139,
+             # 1.355, 1.406 A100 ms) came from a contended node and they span 23 %, which is
+             # larger than the whole effect the local term is supposed to carry.
+             "R23": (4, None), "T2R10": (4, None),
+             # R24 / T2R11: timed side by side with R21 in ONE process on one node (rp_r24h /
+             # rp_r24i): xfam6 1.812 A100 ms/window (x1.850 = 3.352), x8v's Track-2 step 4.661.
+             "R24": (2, 3.352), "T2R11": (2, None),
+             # R25 / T2R12: R24's archive with fp16 autocast. rp_r25b timed it interleaved with its
+             # own fp32 twin in one process: 1.510 against 1.918 A100 ms/window (x1.850 = 2.794).
+             "R25": (2, 2.794), "T2R12": (2, None)}
     for r in FIT_ROUNDS:
         key = r[0].split()[0]
         t = 0.72896 * (100.0 / r[6] - 1.0) ** 2 * 1000.0
         if key in known:
             inv, loc = known[key]
-            m = 4.447 + 0.324 * inv + 0.431 * loc
-            print(f"  {r[0]:<24s} {inv:>4d} {loc:>9.3f} {t:>9.3f} {m:>7.3f} {t - m:>+7.3f}")
+            if loc is None:
+                print(f"  {r[0]:<24s} {inv:>4d} {'-':>9s} {t:>9.3f}")
+            else:
+                m = 4.447 + 0.324 * inv + 0.431 * loc
+                print(f"  {r[0]:<24s} {inv:>4d} {loc:>9.3f} {t:>9.3f} {m:>7.3f} {t - m:>+7.3f}")
         else:
             print(f"  {r[0]:<24s} {'?':>4s} {'?':>9s} {t:>9.3f}")
 

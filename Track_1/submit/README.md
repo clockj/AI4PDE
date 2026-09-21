@@ -1,5 +1,10 @@
 # Track 1 — Submission Package
 
+> **Historical — the 2026-07-30 U-Net package.** It shipped `wp2i_alldata.pth` and scored
+> 83.019 on the pre-v9 board; under kit v9 the same package is board round R6, 79.733. The
+> numbers below are pre-v9 and measured on the old RTX 4060. The current package code is in
+> `../submit_fno/`, and the current state in `../../CLAUDE.md`.
+
 **`submission.zip` is built and verified. Upload it to
 <https://www.codabench.org/competitions/17363/>.**
 

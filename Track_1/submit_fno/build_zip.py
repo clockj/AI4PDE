@@ -15,6 +15,10 @@ import os
 import shutil
 import zipfile
 
+# Must equal _fno._Q8_SUFFIX -- that is the only contract between the packer here and the
+# unpacker there, and the assert below is what keeps the two from drifting apart silently.
+Q8_SUFFIX = "._q8scale"
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 TRACK1 = os.path.dirname(HERE)
 STAGE_DEFAULT = os.path.join(HERE, "_package")
@@ -22,6 +26,20 @@ ZIP_DEFAULT = os.path.join(HERE, "submission.zip")
 SIZE_CAP_MB = 256
 
 DEFAULT_CKPT = os.path.join(TRACK1, "unet", "fno_grad.pth")
+
+
+def _linear_for(blob: dict, default: str, overrides) -> str:
+    """The --linear mode for ONE member: the first --linear-arch ARCH=MODE whose ARCH prefixes the
+    blob's own `arch` field (a blob without one is an FNO), else `default`. With no overrides every
+    member packs exactly as before. 09-14: Swin members ship fp16 Linears, the ViTs keep 'tensor'."""
+    arch = str(blob.get("arch", "fno"))
+    for item in overrides or ():
+        key, _, mode = item.partition("=")
+        if not key or mode not in ("tensor", "row", "fp16"):
+            raise SystemExit(f"--linear-arch {item!r}: expected ARCH=tensor|row|fp16")
+        if arch.startswith(key):
+            return mode
+    return default
 
 
 def main() -> None:
@@ -48,7 +66,41 @@ def main() -> None:
                          "Safe here because this FNO stores its spectral weights as REAL "
                          "tensors with a trailing (real, imag) axis; a genuinely complex "
                          "parameter would need pack_ckpt_fp16.py's split instead.")
+    ap.add_argument("--int8", action="store_true",
+                    help="store the LARGE floating tensors of the state_dict as int8 with an "
+                         "fp16 scale per (out, in) channel pair, and everything under 4096 "
+                         "elements as fp16. Halves the archive AGAIN on top of --fp16: a "
+                         "width-96 8-layer member goes 108.5 MB fp32 -> 54.3 fp16 -> 29.0 int8, "
+                         "so EIGHT of them are 232 MB against the 256 MB cap where eight fp16 "
+                         "would be 434. Measured cost over 96 val_unseen windows (quant8.py): "
+                         "rel-L2 of the field difference 8.3e-4 against fp16's 2.7e-4 and a "
+                         "model rel-L2 of 0.077, i.e. +6e-5 of the error in quadrature -- the "
+                         "same argument that made --fp16 free. Coarser scale granularities are "
+                         "20-40x worse and none is shippable. _fno.dequant8 undoes this at "
+                         "load time, and it is a no-op on any blob that does not carry the "
+                         "companion scale keys. Implies --fp16 for the tensors it leaves alone.")
+    ap.add_argument("--linear", choices=("tensor", "row", "fp16"), default="tensor",
+                    help="what --int8 does to a 2-D weight. The per-(out, in) rule reduces over "
+                         "range(2, dim), which is EMPTY for a Linear, and torch.amax(dim=()) "
+                         "reduces over every dim -- so each Linear got ONE scale. No FNO has a "
+                         "2-D tensor (packed bytes identical in all three modes); a ViT is "
+                         "97.5 %% Linear. 'tensor' is the historical behaviour R21 shipped, "
+                         "'row' is a scale per output row, 'fp16' leaves Linears in fp16. See "
+                         "_fno.pack_state_dict. SCORED, all three are free (r24e: d sps "
+                         "-0.001 / -0.005 / -0.004 on R21's own twins), so the default stays.")
+    ap.add_argument("--linear-arch", nargs="+", default=[], metavar="ARCH=MODE",
+                    help="per-family override of --linear, matched as a prefix of each blob's own "
+                         "`arch` (swin_unet=fp16 also covers swin_unet_b6). Members matching no "
+                         "entry use --linear, so without this flag every archive packs as before.")
     args = ap.parse_args()
+    # The packer and the unpacker are the same file, loaded by path so this script keeps
+    # working from any cwd and so the int8 format cannot drift between the two.
+    import importlib.util as _ilu
+    _sp = _ilu.spec_from_file_location("_fno_pack", os.path.join(HERE, "_fno.py"))
+    _m = _ilu.module_from_spec(_sp); _sp.loader.exec_module(_m)
+    assert _m._Q8_SUFFIX == Q8_SUFFIX, (
+        f"packer/unpacker suffix drift: {Q8_SUFFIX!r} here, {_m._Q8_SUFFIX!r} in _fno.py")
+    _pack = _m.pack_state_dict
 
     names = ["fno.pth"] + [f"fno_{i}.pth" for i in range(2, len(args.ckpt) + 1)]
     files = [
@@ -69,11 +121,12 @@ def main() -> None:
         if not os.path.exists(src):
             raise SystemExit(f"missing required file: {src}\n"
                              f"(band.npz comes from: python submit_fno/fit_band.py --ckpt ...)")
-        if args.fp16 and name in ckpt_names:
+        if (args.fp16 or args.int8) and name in ckpt_names:
             import torch
             blob = torch.load(src, map_location="cpu")
-            blob["model_state_dict"] = {k: (v.half() if v.is_floating_point() else v)
-                                        for k, v in blob["model_state_dict"].items()}
+            blob["model_state_dict"] = _pack(blob["model_state_dict"],
+                                             fp16=args.fp16 or args.int8, int8=args.int8,
+                                             linear=_linear_for(blob, args.linear, args.linear_arch))
             torch.save(blob, os.path.join(STAGE, name))
         else:
             shutil.copy2(src, os.path.join(STAGE, name))

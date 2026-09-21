@@ -6,9 +6,11 @@ weights and turned the two boards into one instrument; revised 2026-09-02 after 
 PAIR, which answered where the hidden set lives and put dropout on the board; revised
 2026-09-04 after the round-16 pair, which took Track 1 to the account's best and closed the
 first non-FNO family behind a k-fold gate; **revised 2026-09-04 22:06 after the round-17 pair,
-which read the scoring rule correctly for the first time.** This is the
+which read the scoring rule correctly for the first time; **revised 2026-09-05 after the
+round-17 campaign, which saturated the FNO recipe everywhere except sim and staged two pairs (§1.23)**. This is the
 handoff document: it records what the leaderboard actually says, what is closed, and what to do
-next. Read it with `CLAUDE.md` (contracts, measurements, per-round detail),
+next. Read it with `CLAUDE.md` (contracts, current measurements, standing rules), `ROUNDS.md`
+(per-round detail),
 `Track_1/board_rounds.py` (every number in Part 1 is reproducible from it) and
 **`Track_1/plan/plan_20260905.md` (the CURRENT round's plan and recorded predictions)**.
 
@@ -134,7 +136,7 @@ no-intercept form on four points; it holds on eight and on nine.)
 **rel +0.189 / tke −1.184**, worth **+0.019** at the eight-round weights and **+0.128** in
 fact. The only fit is `tke` down and `rel_l2` up.
 
-Consequences, all of which invalidate advice still sitting in `CLAUDE.md`'s older sections:
+Consequences, all of which invalidate advice still sitting in `CLAUDE.md`'s older sections (now `ROUNDS.md`):
 
 * **`rel_l2` is the most valuable subscore, at >2× the round-9 weight.** Round 10's
   "**stop optimizing rel-L2**, TKE and SPS carry the response" is **FALSIFIED**. It read the
@@ -662,7 +664,7 @@ recorded predictions: T2 `L8x4` do30 (81.035) / T1 `L8x4` do45 (81.188).
 Board 2026-09-04 22:06. **T1 R17** (915380) 94.745531 / 78.635462 / 93.974234 / 92.988361 /
 41.324574 → **81.169843**, predicted 81.188. **T2 R5** (915381), the *same four members*,
 94.727329 / 78.357043 / 93.692366 / 92.427051 / 41.191134 → **81.019298**, predicted 81.088.
-Detail: CLAUDE.md "Round 17 BOARD RESULT"; plan `Track_1/plan/plan_20260905.md`.
+Detail: `ROUNDS.md` "Round 17 BOARD RESULT"; plan `Track_1/plan/plan_20260905.md`.
 
 * **Depth at 4 members ≈ 8 members at 4 layers.** Both boards agree on every subscore's sign:
   rel **worse** by 0.37 %/0.57 % of error, tke −1.19 %/−1.07 %, mvpe worse by 1.00 %/0.81 %,
@@ -702,6 +704,323 @@ Detail: CLAUDE.md "Round 17 BOARD RESULT"; plan `Track_1/plan/plan_20260905.md`.
   Ledgered as 81.019298.
 
 
+### 1.23 Round 17 campaign (2026-09-05): the recipe is saturated except for sim; the latency pair; the sim pair
+
+~105 GPU-h of the new 200-h budget, one day, ledger `Track_1/plan/campaign_20260905.md`,
+reading `Track_1/plan/plan_20260905.md` §7. Two packages staged, neither submitted:
+
+| slot | archives | change | predicted |
+|---|---|---|---|
+| **next** (R18 / T2R6) | `track1_r17_L8do45x4_hostw_a060.zip` / `track2_r17_L8do45x4_bmm_a060.zip` | R17's members and band bit-for-bit; T1 `HOST_WRITE="torch"`, T2 `SPEC_PATH="bmm"` — **only `time` moves** | 81.192 / 81.078 |
+| **the one after** (R19 / T2R7) | `track1_r17_simx4_hostw_a060.zip` / `track2_r17_simx4_bmm_a060.zip` | 4 all-data w96 L8 do45 members **co-trained on mapped sim** (λ 0.3), band refit `band_r17_simx4.npz` shared by both arms | 81.340 / 81.163 nominal; accuracy part +0.14 nominal, **≈+0.05 honest** |
+
+* **Latency: bet 1 died, a better one replaced it.** TF32 / fp16 / bf16 buy **+0.000** at 4
+  members — the forward runs at **6 % of the A100's FLOPs**, GPU busy 63 %, 279 launches per
+  batch. **41 % of the shipped path is member-independent host work**, its largest item a
+  strided numpy output write at 1.4 GB/s single-threaded; through `torch.copy_` it runs at
+  29–33 GB/s, **bit-identical, −17 % at 4 members** (Track 1). On Track 2 the complex einsum's
+  strided *weight* copy is 28 % of the batch-1 step; a batched real 2×2-block matmul
+  (`SPEC_PATH="bmm"`, 2e-06 relative) is **−16.6 % on the graph step**, replicated three times
+  (Q1g −16.6 %, Q1h ×0.834, Q3build ×0.828). Both are baked into `submission.py` as constants
+  next to `ALPHA`. **Trap, twice**: a baked constant overrides the `RPDE_*` environment
+  variable at import, so an in-job env-var A/B on a built archive is a no-op (2.732 → 2.731,
+  2.745 → 2.735) — measurement drivers must set the constant. Rejected: pinned/async D2H,
+  contiguous output buffer, `jit` tail, wider `_pick_batch`. `pkg_identity.py` gates the pair:
+  T1 **0.000e+00**, T2 1.8e-06 on 336 windows.
+* **ALPHA stays 0.60**: 0.55–0.70 is a ±0.006 plateau under the free weights. **8 members ≈ 4
+  members + a latency bill** at w96 L8 (−0.015 / −0.008 fp32). **The capacity ladder ENDS at
+  w96 L8**: L12 / w128 / modes (12,20) at do45 fit better (training field 0.033–0.034 vs
+  0.038) and generalize the same — sps inside the seed floor on both splits — and each costs
+  2–3 of the 4 fp16 members. **The real-data axis is closed at capacity**: `--phases 4` (400
+  ep and equal-step 100 ep) and `--aug-scale 0.25` are null; `do60` and `lr1e-4` split the
+  splits; `lr4e-4` sits at the floor.
+* **The interior Re-band k-fold reference for L8 exists (Q2d)** and calibrates the instrument:
+  depth vs L4 read rel **−1.21 %** (z −8.2), TKE −1.5 %, sps +0.31 (48.366 → 48.674) where the
+  board returned rel **+0.37 % worse**, tke −1.19 %, sps +0.066 / +0.031. **The k-fold
+  overstates `rel_l2` at the 1 % level**; it has the sign of tke and sps right.
+* **SIM CO-TRAINING AT CAPACITY IS THE ROUND'S CANDIDATE, and it survived every local gate.**
+  `--sim --lam-sim 0.3 --sim-loss full --sim-exclude-held` on the leak-free domain map
+  (26 conditions on the freestream law). One seed (Q2c): sps **+0.33 proxy / +0.12 full**, all
+  four errors down on both splits — the only Q2 arm to clear the drop rule. Replicated (Q3a):
+  seeds 2–3 reproduce seed 1's `var` to five figures; **every sim seed beats every control
+  seed on sps on both splits** (p = 1/20). **3-vs-3, band refit per set**: proxy rel 0.1039 →
+  0.1027 (−1.15 %), TKE −1.04 %, MVPE −1.06 %, sps 37.24 → **37.57 (+0.33)**; full rel −0.78 %,
+  TKE −0.52 %, MVPE −0.43 %, sps 43.98 → **44.13 (+0.15)** — the single-seed margin retained in
+  full at ensemble size, which no in-distribution arm since round 10 had managed (§1.15).
+  **Interior Re-band k-fold (Q3b, paired vs Q2d, 2152 windows)**: rel −0.65 % (z −4.49),
+  **TKE +0.03 % (null)**, MVPE −1.00 %, sps 48.674 → **48.774 (+0.10)**, wfinal +0.038; band 0
+  reads −15.5 % / −10.7 % and is the retired extrapolation regime. **Real, small, below the
+  ~2 % transfer resolution on every error; TKE null in the interior.** Staged anyway: same
+  shape, member count and latency as R17/T2R5, non-negative on every local instrument, no
+  competing candidate for the slot, and a null on the board is the calibration point the
+  k-fold needs at this effect size. Honest bracket: rel and tke within ±0.5 %, mvpe slightly
+  better, sps 0…+0.36, accuracy part 0…+0.14, centre ≈ +0.05. **Do not count the fast paths
+  twice**: after R18/T2R6 the sim pair's `time` delta is ≈ 0.
+* **The sim recipe's knobs, screened overnight (q3d/e/f/g, one seed each, bit-matched to
+  `fno_r17_sim.pth`, ≈24 GPU-h) — ALL closed, and together they say what sim IS.**
+  → **Dose (q3d)**: `lam_sim` 0.1 / 0.3 / 1.0 → proxy sps 44.27 / 44.30 / 44.32, full 50.53 /
+  50.52 / 50.52, flat inside the sim trio's own spread; rel-L2 monotone in λ (−0.6 % across
+  the range), TKE anti-monotone and at λ 1.0 **worse than no sim**. λ 0.1 perturbs training
+  by 1.8 % and already buys the whole containment gain; λ 1.0 perturbs it 14 % and breaks
+  TKE. sim + do30 splits inside noise — sim does not substitute for dropout.
+  → **Volume / schedule (q3f)**: `--sim-stride 2` (2.5× the sim windows, sampler verified) is
+  a null **to four decimals** on every metric and on the training curve; 600 epochs splits
+  inside the floor with a 6.6 % better fit. Not window-limited, not step-limited.
+  → **Faithfulness (q3g)**: the per-pixel map LOSES, monotonically — scalar → std → meanstd is
+  proxy sps 44.30 → 44.26 → 44.17, rel-L2 0.1049 → 0.1054 → 0.1059; the per-pixel maps make
+  the sim windows 29 % easier to fit and pull the real objective back toward the no-sim
+  control. **The statistics sim gets wrong are most of what the term contributes.** Sim-side
+  preprocessing is closed in both directions (round 14's `--sim-loss shape` −0.7; this).
+  → **Capacity with sim (q3e)**: sim's gain GROWS with capacity (L12 +0.37 / +0.22, w128
+  +0.37 / +0.20 vs their no-sim twins, against +0.33 / +0.12 at L8; 11 of 12 error cells
+  better) — but against the sim L8 recipe `simL12` fails the proxy (−0.04) and `simw128`
+  only ties it (+0.03; +0.16 full), trading rel-L2 for the round's lowest single-model TKE
+  (−1.1 %). At 2–3 fp16 members and 1.5–1.8× the FLOPs a proxy tie cannot pay. **Capacity is
+  closed a second time, with data.** One door: if int8 packing ever makes w128 members free,
+  revisit `simw128` on TKE.
+  → **Mechanism**: value flat in weight over 10×, flat in window diversity, inverted in
+  faithfulness, growing with model size, TKE-null in the interior k-fold — **sim is a
+  STRUCTURED PERTURBATION** (extra supervised pairs with plausible dynamics and wrong
+  statistics), i.e. a regularizer, not data. Two follow-ups queued on that reading: q3h
+  (mixed sim + no-sim ensembles from existing twins, eval only) and q3i (the same perturbation
+  built from REAL data alone — real windows at frame stride 2 / 3, alone and on top of sim).
+  → **q3i (real-data perturbation) is NULL**: real windows at frame stride 2 / 3 as an
+  auxiliary term perturb training as much as sim (+3.1 % field) and buy nothing alone
+  (43.97 = 43.97 proxy, −0.08 full; K = 3 loses) or on top of sim. **"Any structured
+  perturbation" is falsified: sim's value is its CONTENT** — conditions and dynamics the real
+  grid lacks — delivered as a regularizer.
+  → **q3j / q3k (pressure, the last unused sim content)**: a training-only `head_p` on sim
+  windows, stripped at save. Pooled-normalized p is a WEAK test (the head explained 99.1 % of
+  a Re²-dominated variance; per-trajectory p std spans 4 382×) and reads null; per-trajectory
+  normalized p (λ 0.1, psim 0.138, field cost 1.4 %) is a clean test and reads **sps null
+  (44.29 / 50.57 vs 44.30 / 50.52) with TKE −0.6 % / −0.5 %** — content the trunk can use,
+  worth ≈ +0.01 `final`. **The sim line is closed in every direction.** TKE-only movers this
+  round, for a future round that needs TKE specifically: capacity-with-sim (−1.1 % per model,
+  priced out by members) and per-trajectory pressure (−0.5 %, sps-neutral).
+* **Method, earned this round.** (i) An HDF5 advisory-lock race between co-scheduled jobs on
+  one node killed an arm; `HDF5_USE_FILE_LOCKING=FALSE` in `jobs/common.sh`, and Slurm
+  snapshots scripts at submit. (ii) **Running jobs re-import the working tree per arm/fold/
+  seed**: shared modules are edited in a copy and installed with an atomic `mv` after
+  `ast.parse`, with the default path and its cache tag bit-identical. (iii) A timing inside
+  a job that shares the node with training is CONTENDED (gate: the R17 shape must reproduce
+  1.412 A100 ms ±3 %); only ratios to an in-job baseline are recorded. (iv) The Q1h build
+  job's identity and prediction stages crashed on a missing attribute and a repo-relative
+  path after a `cd`; both were re-run on CPU and the numbers stand, and `q3build` fixes the
+  paths.
+
+### 1.24 Rounds 18–23: `sps` factorizes, one ViT is worth an invocation, and the invocation is 1.15 ms
+
+The round-by-round record for 18–23 is in `ROUNDS.md` (section "Rounds 18–23"), the live data
+in `Track_1/board_rounds.py`, the published log in `leaderboard/`. Two of it are *rules*, and
+this is where rules live.
+
+**(a) `sps` FACTORIZES, SO EVERY BOARD ROUND SPLITS INTO A FORCED PART AND A CONTAINMENT PART
+— with no free parameter and no local measurement.** The scoring rule is
+`sps = 100 · mean_i(a_i) · containment` with `a_i = 0.5g(rel) + 0.3g(tke) + 0.2g(mvpe)` and
+`g(m) = 0.5/(0.5+m)`, so `sps_pred(B) = sps(A) · a(B)/a(A)` is computable from two rounds'
+**published subscores alone**. What is left over is the containment term, and across every
+consecutive board step it is nonzero for exactly four kinds of change:
+
+| change | containment `sps` |
+|---|---|
+| the **band** (R9 → R10) | **+1.410** |
+| regularized **capacity**, w24 → w96 (both boards) | **+0.992 / +0.961** |
+| **member count**, 3 → 8 | **+0.668** |
+| architecture **family** — U-FNO in, then out | **+0.464 / −0.440** |
+| architecture **family** — one ViT inside an FNO package (R21 / T2R9) | **+0.184 / +0.163** |
+| everything else: sim, depth at equal FLOPs, `--lam-cov`, `--lam-tgrad`, `lam_v`, both latency rebuilds, the gated blend | inside ±0.05 |
+
+It also re-prices the exchange rate, because `a_i` is built from the other three subscores: per
+10 % of error removed, `rel_l2` **+0.346**, `tke` **+0.290**, `mvpe` **+0.100** — `tke` is
+84 % of `rel_l2`, not 74 %, and no error subscore is negligible.
+
+→ **§1.20's closure of non-FNO families was true of the PACKAGE and false of the MEMBER.**
+U-FNO ×3 missed by −0.45 on latency and `rel_l2` and its `sps` +0.44 was filed as noise; it was
+the third-largest containment move on record. One ViT inside an otherwise-FNO package is worth
+**+0.148 (T1) / +0.152 (T2) of accuracy**, replicated across boards.
+
+**(b) AN INVOCATION COSTS 1.151 BOARD MS ON TRACK 1 AND 0.866 ON TRACK 2 — measured, after
+thirteen rounds of being fitted.** `board ms = a + b·invocations + c·local` had `b` fitted since
+§1.6 and never tested. Round 23 shipped round 20's own checkpoints, own fp16 packing and own
+band **byte for byte** with `FUSE = False`, so one fused invocation became four sequential
+forwards and nothing else moved. The gate held perfectly — `rel_l2`, `tke` and `mvpe` came back
+**identical to six decimals** on both boards, `sps` moved 2e-05 — so `time` is the whole delta.
+Against the fitted 0.435 the model was **2.65× / 1.99× light**; priced through `w_time` the
+first extra invocation is **−0.085 / −0.058 `final`**, the size of a good accuracy arm.
+
+→ ~~**THE BOARD IS LAUNCH-BOUND, NOT FLOP-BOUND.**~~ **HALF WRONG — see §1.25.** Launches are
+expensive (+3.45 ms for three extra), which is why `_fno.fuse()` exists and why a third family
+(AFNO: +0.03 marginal `sps` for a whole invocation) is out of the question. But round 24 showed
+that FLOPs are charged as well.
+
+→ **Track 2's handicap is a FIXED per-step cost, not a per-invocation one.** At 1 invocation it
+costs +0.864 ms more than Track 1; at 4 the two boards meet (7.249 vs 7.255) and Track 1 pays
+MORE per invocation. "The invocation tax is 2.4× heavier on Track 2" (round 22) is **withdrawn**
+— that was R21's ViT forward, which is heavy at batch 1, not the invocation.
+
+→ **`w_time` = 0.09609 / 0.09616** off this one pair, a fourth and fifth direct single-subscore
+reading. The free 28-round fit says 0.0965; the `Σw = 1` fit said 0.085 and is excluded by 15 %.
+
+→ **Never predict a board LEVEL from the latency model.** Its residuals reach −2.5 ms and are
+ordered by date — the eval machine drifts. Anchor on a recent round of the same shape and move
+in deltas: `board_rounds.INV_MS_T1/T2`, `board_ms()`, `time_score()`, `invocation_cost()`.
+
+**(c) The method rule this round adds (now rule 10 in Part 4).** A submission slot spent on a
+package that CANNOT WIN is worth more than one spent on +0.02, when the package is built so
+that only one subscore can move. Rounds 14 and 23 both did this deliberately and both returned
+a number no amount of local work could have produced. The Decision phase (to 2026-10-25) is
+what selects the final package; Main Development slots are for learning.
+
+### 1.25 Round 24: the second ViT is +0.050 of accuracy, member count is closed, and FLOPs are charged
+
+The detail and table are in `ROUNDS.md`, "Round 24 BOARD RESULT". The rules:
+
+**(a) FLOPs are charged on the board — §1.24(b) was half wrong.** One more ViT inside a fused
+group cost +1.02 board ms on Track 1 (local +0.316 A100 ms/window); four more FNOs cost +1.37 on
+Track 2. Track 1 reads **1.74 board ms per 4060-equivalent local ms**, the same as the only
+same-day FLOPs pair ever submitted (R16 → R17, 1.76). A member must now earn its FLOPs, not only
+its invocation: at R21's operating point, **+0.1 A100 ms/window ≈ −0.023 `final`**. And latency
+becomes an accuracy-free lever: **≈ +0.072 `final` per board ms saved** on Track 1.
+
+**(b) Member count is closed at w96 L8 with a ViT in the set.** Board accuracy −0.020, and the
+local K-curve (+0.027 sps) called it. **The ViT family is closed at two.** The second paid
++0.050 of accuracy (containment +0.053, a third of the first's); a third would be half again.
+
+**(c) Method.** Both estimates of record landed below their floors, and both misses were the
+`time` row. The brackets were built on a latency slope that had never been measured at fixed
+invocations on the same day. **Bracket every package's `time` with the measured slope, never
+the cross-day refit.**
+
+### 1.26 Round 25: fp16 is accuracy-free here, and a latency lever can only be read on the board
+
+The detail is in `ROUNDS.md`, "Round 25". This round adds three rules:
+
+* **A precision change is priced in two halves, measured in different places.** Its ACCURACY
+  cost is measured locally, on real windows, against an fp32 twin of the same archive, through
+  the scorer, with permutation invariance checked. For fp16 the metrics were identical to 4–5
+  decimals and invariance was exact. Its LATENCY value can only be read off the board, because
+  the A100 is not the board GPU. That is why round 25's two slots are measurements.
+* **Anything decided at load time must leave a trace of what it decided.** `AMP` falls back to
+  fp32 when its self-check fails, so a board result reading "fp16 did nothing" is ambiguous
+  unless the archive can be fingerprinted — here, by the error subscores moving by ~0.001.
+* **Only interleaved, same-process timings count as local evidence.** The same package read
+  3.37 and 3.87 ms/step in two jobs, and 4.79 and 7.02 on two nodes. fp32 against fp16 in one
+  process read −21 % and −46 %, and those readings replicated.
+
+### 1.27 Round 25 board: Track 1 keeps 37 % of a precision cut, and fp16 does not buy a second ViT on Track 2
+
+The detail is in `ROUNDS.md`, "Round 25 BOARD RESULT". The rules:
+
+* **On Track 1 the board kept 37 % of fp16's local cut** (5.570 → 5.076 board ms, against
+  −1.321 at full transfer; 15–60 % across drift). Price a precision change at **~0.65 board ms
+  per 4060-eq local ms** (`board_rounds.PREC_SLOPE_T1`, one reading), not at the 1.75 FLOPs
+  slope. Levers that change arithmetic rather than FLOPs (TF32, a CUDA graph) are bracketed
+  between zero and that reading until the board measures each one.
+* **On Track 2, fp16 does not pay for a second ViT.** The xfam6fp16 archive came in at 7.061
+  board ms against xfam5's 6.255 (T2R9). The second ViT's containment (+0.041) arrived as
+  predicted, but fp16 returned only ~0.73 of a possible 3.61 board ms. Track 2's package carries
+  fp16 without the second ViT unless the board says otherwise; xfam5fp16 against T2R12 is that
+  read. Until then, bracket a local fp16 cut on Track 2 between zero and ~20 % transfer.
+* **The fingerprint design worked.** A load-time switch was read unambiguously from error
+  subscores that moved by ≤ 3e-4. Every future load-time decision (a baked TF32) needs one.
+* **Method.** Both estimates of record missed only in the `time` row (−0.011 and −0.059), and
+  both assumed that half of the local cut transfers. Use the measured fractions from now on.
+
+### 1.28 Rounds 26–27 / T2R13–T2R14 (2026-09-16 → 09-17): the graph and depth rounds
+
+Four slots over two days, three of them losses of ≤ 0.13 and one a new Track-2 best. Detail in
+`ROUNDS.md` ("Round 27 / T2R14 BOARD RESULT") and in `board_rounds.py`'s comment blocks. The rules:
+
+* **A local latency read transfers only when it is an honest FLOPs cut inside one kernel family —
+  and even then only within ~2×.** Three consecutive failures now: fp16 kept 37 % (R24→R25), R26's
+  fused Swin step measured 0.63× and predicted −1.245 board ms but delivered **+1.17**, and R27's
+  CUDA graph — measured at −0.2 % locally, i.e. invisible — delivered **+0.565 board ms**. R27 is
+  the strongest of the three because its kernels are *identical* to its anchor's: **host-side launch
+  accounting does not transfer either**, so the 1.151 ms/invocation of R23 cannot be collected by
+  restructuring launches. Bracket any latency lever at [0, the measured cut] and expect the wrong
+  sign outside a FLOPs change.
+* **CONTAINMENT IS INVISIBLE TO EVERY LOCAL INSTRUMENT, and it decides slots.** T2R14 (F-FNO L4
+  against T2R13's L8) put the three errors within noise — the forced part of `sps` is **+0.038** —
+  and the board returned **−0.273**, so containment fell **−0.310** and took the slot with it. The
+  band is refit per package from that package's own held-out twins, so *every* variant scores well
+  on its own fit and no local number separates them. The same quantity, with the opposite sign,
+  is what made T2R13 (+0.302) and R26 (+0.128) move at all. **Treat containment as a board-only
+  measurement and never bank it in an estimate.**
+* **Depth is closed on the board, not just locally.** L8 → L4 at K = 4: rel +0.024, tke −0.030
+  (−0.166 predicted), mvpe +0.073, `time` +0.473, `sps` −0.273, net **−0.006**. The cheaper stack is
+  real and it is handed straight back. **L8 stays the Track-2 package.**
+* **`LOC_SLOPE_T2` has three single cross-date readings and is a range, not a number:** 0.60
+  (T2R9→T2R11), 0.937 (T2R12→T2R13), **0.529** (T2R13→T2R14 — the cleanest: one day apart, same
+  kernels, same member count, depth the only lever). The shipped constant is **mean(0.937, 0.529) =
+  0.733**; bracket Track-2 latency with **0.53 and 0.94**. 0.937 was a high draw, exactly as the
+  09-16 handoff asked the next pair to decide.
+* **The fingerprint design keeps working.** R27's errors were bit-identical to R25's and `sps` moved
+  **+8.2e-05**: the graph provably ran. Note the *sign* was predicted wrong (−1.35e-04 at the local
+  1.36 stretch; the board's own tail flips the derivative) — **a fingerprint is a magnitude test,
+  not a direction test.**
+* **mvpe is the FNO's metric.** It fell on both boards on 09-16 (Swin −0.174, F-FNO −0.161) and only
+  recovered on 09-17 by going *shallower* (+0.073). No new family has improved it.
+
+### 1.29 THE RULES PIVOT (read 2026-09-17 on the site and the Codabench public API)
+
+Sources: `realpdecompetition.github.io`, Codabench 17363 / 17385, quoted in `Track_1/plan/lit_20260917.md`
+§2 and `Track_1/plan/plan_20260917.md` §6. Two sentences change what the remaining slots are for.
+
+> **"The top 10 teams on the … leaderboard are shortlisted. Organizers re-train each shortlisted team's
+> method from scratch on the competition's GPU cluster to ensure reproducibility, then evaluate on a
+> private test set with unseen parameter regimes; the resulting private-test scores decide the top 3."**
+
+> **"Public validation set + private test set (unseen parameters, novel angles-of-attack / Reynolds
+> numbers)."** Evaluation runs on **8× NVIDIA A800**. A shortlisted solution that cannot be reproduced
+> through re-training is **disqualified**. Participants may not "generate additional data for training,
+> nor … rely on pretrained models trained on anything other than the competition's released training
+> data"; augmentation is allowed provided "every training sample must trace back to the released
+> training data."
+
+**Three consequences.**
+
+1. **The development `final` is a QUALIFIER, not the prize metric.** It puts us in the top 10 and picks
+   the package. At 81.34 against a leader at 81.96 we are almost certainly already inside the cut, so
+   the remaining slots are worth more as **generalization experiments** than as score. Read our RANK on
+   both boards, not the gap.
+2. **From-scratch reproducibility is a hard gate**, so a `.pth` that exists only in `Track_1/unet/` is a
+   liability. Work item: **`REPRODUCE.md` + `reproduce.sh`** — twins → all-data members → band fit →
+   build, eleven trainings, dry-run with fresh seeds so the re-trained method's own score spread is
+   known before the organizers measure it. Scout is drafting it.
+3. **The private set is OOD in AoA and Re**, which reopens what R14 closed. R14's "the hidden set is in
+   the training speed range" was measured on the **public validation set** and still holds there; it
+   says nothing about a set described as *novel* AoA / Re. The instrument is therefore the
+   **AoA-holdout screen** (AoA 10 and AoA 20 held out, with the sim at that AoA excluded too), run for
+   the cmb3sim FNO, its no-sim variant and F-FNO L8. The gated mean blend (`BLEND_BETA`, which wins out
+   of distribution in `mean_blend_re.py`) and the family choice are **re-decided on those reads**.
+4. Minor but load-bearing: **`time` is measured on the organizers' A800s**, so `LOC_SLOPE_*`,
+   `INV_MS_*` and every latency constant in `board_rounds.py` price the **dev board only**. And DINOv2
+   initialization, already closed for being useless, is now closed on the rules as well.
+
+### 1.30 Sim co-training, measured on the board and out of distribution (2026-09-20)
+
+R30 / T2R17 shipped `r34`: R28's/T2R13's package with the four F-FNO w40 L8 members **and their three
+band twins** retrained with sim co-training, the band refit from the sim twins. Both are new bests.
+Detail in `ROUNDS.md`, "Round 30 / T2R17". The rule:
+
+* **Sim co-training is +0.02 on the dev board and +1.1 at a held-out AoA.** Board: +0.017 (T1) and
+  +0.010 (+0.052 at equal time) on T2. Held out (`plan_20260917.md` §11.4, the pre-registered rule it
+  passed in full): **AoA 10 +0.281, AoA 20 +1.251, seed 2 +0.981 — mean +1.12**, with `C3sim_vit2`
+  82.360 against 82.320. **Ship it for the private set; do not expect it to move the board.**
+* **The mean field transfers 1:1 to the board; `rel` and `tke` do not.** `mvpe` +0.056 / +0.068, the
+  **un-halved** twin delta, while `rel` came back slightly worse on both boards and `tke` split (−0.069
+  T1, +0.026 T2). The mechanism the AoA screen identified — sim teaches the mean field — is now
+  confirmed on the metric that measures it and refuted on the two that do not. **Charge a mean-field
+  gain in full, like a member removal, not halved.**
+* **Refitting the band on the new twins moved containment, on both boards: +0.134 / +0.160.** It
+  reproduced across tracks, which is what separates it from a draw. Refit the band whenever the twins
+  change — this is now a *measured* reason, not just the standing rule.
+* **`time` drift can swallow a real gain.** T2R17 drew +0.704 board ms, the top of Track 2's 0.4–0.7 ms
+  range, turning +0.052 into +0.010. Price Track-2 latency from `t2r16`'s 5.892 ms, not from T2R17's
+  level — and do not resubmit for a better draw.
+* **We gained on both boards and lost a place on both** (#21→#23, #14→#15). The dev board is a
+  qualifier and the field is moving faster than we are; the private-set method is the remaining work.
+
 ## Part 2 — Closed. Do not re-propose without new evidence.
 
 Everything here was closed by measurement, with the file that measured it. The list exists so a
@@ -715,8 +1034,31 @@ new session does not spend a week re-deriving a negative.
 | A second architecture family (U-Net) | gate M measured +0.091 proxy; board delivered ~+0.09 `tke_score` ≈ +0.015 final |
 | Extra invocations | R12 paid 0.973 `time_score` for its 4th group and got it back nowhere |
 | MVPE as an objective | weight ≈ 0.000, §1.4 |
+| **A CUDA graph on Track 1's `predict`** | R27 = R25's archive with `GRAPH = True` and nothing else: errors bit-identical, `sps` +8.2e-05 (so it ran), `time` 5.076 → **5.641 board ms**. The graph is SLOWER on the eval GPU; −0.037 `final`. §1.28 |
+| **F-FNO depth L4 on Track 2** | T2R14 = T2R13 with L4 members, depth the only lever: errors a wash (rel +0.024, tke −0.030, mvpe +0.073), `time` +0.473, but **containment −0.310** → `sps` −0.273, net −0.006. L8 stays. §1.28 |
+| **Dropping the ViT pair (Track 2)** | T2R15: −0.155 of accuracy+containment for +0.105 of `time`, net −0.050. Its containment alone is −0.132, 3× the −0.041 assumed. The pair stays in every package. §1.28 |
+| **The band fill on the dev hidden set** | T2R16 = T2R13 with the `--fill-unscored` band, the prediction array bit-identical: `sps` **−0.0066**, i.e. **−0.0016 `final`** — the hidden set's blanking matches the fit split's three recordings, so the filled elements are unscored there too. **NULL on the dev board, and the closure stops there:** memo §4.9's −0.62 exposure on a *differently* blanked private recording is untouched, so the fill stays in the Decision-phase method as insurance with a now-measured price. |
+| **`StackedFFNO` batch tiling as a LEVER** | R29 = R28's package on the tiled `_fno.py`, all four error subscores bit-identical: `time` +0.016 board ms, inside drift. The package-level read had priced it at +0.004–0.009 `final`, below the board's resolution, and the board returned nothing. **Closed as a lever, KEPT as code** — the tiled path is the proven base of every later package. |
+| **Distillation of the shipping ensemble** | Four configurations (09-18, `plan_20260917.md` §10–10.2). The teacher's **mean** transfers and its **variance does not**, so the student cannot reproduce the σ head the band is fitted to: **−0.5 at K1** against the 82.3198 ceiling, far outside the −0.06 ship rule. The largest lever we had identified, and it is gone. |
+| **A third family in one package (F-FNO + FNO + ViT)** | **+0.001 of accuracy for −0.21 of `time`** (09-18). The invocation and the FLOPs are never repaid; two families plus the ViT pair is the ceiling. |
+| **Sim at the exact held-out cell** | The matched AoA-holdout read (arm S2in, `plan_20260917.md` §11.4): keeping sim at the held-out cell is **a wash, −0.004**, so the gain is sim's *general* mean-field teaching and not leakage of the held-out condition. Arm dropped. |
+| **Band width for a novel angle** | `--inflate-sweep` over the AoA-holdout reads (§11.2): **1.39 is already the held-out optimum**, so the shipped stretch needs no OOD correction. |
+| **Gating the blend on angle** | **No scalar window feature separates a novel angle** (§11.2) — there is nothing to gate on, so an angle-gated blend cannot be built, let alone tuned. |
+| **The ungated mean blend for the sim method** | Closed again for `r34` specifically (§11.3, `cddecd9`): F-FNO+sim passes all three pre-registered criteria and the ungated blend does not. `BLEND_BETA` stays 0. |
 
-**Closed with held-out local evidence** (each cost a real experiment; see `CLAUDE.md`):
+**Closed on PHYSICS, not on an experiment (2026-09-17, `Track_1/plan/lit_20260917.md` §3.4):
+σ-amplitude modelling, i.e. every arm whose mechanism is "predict the fluctuation amplitude better".**
+The scored TKE target is the per-pixel variance of **20 frames** of a signal whose correlation time is a
+large fraction of the window, so the target is itself mostly sampling noise. Pooled over all 3465 windows
+of all 82 trajectories: the previous window's variance field scores rel-L2 **0.803** (0.722 optimally
+rescaled); the trajectory's **own long-run mean variance field, hindsight, leave-one-out** — the best
+*phase-blind* predictor that exists — scores **0.570**; **we already score ≈ 0.538**; a hindsight variance
+computed from **40** frames reaches only **0.456**, and from 80 frames 0.358, falling as ≈ `n^-0.35`, the
+signature of a sampling-noise-dominated estimator. **So a 20 % TKE cut (0.538 → 0.43) is below what an
+oracle with twice the data achieves.** It cannot come from better amplitude prediction — only from
+phase — and **no TKE-targeted arm gets GPU time.**
+
+**Closed with held-out local evidence** (each cost a real experiment; see `ROUNDS.md`):
 
 * **Capacity, both directions.** w16 < w24 > w48 > w64; modes ladder flat. Architecture search
   finished (round 10b).
@@ -746,6 +1088,39 @@ new session does not spend a week re-deriving a negative.
 * **Post-hoc sigma calibration.** Three separate nulls, worst −0.311 out-of-sample.
 * Also null: long context, SWA, analog forecasting, input-noise augmentation, `--chan-pow`,
   `--w-mean`, `--lam-p`, `--lam-t` upward, `--point-mlp`, `--detach-var`, GNNs, KANO.
+
+**Closed by the backbone campaign, 2026-09-14** (held-out local evidence at 400 epochs; decisions in
+`Track_1/plan/plan_20260914.md` §5, ledger `leaderboard/screen.jsonl`, notes
+`Track_1/plan/screen_20260914.md`):
+
+* **The ConvNeXt U-Net family** (`cnext_unet`). w40: partner −0.09, replace −0.18. w72 (8.3M
+  params, 1.11× latency): rel +7.0 % / +8.1 %, sps 44.25 / 36.43, no better than w40. Capacity does
+  not rescue full-resolution conv (plan §5, "Closed in Phase 1"; rows `w1_cnext_unet`,
+  `w2_cnext_unet_w72`; screen §5, §6b).
+* **The PDE-Arena U-Net** (`unet_mod` w16): rel +4.6 %, sps −0.74, partner −0.12 (plan §5; row
+  `w1_unet_mod`).
+* **SimVP** (`simvp` w112, gSTA): sps −2.0; its large arm was withdrawn before it ran (plan §5; row
+  `w1_simvp`; screen §6c).
+* **Swin capacity, w96** (7.5M params, 1.10×): rel +0.8 % / +1.2 % against the control, worse than
+  w64 on both splits; sps +0.19 full / −0.19 AoA against w64; standalone −0.084 against w64's
+  +0.023. The Swin ladder stays centred on w64 (plan §5, "Capacity read"; row `w2_swin_unet_w96`).
+* **Sim co-training on Swin, as a slot of its own** (`w2_swin_unet_w64_sim`). Against the mean of
+  the three no-sim Swin seeds: sps +0.12 full / +0.08 AoA; AoA rel −0.8 % and tke −1.4 %, but mvpe
+  −0.8 % against no-sim's −3.1 %; Swin + ViT ×2 local fin +0.016 / +0.010. The FNO pattern: about
+  +0.01–0.02 for twice the training cost. Only a candidate to bundle into a later member refresh
+  (screen §6k; row verdict `drop`, by main).
+* **Re/AoA conditioning** (`w2_oracle_fno`: the FNO control's recipe and seed with FiLM on the TRUE
+  (ln Re, AoA)). Against the control: rel +0.7 %, tke +1.4 %, mvpe +1.1 % on the full split and
+  −0.1 % / +0.1 % / +0.2 % on AoA 15–20; sps 42.63 vs 44.79 and 36.87 vs 37.38. Knowing the
+  condition removes no error, because the model already reads it from the window, so metadata-style
+  conditioning and any estimator of the condition are closed (screen §6o,
+  `Track_1/plan/screen_oracle_20260914.json`; row verdict `drop`, by main).
+* **The fused F-FNO stack on Track 1** (`_fno.StackedFFNO`, dense path): 1.30× its own member loop
+  at b64 fp16 (1.102 against 0.848 ms/window in gate 7291666; 1.106 / 0.849 again in 7297052), where
+  Track 2's batch-1 graph runs 0.336×. The residual/cast fix moved only 1.156 → 1.102, a per-member
+  projection split (7292403) is slower still, and the stack's `copy_` (36 ms against the loop's 16)
+  is unexplained. P2-L8 is therefore a Track-2-only package, and a Track 1 F-FNO slot needs this
+  fixed first (plan §5, "14:40 — F-FNO speed gate"; screen §6m–6n; `Track_1/verify/fuse_ffno.py`).
 
 **Closed with held-out TRACK 2 evidence** (2026-08-31; detail and files in `Track_2/README.md`):
 
@@ -789,6 +1164,40 @@ confirmed it from five directions.
 ---
 
 ## Part 3 — What to do next
+
+### THE LAST WEEK, 2026-09-21 → 09-27 (written 09-20; this supersedes everything below it)
+
+**Main Development closes 09-27.** The position: r34 is the method of record on both boards
+(81.418569 / 81.333776), we are **#23 / #15**, and **no lever ≥ +0.05 remains on the dev board** —
+Part 2 now closes distillation, ALPHA, a third family, the ViT-pair drop, the tiling, the band fill,
+and every AoA-screen arm except sim itself, which shipped. The dev board is a **qualifier**; the
+private set decides the prizes. So:
+
+1. **HOLD both slots unless a lever appears.** Nothing staged beats r34, and **a timing draw is not
+   resubmitted** — T2R17 lost 0.042 to one and that is what re-rolling buys. A slot spent on a package
+   we expect to score the same or worse costs a day and teaches nothing. If a lever does appear, it
+   must be a single controlled change with a pre-registered fingerprint, as R29/T2R16/R30 were.
+2. **Verify `reproduce.sh` end to end — this is the highest-value work left.** An irreproducible method
+   is **disqualified**, which is worth more than any board delta we could still find. A partial
+   verification (the twins and one all-data member from fresh seeds, then the band fit and the build)
+   is **≈ 15 GPU-h** and answers the question that matters: does the recipe in the repo rebuild the
+   package we shipped? `REPRODUCE.md` tracks what is verified and what is not.
+3. **Release readiness for the Decision phase.** Winners open-source two weeks before presenting, so
+   the repo has to be handed over as it stands: `EVALUATION.md` and `REPRODUCE.md` current, the closed
+   experiments filed under `Track_1/closed/` and `Track_2/closed/` with their verdicts, every shipped
+   band in `Track_1/bands/` with MANIFEST provenance, and every uploaded archive byte for byte in
+   `../sub_candidates/submitted/`.
+4. **Do not start anything that cannot finish and be verified by 09-27.** A half-trained arm is worse
+   than no arm: it cannot ship and it cannot be reproduced.
+
+
+> **As of 2026-09-14 the live plan is `Track_1/plan/plan_20260914.md`, the backbone campaign**,
+> with `../handoffs/HANDOFF_20260913.md` §4 for the latency levers. The P0–P4 below are the
+> round-13 plan, kept for the record. R25 / T2R12 read fp16 (§1.27): Track 1 carries it and
+> xfam6fp16 is the Track-1 candidate; Track 2 reads xfam5fp16 next; a baked TF32 constant and a
+> CUDA graph on Track 1's `predict` path are the remaining latency levers. The four containment
+> levers are closed — the band (eight times), capacity, member count, and the ViT family at two —
+> so what remains is latency, and anything structurally new.
 
 Time remaining: **Main Development closes 2026-09-27**, Decision phase to 10-25, results 11-10.
 **1 submission per day per track**, shared account — so **~27 slots per track**, against the
@@ -1047,12 +1456,52 @@ implement self-normalization but measured it on a split blind to what it is for;
 
 ## Part 4 — Where things are
 
+> **Paths, 2026-09-19.** The one-off experiments were moved out of `Track_1/`'s and `Track_2/`'s
+> top level: **a script cited anywhere in this file, in `ROUNDS.md`, in `plan/` or in `report/` as
+> `Track_1/<name>.py` or `Track_2/<name>.py` that is no longer there lives in `Track_1/closed/`
+> or `Track_2/closed/`** — see those directories' `README.md` for the verdict behind each. The
+> paths in the table below are current. **`EVALUATION.md` at the repo root** is the account of how
+> local evaluation works and how each board result corrects it: the scorer and its verifiers, the
+> splits, the instrument catalogue with its operating-point invocations, every calibration
+> constant with the rounds it came from, and the before-upload / after-a-result checklists.
+
+### Build and gate a package — the detail moved out of `CLAUDE.md` 2026-09-19
+
+* **Gates:** `submit_fno/validate_strict.py` (inside the build: clean extract, extract dir off
+  `sys.path`, eval-image packages blocked, contract, permutation invariance, the kit scorer,
+  end-to-end timing; GPU) · `Track_2/validate_t2.py` (contract, isolation, no aliasing,
+  statelessness, bound consistency) · `verify/cpu_smoke_submission.py` (login node) ·
+  `verify/pkg_identity.py` (two archives, same arrays — give it the one uploaded) ·
+  `verify/amp_path.py` · `verify/fuse_vit.py`.
+* **Provenance:** scored bands in `Track_1/bands/` (+ `MANIFEST.md`), unscored ones in
+  `../sub_candidates/`, every uploaded archive byte for byte in `submitted/`.
+
+
+### Evaluation containers (moved verbatim from `CLAUDE.md` 2026-09-17) — nothing is installed at eval time
+
+* Track 1, `pytorch/pytorch:2.2.2-cuda12.1-cudnn8-runtime`: no `scipy`, `h5py`, `matplotlib`,
+  `pandas`; `einops` only from the kit's `_vendor/`; `requests` and `setuptools` are present. Never
+  import h5py from anything in the zip (`unet/model.py` imports it lazily).
+* Track 2, `w3nhao/realpde-track2:v1` (torch 2.2.2, CUDA 12.1, Python 3.10): `einops` present, runs
+  in an isolated subprocess.
+* The platform may load `submission.py` via `spec_from_file_location` with the extract dir off
+  `sys.path`. Vendor any other pure-Python dependency.
+
+
 | what | where |
 |---|---|
-| Per-round detail, contracts, measured baselines | `CLAUDE.md` |
-| All eight board rounds + weight fit + latency inversion | `Track_1/board_rounds.py` |
+| Contracts, current measurements, standing rules | `CLAUDE.md` |
+| Per-round detail and measured baselines (the old `CLAUDE.md` through round 25, verbatim; new rounds appended) | `ROUNDS.md` |
+| **Every board round** (42, both tracks) + the free weight fit + the measured invocation cost | `Track_1/board_rounds.py`, `Track_1/final_v9.py`; the fit and the constants that correct local evaluation are written up in `EVALUATION.md` |
+| Published calibration log (bilingual, regenerate + republish after every board result) | `leaderboard/lb.py --html` |
+| Board latency constants, MEASURED: invocation 1.151 / 0.866 board ms; FLOPs 1.75 / 0.60 board ms per 4060-eq local ms | `Track_1/board_rounds.py` (`INV_MS_*`, `LOC_SLOPE_*`, `board_ms()`, `time_score()`), `Track_1/predict_board.py` (`LAT_INV_*`, `LAT_LOC_*`) |
+| Every scored band, versioned (the one part of a package that cannot be rebuilt) | `Track_1/bands/` + `MANIFEST.md` |
+| Is a rebuilt archive the one on the board? | `Track_1/verify/pkg_identity.py` |
+| Fusion gates | `Track_1/verify/fuse_vit.py` (`StackedViT`), `Track_1/verify/fuse_osc.py` |
+| AMP gate: does the archive run fp16, score fp32's numbers, and how much faster (interleaved) | `Track_1/verify/amp_path.py` |
+| The SCORED cost of a packing scheme (not just its field perturbation) | `Track_1/quant8.py --score BAND.npz` |
 | Round-12 report and raw campaign rows | `Track_1/report/report_20260829_round12.md`, `Track_1/plan/campaign_20260829.md` |
-| Shipped Track-1 package (11 memb / 4 inv) | `Track_1/submit_fno/` (`README.md` documents the build) |
+| Track-1 package code, band fitting, build and gates | `Track_1/submit_fno/` (`README.md`) |
 | Scorer: official kits + reconstruction diff | `~/RealPDE/official/{t1_v9,t2_v6}/`, `Track_1/verify/diff_scoring_{official,real}.py` |
 | GPU-free pre-submission gate | `Track_1/verify/cpu_smoke_submission.py` |
 | **Track 2: everything** | `Track_2/README.md` — contract, the three closed adaptation families, the latency table |
@@ -1063,10 +1512,13 @@ implement self-normalization but measured it on a split blind to what it is for;
 | Round-13 evidence, §1–§23 | `Track_1/report/report_20260831_round13.md` |
 | Re-extrapolation split | `Track_1/re_split.py` |
 | Out-of-fold local eval over all 82 trajectories | `Track_1/kfold.py` (`--split re` for Re bands) |
+| **OOD screen for the private set: a novel angle of attack** | `Track_1/aoa_holdout_eval.py` (`--inflate-sweep` prices the band width there) |
+| **How local evaluation works, and how the board corrects it** | `EVALUATION.md` |
 | Proxy-vs-board calibration | `Track_1/proxy_calib.py` |
 | What a submission is WORTH as information | `Track_1/sub_value.py` |
 | Normalizer-path gate | `Track_1/verify/selfnorm_path.py` |
-| What the oscillatory head learned | `Track_1/osc_probe.py` |
+| What the oscillatory head learned | `Track_1/closed/osc_probe.py` |
+| Closed one-off experiments, with the verdict behind each | `Track_1/closed/README.md`, `Track_2/closed/README.md` |
 
 **Machine.** OSC; data at `/users/PAS1187/qwu/RealPDE/`, env `realpde` (torch 2.2.2+cu121).
 Training needs an A100 Slurm allocation — the login/OnDemand node has no GPU. The **12-core
@@ -1099,6 +1551,19 @@ anything while training runs, and do not judge liveness by `nvidia-smi` (it read
 8. **Replicates belong in the FIRST job, not the follow-up.** §1.11b: four single-run 2–3σ
    results regressed on replication in one round. Out of distribution the seed σ is 0.71
    `wfinal`, 58× the interior control's, so a one-run OOD number is unreadable by construction.
-9. **A held-out list is DERIVED, never typed.** The (Re, AoA) grid is incomplete — there is no
+9. **A build job that bakes constants into the working tree must RESTORE the tree itself.**
+   Round 23: a `git checkout` while a build sat at step 3/5 put `FUSE = True` into the Track-1
+   zip while Track 2, built at 4/5, was correct. Only the job's own read-back-from-zip check
+   caught it. Related, same round: a wait sentinel must be the **last line** of the script, or
+   the background wait returns while the job is still running; and `verify/pkg_identity.py`
+   must be handed the archive **actually uploaded** (`sub_candidates/submitted/`) — its first
+   run failed at 5.7e-03 not because `fuse()` was wrong but because the rebuild used int8
+   where the uploaded package was fp16.
+10. **A slot spent on a package that cannot win can be worth more than one spent on +0.02** —
+   if it is built so that only ONE subscore can move. §1.18 (the gated blend fired on zero
+   hidden windows) and §1.24b (the unfused package) each returned a number no amount of local
+   work could produce. The Decision phase selects the package; Main Development slots are for
+   learning.
+11. **A held-out list is DERIVED, never typed.** The (Re, AoA) grid is incomplete — there is no
    `3750_15`, and `5025` has all five angles — so a hand-written `--exclude` silently trains on
    a held-out trajectory. Call `re_split.excluded()` / `kfold.py --folds` and assert the count.

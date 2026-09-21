@@ -70,12 +70,34 @@ if [ -n "${RPDE_BAND:-}" ]; then
   cp "$RPDE_BAND" Track_2/submit/band8.npz
   echo "  REUSING band $RPDE_BAND (no refit) -- md5 $(md5sum < Track_2/submit/band8.npz)"
 else
+  # RPDE_BAND_FILL=1 repairs the half-widths of elements the FITTING SPLIT never scored, where
+  # `optimal_band` returns min|E| ~ 0 and the containment indicator can then never fire on a
+  # differently-blanked recording (scout, lit_20260917.md 4.9). Unset = the default path, which
+  # is bit-identical to every band fitted before it.
   $PY Track_1/submit_fno/fit_band.py --ckpt $A --err-ckpt $M --alpha "$ALPHA" --band-p 0.45 \
-      --out Track_2/submit/band8.npz || exit 1
+      ${RPDE_BAND_FILL:+--fill-unscored} --out Track_2/submit/band8.npz || exit 1
 fi
 
 echo "=== 2/5  ALPHA (both tracks) and BLEND_BETA (Track 1 only) ================"
 sed -i "s/^ALPHA = .*/ALPHA = $ALPHA/" Track_1/submit_fno/submission.py Track_2/submit/submission.py
+# FUSE is BAKED, not read from the environment: submission.py is imported by the evaluator
+# in a process that never saw our shell, and two round-17 env A/Bs were silent no-ops for
+# exactly that reason. Default True -- only the invocation-count experiment sets it False.
+sed -i "s/^FUSE = .*/FUSE = ${RPDE_FUSE:-True}/" Track_1/submit_fno/submission.py Track_2/submit/submission.py
+# AMP is BAKED the same way (round 25): None ships fp32; "fp16" ships autocast behind a
+# load-time self-check against fp32 (`AMP_ACTIVE` says what runs). The value is a Python
+# literal, so pass the quotes: RPDE_SHIP_AMP='"fp16"'. A job that sets it restores `AMP = None`.
+sed -i "s/^AMP = .*/AMP = ${RPDE_SHIP_AMP:-None}/" Track_1/submit_fno/submission.py Track_2/submit/submission.py
+grep -H "^AMP = " Track_1/submit_fno/submission.py Track_2/submit/submission.py
+# GRAPH is BAKED too (round 26), and on Track 1 only: True captures predict()'s device-side chunk
+# in a CUDA graph at import, verified against eager, and scales the band by (1 + GRAPH_FP) on the
+# graph path so the board result fingerprints which path ran (`verify/graph_path.py`). Unset keeps
+# GRAPH = False, the eager path every earlier round shipped. A job that sets it restores it.
+sed -i "s/^GRAPH = .*/GRAPH = ${RPDE_SHIP_GRAPH:-False}/" Track_1/submit_fno/submission.py
+if [ -n "${RPDE_SHIP_GRAPH_FP:-}" ]; then
+  sed -i "s/^GRAPH_FP = .*/GRAPH_FP = $RPDE_SHIP_GRAPH_FP/" Track_1/submit_fno/submission.py
+fi
+grep -H "^GRAPH = \|^GRAPH_FP = " Track_1/submit_fno/submission.py
 # The gated mean-blend lives only in Track 1's predict(): Track 2's step runs inside a captured
 # CUDA graph, where a data-dependent early-out is not expressible. It fires only for windows
 # outside the training speed range, so NOTHING LOCAL EXERCISES IT -- `verify/blend_path.py` is
@@ -98,12 +120,48 @@ sed -i "s/^HOST_WRITE = .*/HOST_WRITE = \"$HOSTW\"/" Track_1/submit_fno/submissi
 grep -H "^SPEC_PATH = \|^HOST_WRITE = " \
     Track_1/submit_fno/submission.py Track_2/submit/submission.py
 
+# FFNO_PATH -- the F-FNO members' spectral path -- is the one constant T2R13 shipped that this
+# script could not produce: it was baked by a scratch-only helper, so the Track-2 record could not
+# be rebuilt from the repository alone (REPRODUCE.md section 6, scout's audit). It is now
+# `submit_fno/bake_ffno_path.py`, called from here like every other baked constant.
+#   RPDE_FFNO_PATH=dense          both tracks
+#   RPDE_FFNO_PATH="dense fft"    Track 1 dense, Track 2 fft
+# UNSET leaves both submission.py files untouched, so every build that has no F-FNO members is
+# byte-for-byte the build it was before this block existed. Callers restore the files the same way
+# they restore ALPHA / AMP / SPEC_PATH: `git checkout` on the two submission.py.
+if [ -n "${RPDE_FFNO_PATH:-}" ]; then
+  read -r _FP1 _FP2 <<< "$RPDE_FFNO_PATH"
+  $PY Track_1/submit_fno/bake_ffno_path.py --t1 "$_FP1" --t2 "${_FP2:-$_FP1}"
+  grep -H "^FFNO_PATH = " Track_1/submit_fno/submission.py Track_2/submit/submission.py
+fi
+
 # RPDE_FP16=1 stores the members' weights as float16. A width-24 package does not need it
 # (8 members = 32 MB); a width-96 one does -- 8 x 57.0 MB is 456 MB against a 256 MB cap, and
 # 8 x 28.5 MB is 228 MB. Measured cost: rel-L2 of the difference 5.5e-4 against a model rel-L2
 # of 0.078, which adds in quadrature to 2e-6 of the error. The strict gate below re-scores the
 # built archive through the official scoring.py, so a real degradation cannot slip past.
 FP16=""; [ "${RPDE_FP16:-0}" = "1" ] && FP16="--fp16"
+# RPDE_INT8=1 halves the archive AGAIN, via _fno.pack_state_dict (scales per (out, in) channel
+# pair) and _fno.dequant8. A width-96 8-LAYER member is 54.3 MB fp16, so four fill 217 MB of
+# the cap and eight need 434; at 29.0 MB int8 eight are 232. R18/T2R6 measured the board's
+# latency slope at 0.25 / -0.04 board ms per local ms against the round-13 model's 0.803, which
+# is what makes the eighth member worth having: the bill for doubling is ~0.037 `final` on
+# Track 1 and ~0 on Track 2, against +0.086 of accuracy. Cost of the packing itself: rel-L2
+# 3.9e-4 of an eight-member field, verified archive-against-source by verify/quant_identity.py.
+[ "${RPDE_INT8:-0}" = "1" ] && FP16="--int8"
+# RPDE_LINEAR = tensor | row | fp16 decides what --int8 does to a 2-D weight (round 24). The
+# per-(out, in) scale reduces over range(2, dim), EMPTY for a Linear, and torch.amax(dim=())
+# then reduces over every dim, so each Linear got ONE scale. No FNO member has a 2-D tensor
+# (packed bytes identical in all three modes), but a ViT is 97.5 % Linear and R21 / T2R9
+# shipped theirs per-tensor -- and r24e scored all three modes FREE (R21's own twins: d sps
+# -0.001 / -0.005 / -0.004 for tensor / row / fp16). Unset keeps "tensor", the smallest and the
+# one on the board, so an uploaded archive still rebuilds byte for byte.
+[ -n "${RPDE_LINEAR:-}" ] && FP16="$FP16 --linear $RPDE_LINEAR"
+# RPDE_LINEAR_ARCH="swin_unet=fp16" overrides RPDE_LINEAR per member family, matched on each blob's `arch`
+# (09-14): Swin members ship fp16 Linears (verify/fuse_swin.py section 5) while the ViTs keep "tensor",
+# tensor-identical to R25's. Unset, every member packs as before.
+[ -n "${RPDE_LINEAR_ARCH:-}" ] && FP16="$FP16 --linear-arch $RPDE_LINEAR_ARCH"
+echo "packing flags: ${FP16:-(fp32)}"
 echo "=== 3/5  Track 1: build + strict gate ==================================="
 $PY Track_1/submit_fno/validate_strict.py --band Track_2/submit/band8.npz $FP16 \
     --stage Track_1/submit_fno/_package8 --out Track_1/submit_fno/submission8.zip --ckpt $A
@@ -125,3 +183,7 @@ cp Track_2/submission_t2.zip          "$SUB/track2_$TAG.zip"
 ls -la "$SUB"
 echo
 echo "NEXT: record the predicted board subscores in $SUB/README.md BEFORE uploading."
+echo "      then, AFTER it scores, promote the band into version control:"
+echo "        cp Track_2/submit/band8.npz Track_1/bands/<round>_<tag>.npz"
+echo "      and add a row to Track_1/bands/MANIFEST.md. The band is the ONLY part of a"
+echo "      package that cannot be rebuilt from the checkpoints -- see that file."

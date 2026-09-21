@@ -107,10 +107,56 @@ torch.backends.cudnn.allow_tf32 = _TF32
 #   27.6 % of a Track-2 step, and is worth -16.6 % there -- while on Track 1's batched path it
 #   is +1.6 % SLOWER, because the copy it removes is O(1) in batch and the `cat` it adds is
 #   O(batch). One switch, opposite signs on the two tracks; set it per track, never globally.
-HOST_WRITE = ""
-SPEC_PATH = ""
+HOST_WRITE = "torch"
+SPEC_PATH = "bmm"
+# FUSE = False  keeps every member as its own module instead of collapsing same-architecture
+#   members into one grouped invocation. It is NOT a speed switch and must never be flipped for
+#   score: fuse() is score-identical (78.4925 against 78.4927 on the AoA 15-20 proxy, exact to
+#   1.5e-8 with TF32 off), so the ONLY thing it changes is how many times the board sees a model
+#   called. That is exactly what makes it an instrument. `board ms = a + 0.435*invocations +
+#   0.336*local` has never had its invocation term measured -- it is fitted, on rounds whose
+#   residuals are ordered by date, and R21 came in 1.2x over it on Track 1 and 2.4x on Track 2
+#   for a change that added compute AND an invocation at the same time. Shipping the same
+#   members unfused holds the compute BIT-IDENTICAL and moves only the invocation count, which
+#   is the R13/R14 design that measured w_time directly.
+FUSE = True
 _fno._HOSTW = HOST_WRITE
 _fno._SPEC = SPEC_PATH
+
+# AMP is BAKED like FUSE (round 25). Round 24 measured the board charging GPU compute at ~1.75
+# board ms per 4060-equivalent local ms on Track 1, so a precision that cuts compute without
+# moving the error subscores is worth ~+0.07 `final` per board ms. r25a: fp16 autocast moved the
+# prediction 6e-4 relative, left every error metric identical to 4-5 decimals and kept
+# permutation invariance EXACT; bf16 crashes (torch.complex has no BFloat16). None is the fp32
+# path every earlier round shipped. A non-None value is VERIFIED against fp32 at import, which
+# is untimed, and dropped on any exception, non-finite output or disagreement above 2e-2 on a
+# probe -- a kernel that is broken on the board GPU, not a 1e-3 numerics difference, which is
+# priced offline on real data. `AMP_ACTIVE` records what actually runs. RPDE_AMP still steers
+# the measurement drivers when AMP is None.
+AMP = None
+_AMP_DT = {"fp16": torch.float16}.get(AMP) if AMP is not None else _fno._AMP
+AMP_ACTIVE = None
+AMP_PROBE_DIFF = None
+
+# GRAPH is BAKED like AMP (round 26). The board charges Track 1 ~1.15 ms per model INVOCATION
+# (R23) -- kernel launches, not FLOPs -- and xfam6 is two invocations per chunk. Track 2 removed
+# exactly that cost with a CUDA graph. True captures the whole device-side chunk of
+# `_fno.predict_fno` -- normalization, every fused group, the member average, compose,
+# denormalization and sigma -- once at import (untimed), at `_pick_batch`'s chunk size, and
+# VERIFIES it against the shipped eager `predict_fno` on a probe: anything that raises, or any
+# disagreement at all, keeps the eager path. `GRAPH_ACTIVE` records what runs. Full chunks replay
+# the graph; a tail shorter than a chunk runs eager at its own size, so every window gets the eager
+# path's numbers bit for bit (a padded tail moved fp16 predictions by 1.5e-3, job 7281411).
+#
+# THE FINGERPRINT. A replayed graph is bit-exact, so a board result could not tell a graph that
+# ran from one that silently fell back. The graph path therefore scales the SPS band's `base`
+# by (1 + GRAPH_FP), once at import: rel_l2 / tke / mvpe cannot move, and sps moves by a small,
+# locally measured amount (`verify/graph_path.py`). Board sps identical to the eager package's
+# means the fallback ran.
+GRAPH = False
+GRAPH_FP = 1e-4
+GRAPH_ACTIVE = None
+GRAPH_PROBE_DIFF = None
 
 _BAND = os.path.join(_HERE, "band.npz")
 _BAND_LEGACY = os.path.join(_HERE, "band.npy")
@@ -221,6 +267,29 @@ def _apply_blend(pred, x):
     pred[..., :2] += b * (x[..., :2].mean(1, keepdims=True)
                           - pred[..., :2].mean(1, keepdims=True))
 
+def _amp_verified(models, dev):
+    """The autocast dtype predict() may use: `_AMP_DT` if it reproduces fp32 on a probe, else None."""
+    global AMP_PROBE_DIFF
+    if _AMP_DT is None or dev != "cuda":
+        return None
+    try:
+        g = np.random.default_rng(0)
+        probe = np.zeros((8, 20, 32, 64, 3), dtype=np.float32)
+        probe[..., :2] = (_fno.MEAN + _fno.STD * g.standard_normal((8, 20, 32, 64, 2))).astype(np.float32)
+        s0 = np.empty((8, 1, 32, 64, 2), dtype=np.float32)
+        s1 = np.empty_like(s0)
+        p0 = _fno.predict_fno(models, probe, dev, alpha=ALPHA, batch=8, sigma_out=s0, amp=None)
+        p1 = _fno.predict_fno(models, probe, dev, alpha=ALPHA, batch=8, sigma_out=s1, amp=_AMP_DT)
+        if not (np.all(np.isfinite(p1)) and np.all(np.isfinite(s1))):
+            return None
+        d = max(float(np.linalg.norm(p1 - p0) / max(float(np.linalg.norm(p0)), 1e-12)),
+                float(np.linalg.norm(s1 - s0) / max(float(np.linalg.norm(s0)), 1e-12)))
+        AMP_PROBE_DIFF = d
+        return _AMP_DT if d < 2e-2 else None
+    except Exception:
+        return None
+
+
 def _pick_batch(models, dev):
     """Time a few batch sizes on THIS machine and keep the fastest.
 
@@ -240,11 +309,11 @@ def _pick_batch(models, dev):
         probe = np.zeros((112, 20, 32, 64, 3), dtype=np.float32)
         best_t, best_b = None, 64
         for b in (14, 28, 56, 112):
-            _fno.predict_fno(models, probe[:b], dev, alpha=ALPHA, batch=b)      # warm up
+            _fno.predict_fno(models, probe[:b], dev, alpha=ALPHA, batch=b, amp=_AMP_DT)  # warm up
             torch.cuda.synchronize()
             t0 = _time.perf_counter()
             for _ in range(2):
-                _fno.predict_fno(models, probe, dev, alpha=ALPHA, batch=b)
+                _fno.predict_fno(models, probe, dev, alpha=ALPHA, batch=b, amp=_AMP_DT)
             torch.cuda.synchronize()
             t = _time.perf_counter() - t0
             if best_t is None or t < best_t:
@@ -252,6 +321,117 @@ def _pick_batch(models, dev):
         return best_b
     except Exception:
         return 64
+
+
+class _Graphed:
+    """The device-side chunk of `_fno.predict_fno`, replayed as one CUDA graph at a fixed size.
+
+    `body` repeats `predict_fno`'s per-chunk arithmetic op for op (same modules, same autocast,
+    same member weighting, same compose, same affine), so a capture that verifies bit-exact
+    against the eager function on a full chunk returns the eager path's arrays.
+    """
+
+    def __init__(self, models, dev, batch, band):
+        self.models, self.batch = models, int(batch)
+        self.mean = torch.from_numpy(_fno.MEAN).to(dev)
+        self.std = torch.from_numpy(_fno.STD).to(dev)
+        B = self.batch
+        self.gx = torch.zeros((B, 20, 32, 64, 3), dtype=torch.float32, device=dev)
+        self.gy = torch.zeros((B, 20, 32, 64, 2), dtype=torch.float32, device=dev)
+        self.gs = torch.zeros((B, 1, 32, 64, 2), dtype=torch.float32, device=dev)
+        self.graph = None
+        self.band_fp = None if band is None else (band * np.float32(1.0 + GRAPH_FP)).astype(np.float32)
+
+    def body(self):
+        B = self.batch
+        xb = self.gx[..., :2].float()
+        prev = ((xb - self.mean) / self.std).permute(0, 1, 4, 2, 3).reshape(B, 40, 32, 64)
+        y = sig = None
+        total = 0
+        for m in self.models:
+            nm = getattr(m, "n_members", 1)
+            total += nm
+            if _AMP_DT is None:
+                raw, logstd = m(prev)
+            else:
+                with torch.autocast("cuda", dtype=_AMP_DT):
+                    raw, logstd = m(prev)
+                raw = raw.float()
+                logstd = None if logstd is None else logstd.float()
+            yi = raw.reshape(B, 20, 2, 32, 64).permute(0, 1, 3, 4, 2) * nm
+            y = yi if y is None else y + yi
+            if logstd is not None:
+                si = logstd.clamp(-8.0, 2.0).exp().permute(0, 2, 3, 1).unsqueeze(1) * nm
+                sig = si if sig is None else sig + si
+        if total > 1:
+            y = y / total
+            if sig is not None:
+                sig = sig / total
+        if sig is not None and ALPHA > 0:
+            m_ = y.mean(1, keepdim=True)
+            f_ = y - m_
+            s_ = y.std(1, keepdim=True, unbiased=False)
+            y = m_ + f_ * ((ALPHA * sig + (1 - ALPHA) * s_) / (s_ + 1e-6))
+        if sig is not None:
+            self.gs.copy_((sig * self.std).float())
+        self.gy.copy_((y * self.std + self.mean).float())
+
+    def run(self, x, pred, sig):
+        B, n = self.batch, len(x)
+        full = n - n % B
+        for i in range(0, full, B):
+            self.gx.copy_(torch.from_numpy(x[i:i + B]))
+            self.graph.replay()
+            if sig is not None:
+                sig[i:i + B] = self.gs.cpu().numpy()
+            torch.from_numpy(pred)[i:i + B, ..., :2].copy_(self.gy.cpu())
+        if full < n:
+            # The tail runs EAGER, at its own size, exactly as the eager path runs it. fp16 kernels
+            # are chosen per batch size, and a tail padded to the chunk size moved the prediction by
+            # 1.5e-3 (graph_path.py, job 7281411); this way every window gets the eager numbers.
+            _fno.predict_fno(self.models, x[full:], "cuda", alpha=ALPHA, batch=B, out=pred[full:],
+                             sigma_out=None if sig is None else sig[full:], amp=_AMP_DT)
+
+
+def _capture_graph(models, dev, batch, band):
+    """A verified `_Graphed`, or None. Never raises; only ever called at import."""
+    global GRAPH_PROBE_DIFF
+    if not GRAPH or dev != "cuda":
+        return None
+    try:
+        if any(getattr(m, "self_norm", False) for m in models):
+            return None
+        G = _Graphed(models, dev, batch, band)
+        s = torch.cuda.Stream()
+        s.wait_stream(torch.cuda.current_stream())
+        with torch.no_grad(), torch.cuda.stream(s):
+            for _ in range(3):
+                G.body()
+        torch.cuda.current_stream().wait_stream(s)
+        torch.cuda.synchronize()
+        g = torch.cuda.CUDAGraph()
+        with torch.no_grad(), torch.cuda.graph(g):
+            G.body()
+        G.graph = g
+        # Verify against the SHIPPED eager function, on exactly one full chunk.
+        rng = np.random.default_rng(1)
+        probe = np.zeros((G.batch, 20, 32, 64, 3), dtype=np.float32)
+        probe[..., :2] = (_fno.MEAN + _fno.STD * rng.standard_normal((G.batch, 20, 32, 64, 2))).astype(np.float32)
+        ref = np.zeros_like(probe)
+        sref = np.zeros((G.batch, 1, 32, 64, 2), dtype=np.float32)
+        with torch.no_grad():
+            _fno.predict_fno(models, probe, dev, alpha=ALPHA, batch=G.batch, out=ref, sigma_out=sref,
+                             amp=_AMP_DT)
+        outp = np.zeros_like(probe)
+        outs = np.zeros_like(sref)
+        with torch.no_grad():
+            G.run(probe, outp, outs)
+        torch.cuda.synchronize()
+        d = max(float(np.abs(outp - ref).max()), float(np.abs(outs - sref).max()))
+        GRAPH_PROBE_DIFF = d
+        return G if d == 0.0 else None
+    except Exception:
+        return None
 
 
 def _load():
@@ -276,7 +456,9 @@ def _load():
     # load_any, not load: round 12's package is a MIXED ensemble (8 FNO + 1 U-Net) and the
     # architecture is read off each checkpoint's own `arch` field, not off its packaged
     # filename -- build_zip.py names every member fno*.pth regardless of family.
-    models = _fno.fuse([_fno.load_any(p, dev) for p in _CKPTS])
+    models = [_fno.load_any(p, dev) for p in _CKPTS]
+    if FUSE:
+        models = _fno.fuse(models)
     # band.npz carries `base` (per-element half-widths), `sigma_ref` (the per-element mean of
     # the variance head's sigma over the fitting split) and `p`. The half-width actually used
     # is base * (sigma_i / sigma_ref)**p, i.e. a per-WINDOW interval: windows the model itself
@@ -299,7 +481,17 @@ def _load():
         band = None
     if band is not None and p and not (ref is not None and np.all(ref > 0.0)):
         p = 0.0
-    return models, dev, band, ref, p, _pick_batch(models, dev)
+    # Decided BEFORE the batch is timed, so the batch that wins is the one the mode will run.
+    global _AMP_DT, AMP_ACTIVE
+    _AMP_DT = _amp_verified(models, dev)
+    AMP_ACTIVE = None if _AMP_DT is None else str(_AMP_DT).replace("torch.", "")
+    batch = _pick_batch(models, dev)
+    # Captured AFTER the batch is chosen and AFTER AMP is decided, so the graph records the
+    # chunk size and the precision that will run.
+    global GRAPH_ACTIVE
+    graphed = _capture_graph(models, dev, batch, band)
+    GRAPH_ACTIVE = (graphed is not None) if GRAPH else None
+    return models, dev, band, ref, p, batch, graphed
 
 
 try:
@@ -313,7 +505,8 @@ def predict(input_array, metadata=None):
     global _state
     if _state is None:
         _state = _load()
-    models, dev, band, ref, p, batch = _state
+    models, dev, band, ref, p, batch = _state[:6]
+    graphed = _state[6] if len(_state) > 6 else None
 
     x = np.ascontiguousarray(input_array, dtype=np.float32)
     # Allocate the output once, zero-filled, and let the model write u,v into it. The pressure
@@ -323,7 +516,12 @@ def predict(input_array, metadata=None):
     # (N, 1, 32, 64, 2), 5.5 MB at N = 336 against the field's 165 MB -- cheap enough to ask
     # for inside a timed call, and only requested when the band actually uses it.
     sig = np.empty((len(x), 1, 32, 64, 2), dtype=np.float32) if p else None
-    _fno.predict_fno(models, x, dev, alpha=ALPHA, batch=batch, out=pred, sigma_out=sig)
+    if graphed is not None:
+        with torch.no_grad():
+            graphed.run(x, pred, sig)
+        band = graphed.band_fp            # the fingerprint: base * (1 + GRAPH_FP)
+    else:
+        _fno.predict_fno(models, x, dev, alpha=ALPHA, batch=batch, out=pred, sigma_out=sig, amp=_AMP_DT)
     # Before the band: the interval has to bracket what is actually returned.
     _apply_blend(pred, x)
 
