@@ -37,7 +37,12 @@ cd "$(dirname "$0")"
   echo "See REPRODUCE.md. It needs a GPU node -- run it from an sbatch job, not a login shell."
   exit 1; }
 
-PY=${PY:-/users/PAS1187/qwu/.conda/envs/realpde/bin/python}
+# PY: the author's conda env by default, but fall back to whatever python3 is on PATH when that
+# path does not exist -- otherwise every stage dies at PREFLIGHT on any machine but the author's
+# (REPRODUCE.md 9.1). Set PY=... explicitly to pin an interpreter.
+_PY_DEFAULT=/users/PAS1187/qwu/.conda/envs/realpde/bin/python
+[ -x "$_PY_DEFAULT" ] || _PY_DEFAULT=$(command -v python3 || echo "$_PY_DEFAULT")
+PY=${PY:-$_PY_DEFAULT}
 RPDE=${RPDE:-/users/PAS1187/qwu/RealPDE}
 REAL=$RPDE/train_real/train_real
 SIM=$RPDE/train_sim/train_sim

@@ -493,8 +493,10 @@ scripts in `/fs/scratch/.../realpde/jobs/pz_repro_*.sbatch`.
 
 Still unverified, in the order it would matter if a shortlist arrives:
 
-1. **The other ten training stages at 400 epochs** (~32 GPU-h). One was checked; the two ViT recipes are
-   the ones with schema drift behind them (§1.3), so they are the ones worth checking next.
+1. ~~**The other ten training stages at 400 epochs** (~32 GPU-h).~~ **CLOSED 2026-09-22 (Ilse), §9.**
+   All eleven stages were re-trained at 400 epochs on a *different* stack and compared to the shipped
+   checkpoints: recipes identical key by key, scores inside the seed spread, and the package rebuilt from
+   the eleven retrained weights passes both gates with the same score as the shipped one.
 2. **`time` on the evaluation GPU.** Every latency number in this file's §8 is a Pitzer V100S. The board
    is A100-class, the private set an A800, and `validate_strict`'s ms/window is not a board prediction
    even on the right card — the gate exists for the contracts, not the clock.
@@ -502,5 +504,48 @@ Still unverified, in the order it would matter if a shortlist arrives:
    four ViTs is a score match at best.
 4. **`../sub_candidates` is still not redirectable** without editing `build_round13.sh`; the worktree of
    §8.2 is a workaround, not a fix.
-5. **The derived caches** `Track_1/val_{seen,unseen}.npz` and the two sim maps were reused, not rebuilt,
-   so §6.8's "nothing asserts a rebuilt cache matches the one a checkpoint saw" is untouched.
+5. **The derived caches** `Track_1/val_{seen,unseen}.npz` and the two sim maps were reused, not rebuilt.
+   **Partly closed 2026-09-22 (§9):** every job of that campaign rebuilt `val_{seen,unseen}.npz` from the
+   released HDF5 and got the same sha256 each time (`a518c91d…` / `1a7e85af…`), and the sim map rebuilt
+   under the shipped twin's own cache key `_x476193e300`. What is still unasserted is that a rebuilt sim
+   map equals the one a shipped checkpoint actually saw — that file lives on the author's scratch.
+
+
+---
+
+## 9. Reproduced end to end on a foreign machine (2026-09-22, Ilse)
+
+Eleven Pitzer V100S jobs, ~40 GPU-h, on a stack the repo does **not** pin: torch 2.7.1 / numpy 2.2.6
+(`environment.yml` pins torch 2.2.2 / numpy<2). Every stage of §1 was re-trained at 400 epochs from the
+released data and compared with the shipped checkpoint in the same process, then the whole package was
+rebuilt from the retrained weights alone.
+
+**Result: the method reproduces.**
+
+| what | result |
+|---|---|
+| recipes (`config`, key by key, retrain vs shipped) | identical for all 11; only `epochs`/`out`/`git` and the inert `ckpt_every`/`resume` differ |
+| single-model score, 7 F-FNO stages | ≤ 0.0002 `wfinal` |
+| single-model score, 4 ViT stages | −0.051 … +0.007 (ViT seed spread is 0.095) |
+| all 11 signed deltas | mean −0.0068, sd 0.0173, se 0.0052 — no systematic shift |
+| **package from the 11 retrained weights** | **both gates SUBMITTABLE**; ensemble 84.3051 vs shipped 84.3029, twins 82.3596 vs 82.3600 |
+
+Run ids: `20260921-1712..1720xx-*-ilse-repro-<stage>`, `20260921-0624/0625-*-ilse-repro-vit-*`,
+end-to-end `20260922-111450-*-ilse-repro-phase3-build`.
+
+### 9.1 Three things that break on any machine but the author's — fix these before handing over
+
+1. **`reproduce.sh` defaults `PY` to the author's conda env** (`/users/PAS1187/qwu/.conda/envs/realpde/bin/python`,
+   line 40). Anywhere else it dies at `PREFLIGHT FAILED: train2.py` before doing anything. Pass `PY=…` explicitly,
+   or make the default fall back to `python3`.
+2. **`Track_2/submit*/{_fno.py,submission.py}` are symlinks into `Track_1/submit_fno/`.** `build_round13.sh`
+   bakes constants into Track 1's `_fno.py` and then checks Track 2's copy against it. Any transport that
+   dereferences symlinks — `tar -h`, `zip`, a payload size limit, some file-copy UIs — turns them into real
+   files, and then **Track 1 builds while Track 2 refuses** with `submit/_fno.py is not Track 1's _fno.py;
+   the tracks would diverge`. Ship the tree with symlinks intact, or recreate them before building.
+3. **`validate_strict.py` needs `Track_1/val_unseen.npz` at GATE time**, not only for scoring. Build the
+   validation sets (`make_val.py`) *before* `reproduce.sh`, or the Track 1 gate fails with
+   `FileNotFoundError` on a package that is otherwise fine.
+
+None of the three affects the shipped archives; all three stop a from-scratch reproduction on a fresh machine,
+which is exactly what the organizers will attempt.
