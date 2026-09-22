@@ -191,6 +191,16 @@ _CKPTS = [p for p in [os.path.join(_HERE, "fno.pth")]
 # the band is solved against have to be measured at the alpha the package actually deploys.
 ALPHA = 0.60
 
+# SPS interval CENTRE, decoupled from the point prediction (2026-09-21, Bram's pre-registered
+# arm: centre at the un-rescaled member mean, +0.61 sps held out, 8/8 trajectories, z 9.1).
+# The scorer only reads lower <= target <= upper and lower <= upper, so the interval may sit
+# anywhere; it is still widened to contain `prediction` (kit smoke test, our validators).
+# compose is linear in alpha, so the centre at CENTRE_ALPHA is y0 + (CENTRE_ALPHA/ALPHA)*(pred-y0)
+# with y0 the pre-compose mean. CENTRE_ALPHA == ALPHA reproduces the old band bit for bit.
+# The value is READ FROM band.npz (`centre_alpha`, written by fit_band.py --centre-alpha), so the
+# centre can never disagree with the centre the band was fitted at; no key => ALPHA (legacy).
+CENTRE_ALPHA = ALPHA
+
 
 
 # ---------------------------------------------------------------------------------------
@@ -470,6 +480,8 @@ def _load():
         z = np.load(_BAND)
         band, ref, p = (z["base"].astype(np.float32), z["sigma_ref"].astype(np.float32),
                         float(z["p"]))
+        global CENTRE_ALPHA
+        CENTRE_ALPHA = float(z["centre_alpha"]) if "centre_alpha" in z.files else ALPHA
     elif os.path.exists(_BAND_LEGACY):
         band = np.load(_BAND_LEGACY).astype(np.float32)
     # The ingestion program rejects a non-finite or reversed interval by zeroing EVERY
@@ -516,12 +528,17 @@ def predict(input_array, metadata=None):
     # (N, 1, 32, 64, 2), 5.5 MB at N = 336 against the field's 165 MB -- cheap enough to ask
     # for inside a timed call, and only requested when the band actually uses it.
     sig = np.empty((len(x), 1, 32, 64, 2), dtype=np.float32) if p else None
+    # Pre-compose mean, only when the interval is centred away from the prediction. The graph
+    # path (off since R27) does not produce it, so the centre falls back to `pred` there.
+    centre = (np.zeros_like(pred) if (CENTRE_ALPHA != ALPHA and band is not None
+                                       and graphed is None) else None)
     if graphed is not None:
         with torch.no_grad():
             graphed.run(x, pred, sig)
         band = graphed.band_fp            # the fingerprint: base * (1 + GRAPH_FP)
     else:
-        _fno.predict_fno(models, x, dev, alpha=ALPHA, batch=batch, out=pred, sigma_out=sig, amp=_AMP_DT)
+        _fno.predict_fno(models, x, dev, alpha=ALPHA, batch=batch, out=pred, sigma_out=sig,
+                         amp=_AMP_DT, centre_out=centre)
     # Before the band: the interval has to bracket what is actually returned.
     _apply_blend(pred, x)
 
@@ -554,8 +571,19 @@ def predict(input_array, metadata=None):
         upper = np.empty_like(pred)
         t_pred, t_lo, t_hi = (torch.from_numpy(a) for a in (pred, lower, upper))
         torch.mul(torch.from_numpy(band), torch.from_numpy(r3), out=t_hi)   # half -> upper
-        torch.sub(t_pred, t_hi, out=t_lo)
-        torch.add(t_pred, t_hi, out=t_hi)
+        if centre is None:
+            torch.sub(t_pred, t_hi, out=t_lo)
+            torch.add(t_pred, t_hi, out=t_hi)
+            return {"prediction": pred, "lower": lower, "upper": upper}
+        # Decoupled centre. `centre` becomes c in place; the pressure channel is 0 in both
+        # pred and centre, so its bounds stay exactly 0. min/max keep pred inside the interval.
+        t_c = torch.from_numpy(centre)
+        if CENTRE_ALPHA != 0.0:
+            t_c.add_(t_pred - t_c, alpha=CENTRE_ALPHA / ALPHA)
+        torch.sub(t_c, t_hi, out=t_lo)
+        torch.minimum(t_lo, t_pred, out=t_lo)
+        torch.add(t_c, t_hi, out=t_hi)
+        torch.maximum(t_hi, t_pred, out=t_hi)
         return {"prediction": pred, "lower": lower, "upper": upper}
 
     # No finiteness scan here. It cost 0.066 ms/window -- 5% of the whole timed call -- to

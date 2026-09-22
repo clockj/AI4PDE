@@ -98,6 +98,15 @@ def main() -> None:
                          "view of val_unseen: fitting there scores 43.78 against 43.24 for the "
                          "whole split at inflate 1.5. Pass 0 5 10 15 20 to fit on everything.")
     ap.add_argument("--alpha", type=float, default=0.75)
+    ap.add_argument("--centre-alpha", type=float, default=None,
+                    help="centre the INTERVAL on the compose at this alpha instead of on the "
+                         "prediction (Bram, 2026-09-21, #battleground-0921:ac7fc4f3). The point "
+                         "prediction stays at --alpha, so rel/tke/mvpe and a_i are unchanged; "
+                         "`base` is solved on |y(centre_alpha) - target|. The package must then "
+                         "emit lower = min(c - h, pred), upper = max(c + h, pred) with "
+                         "c = y(centre_alpha), which keeps lower <= pred <= upper. Held-out: "
+                         "centre 0 vs 0.60 = +0.59 sps (val_unseen AoA 15-20, 1.15x), 8/8 "
+                         "trajectories positive, pre-registered. None = shipped behaviour.")
     ap.add_argument("--inflate", type=float, default=1.39,
                     help="scale the local error field by this before solving, to match the "
                          "error magnitude the model will actually FACE on the board (see the "
@@ -157,8 +166,9 @@ def main() -> None:
     ds = np.load(os.path.join(TRACK1, "val_seen.npz"))
     du = np.load(os.path.join(TRACK1, "val_unseen.npz"))
 
-    def infer(models, X, sigma_out=None):
-        uv = _fno.predict_fno(models, X, dev, alpha=args.alpha, sigma_out=sigma_out)
+    def infer(models, X, sigma_out=None, alpha=None):
+        uv = _fno.predict_fno(models, X, dev, alpha=args.alpha if alpha is None else alpha,
+                              sigma_out=sigma_out)
         return np.concatenate([uv, np.zeros_like(uv[..., :1])], -1).astype(np.float32)
 
     def sigma_of(models, X):
@@ -184,6 +194,13 @@ def main() -> None:
     # ratio**p first is what makes `base` the right partner for a per-window band: the
     # containment test |E| <= base * r**p is exactly |E| / r**p <= base.
     As, as_, scored_s, ns = prep(Pf, Yf)
+    if args.centre_alpha is not None:
+        # a_i and the scored mask stay those of the PREDICTION; only |E| moves to the centre.
+        Cf = infer(m_err, fit_d["x"], alpha=args.centre_alpha)[keep]
+        As = np.abs(Cf[..., :2] - Yf[..., :2]).astype(np.float32)
+        print(f"--centre-alpha {args.centre_alpha}: base solved on |y({args.centre_alpha}) - y|; "
+              f"median |E| {np.median(As):.5f} vs {np.median(prep(Pf, Yf)[0]):.5f} at alpha "
+              f"{args.alpha}")
     Adef = np.float32(args.inflate) * As
     if args.band_p:
         Adef = (Adef / ratio_f[..., :2] ** args.band_p).astype(np.float32)
@@ -249,7 +266,8 @@ def main() -> None:
     # The scorer only reads the measured channels, but the ingestion program requires bounds
     # the same shape as the prediction, so the unscored pressure channel gets a zero column.
     band = np.concatenate([uv_band, np.zeros_like(uv_band[..., :1])], -1).astype(np.float32)
-    np.savez(args.out, base=band, sigma_ref=sigma_ref, p=np.float32(args.band_p))
+    extra = {} if args.centre_alpha is None else {"centre_alpha": np.float32(args.centre_alpha)}
+    np.savez(args.out, base=band, sigma_ref=sigma_ref, p=np.float32(args.band_p), **extra)
 
     U = prep(Pu, Yu)
     hi = np.isin(np.array([int(str(i).split(":")[0].split("_")[1]) for i in du["ids"]]),
@@ -287,6 +305,9 @@ def main() -> None:
           + f"{args.fit_aoa}) stretched: "
           + "  ".join(f"{f:.2f}x {sps_score(*at_board(f), h_hi):5.2f}"
                       for f in (1.0, 1.05, 1.15, 1.3)))
+    if args.centre_alpha is not None:
+        print("NOTE: the sps lines above score a band CENTRED on the prediction; with "
+              "--centre-alpha they understate the shipped (re-centred) band. Score the package.")
     print(f"wrote {args.out}")
 
 

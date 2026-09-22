@@ -18,9 +18,9 @@ set -uo pipefail
 cd "$(dirname "$0")/../.."
 ALPHA="${1:-0.90}"
 BETA="${RPDE_BETA:-0.0}"
-PY=/users/PAS1187/qwu/.conda/envs/realpde/bin/python
+PY=${PY:-/users/PAS1187/qwu/.conda/envs/realpde/bin/python}
 U=Track_1/unet
-SUB=../sub_candidates
+SUB=${RPDE_SUB:-../sub_candidates}
 
 # The member set. `A` is what SHIPS (all-data); `M` is the HELD-OUT twins of the same recipes,
 # used for the ERROR FIELD only -- a band fitted to the all-data models' own memorized errors
@@ -75,7 +75,8 @@ else
   # differently-blanked recording (scout, lit_20260917.md 4.9). Unset = the default path, which
   # is bit-identical to every band fitted before it.
   $PY Track_1/submit_fno/fit_band.py --ckpt $A --err-ckpt $M --alpha "$ALPHA" --band-p 0.45 \
-      ${RPDE_BAND_FILL:+--fill-unscored} --out Track_2/submit/band8.npz || exit 1
+      ${RPDE_BAND_FILL:+--fill-unscored} ${RPDE_CENTRE_ALPHA:+--centre-alpha $RPDE_CENTRE_ALPHA} \
+      --out Track_2/submit/band8.npz || exit 1
 fi
 
 echo "=== 2/5  ALPHA (both tracks) and BLEND_BETA (Track 1 only) ================"

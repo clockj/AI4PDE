@@ -198,8 +198,15 @@ CPU.
 
 ```bash
 $PY Track_1/submit_fno/fit_band.py --ckpt $A --err-ckpt $M --alpha 0.60 --band-p 0.45 \
-    --fill-unscored --out Track_2/submit/band8.npz
+    --fill-unscored --centre-alpha 0 --out Track_2/submit/band8.npz
 ```
+
+**r35 (2026-09-21) adds `--centre-alpha 0`:** the SPS interval is centred on the pre-compose member mean
+y(α=0) instead of on the prediction (`lower=min(c−h, pred)`, `upper=max(c+h, pred)`), and `base` is solved on
+|y(0) − y|. The value is stored in the band (`centre_alpha`), and both `submission.py` files read it at load,
+so the centre cannot disagree with the band; a band without the key reproduces r34 exactly. The point
+prediction is unchanged (pkg_identity 0.000e+00 vs R30 / T2R17). Evidence: held-out Δsps +0.61, 8/8
+trajectories, pre-registered (#battleground-0921:ac7fc4f3).
 
 defaults `--fit-on seen --fit-aoa 15 20 --inflate 1.39 --band-smooth 3`. `$A` is the shipping (all-data) set,
 `$M` the twins: `sigma_ref` comes from `$A` (it normalizes the σ the shipped models emit) and the error field
@@ -216,16 +223,32 @@ T2R13); it is in the method as insurance for the private set, whose blanking we 
 
 **A refit is not bit-reproducible** — it re-runs the models over the fitting split, and
 `Track_1/bands/MANIFEST.md` is explicit that the band is the one part of a package that cannot be rebuilt from
-the checkpoints. A reproduction must **reuse the committed band** (`bands/r34_p2ffnoL8sim_fill.npz` for
-R30 / T2R17; `bands/r24_xfam6.npz` for R25; `bands/t2r13_p2ffnoL8x4.npz` for R28 / T2R13), or it is
+the checkpoints. A reproduction must **reuse the committed band** (`bands/r35_centre0_fill.npz` for r35;
+`bands/r34_p2ffnoL8sim_fill.npz` for R30 / T2R17; `bands/r24_xfam6.npz` for R25; `bands/t2r13_p2ffnoL8x4.npz` for R28 / T2R13), or it is
 reproducing a different package.
 
 ---
 
 ## 4. Stage D — the build
 
-**Both tracks, R30 / T2R17** (job `rp_pkg_r34.sbatch`, 7412354) — one invocation of the script builds and
-gates both archives from one member set, with `U=Track_1/unet`:
+**Both tracks, r35 — the method of record** (`reproduce.sh` → `build_r35`; built by run
+20260921-180408, gates 2/2, pkg_identity prediction 0.000e+00 vs R30 / T2R17): r34's members and flags plus
+`RPDE_CENTRE_ALPHA=0` and the r35 band:
+
+```bash
+RPDE_A="$A" RPDE_M="$M" RPDE_CENTRE_ALPHA=0 RPDE_BAND=Track_1/bands/r35_centre0_fill.npz \
+  RPDE_INT8=1 RPDE_LINEAR=tensor RPDE_SHIP_AMP='"fp16"' RPDE_SPEC_PATH=bmm \
+  RPDE_HOST_WRITE=torch RPDE_FFNO_PATH=dense RPDE_TAG="r35_centre0_fill" \
+  bash Track_1/submit_fno/build_round13.sh 0.60
+```
+
+(`$A`, `$M` as below.) The r35 logic lives in the repository (`_fno.predict_fno(centre_out=…)`, the bounds
+block in both `submission.py`, `fit_band.py --centre-alpha`); the baked constants in a shipped zip (`AMP =
+"fp16"`, `FFNO_PATH = "dense"`, …) are NOT committed — `build_round13.sh` injects them at build time (§6.6),
+so the repository's defaults differing from a shipped archive is expected.
+
+**Superseded — both tracks, R30 / T2R17** (job `rp_pkg_r34.sbatch`, 7412354; `reproduce.sh r34`) — one
+invocation of the script builds and gates both archives from one member set, with `U=Track_1/unet`:
 
 ```bash
 A="$U/ffno_all_w40l8_sim_s1.pth $U/ffno_all_w40l8_sim_s2.pth $U/ffno_all_w40l8_sim_s3.pth \

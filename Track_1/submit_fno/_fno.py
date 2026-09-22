@@ -2348,7 +2348,8 @@ def load_any(path: str, device: str):
 def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
                 batch: int = 64, out: np.ndarray | None = None,
                 sigma_out: np.ndarray | None = None,
-                pad_batch: bool = _PAD_BATCH, amp=_AMP) -> np.ndarray:
+                pad_batch: bool = _PAD_BATCH, amp=_AMP,
+                centre_out: np.ndarray | None = None) -> np.ndarray:
     """(N,20,32,64,>=2) raw physical -> (N,20,32,64,2) raw physical.
 
     predict() is TIMED, and at ~0.1 ms/window of actual compute this function is dominated by
@@ -2435,7 +2436,19 @@ def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
             if sn:
                 mean, std = mean[:nb], std[:nb]
 
-        if sig is not None and alpha > 0:
+        if centre_out is not None:
+            # The member average BEFORE compose, physical units: the SPS interval centre when
+            # it is decoupled from the point prediction (Bram, 2026-09-21: centring the band on
+            # the un-rescaled mean is +0.61 sps held out, 8/8 trajectories). compose is linear
+            # in alpha, so any other centre is y0 + (a_c/alpha)*(pred - y0) on the host.
+            c_ = (y * std + mean).float().cpu().numpy()
+            if _HOSTW == "torch":
+                torch.from_numpy(centre_out)[i:i + batch, ..., :2].copy_(torch.from_numpy(c_))
+            else:
+                centre_out[i:i + batch, ..., :2] = c_
+        # `alpha != 0`, not `> 0`: a NEGATIVE alpha is a legitimate (extra-shrunk) interval centre
+        # that fit_band.py --centre-alpha asks for; alpha == 0 stays the untouched member mean.
+        if sig is not None and alpha != 0:
             m_ = y.mean(1, keepdim=True)
             f_ = y - m_
             s_ = y.std(1, keepdim=True, unbiased=False)

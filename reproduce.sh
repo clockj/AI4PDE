@@ -153,6 +153,24 @@ members_ffno_nosim() {
   for s in $SEEDS_ME; do run $OUT/ffno_all_w40l8_s$s.pth $FFNO --seed $s --all-data; done
 }
 
+build_r35() {
+  echo "== band + build, BOTH tracks (r35: r34 members + SPS interval centred at alpha_c = 0) =="
+  # r35 = r34 with ONE change: the interval is centred on the pre-compose member mean y(alpha=0)
+  # and widened to contain the prediction (lower=min(c-h,pred), upper=max(c+h,pred)); the point
+  # prediction is bit-identical to r34 (pkg_identity 0.000e+00, run 20260921-180408, both tracks).
+  # The committed band carries centre_alpha = 0, which submission.py reads at load, so reusing it
+  # (RPDE_BAND) reproduces the package. A refit (RPDE_REPRO_FITBAND=1) must fit at the same centre,
+  # hence RPDE_CENTRE_ALPHA=0 (build_round13.sh passes it to fit_band.py --centre-alpha).
+  local A="$OUT/ffno_all_w40l8_sim_s1.pth $OUT/ffno_all_w40l8_sim_s2.pth \
+           $OUT/ffno_all_w40l8_sim_s3.pth $OUT/ffno_all_w40l8_sim_s4.pth \
+           $OUT/arch_vit_all_s1.pth $OUT/arch_vit_all_cmb3sim_s3.pth"
+  local M="$P2/p2_ffno_l8_sim_s1.pth $P2/p2_ffno_l8_sim_s2.pth $P2/p2_ffno_l8_sim_s3.pth \
+           $OUT/arch_vit_d384.pth $OUT/arch_vit_cmb3sim.pth"
+  build r35 RPDE_FORCE=1 RPDE_A="$A" RPDE_M="$M" RPDE_CENTRE_ALPHA=0 \
+    "$(band_env "${RPDE_BAND_R35:-Track_1/bands/r35_centre0_fill.npz}")" \
+    RPDE_INT8=1 RPDE_LINEAR=tensor RPDE_SHIP_AMP='"fp16"' RPDE_SPEC_PATH=bmm \
+    RPDE_HOST_WRITE=torch RPDE_FFNO_PATH=dense RPDE_TAG="r35_centre0_fill"
+}
 # ============================== stage 3 + 4: BAND, BUILD, GATES =============================
 # build_round13.sh does the band and both tracks' archives in one pass. RPDE_BAND reuses a
 # committed band instead of refitting -- which is what a reproduction of a SCORED package must
@@ -245,10 +263,11 @@ fi
 
 # t1, t2 and both are the SAME pipeline since 09-20: one member set, one build, two archives.
 case "$WHICH" in
-  t1|t2|both) twins_vit; twins_ffno; members_vit; members_ffno; build_r34 ;;
+  t1|t2|both) twins_vit; twins_ffno; members_vit; members_ffno; build_r35 ;;
+  r34)        twins_vit; twins_ffno; members_vit; members_ffno; build_r34 ;;
   r25)        twins_vit; twins_fno_w96;    members_vit; members_fno_w96;    build_r25 ;;
   r28)        twins_vit; twins_ffno_nosim; members_vit; members_ffno_nosim; build_r28 ;;
-  *) echo "usage: $0 [t1|t2|both|r25|r28]   (r25 and r28 are the superseded packages)"; exit 2 ;;
+  *) echo "usage: $0 [t1|t2|both|r34|r25|r28]   (r34, r25, r28 are the superseded packages)"; exit 2 ;;
 esac
 [ "${STUDENT:-0}" = "1" ] && student
 

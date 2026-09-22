@@ -130,6 +130,9 @@ _A = (_fno.STD.astype(np.float64) / _STD_TGT).astype(np.float32)
 _B = ((_fno.MEAN.astype(np.float64) - _MEAN_TGT) / _STD_TGT).astype(np.float32)
 
 ALPHA = 0.60
+# SPS interval centre, decoupled from the prediction -- see Track_1 submission.py CENTRE_ALPHA.
+# Read from band.npz (`centre_alpha`) in _load_band; no key => ALPHA, the old bounds exactly.
+CENTRE_ALPHA = ALPHA
 
 # ---------------------------------------------------------------------------------------
 # THE RUNNING-HISTORY MEAN. Off by default (HIST_BETA = 0), so the step is bit-identical to
@@ -231,6 +234,7 @@ class FrozenEnsemble:
         if total > 1:
             y = y / total
             sig = None if sig is None else sig / total
+        y0 = y                            # pre-compose mean: the interval centre's anchor
         if sig is not None and ALPHA > 0:
             m_ = y.mean(1, keepdim=True)
             s_ = y.std(1, keepdim=True, unbiased=False)
@@ -245,8 +249,17 @@ class FrozenEnsemble:
         half = self.half0
         if self.band_p and self.sref is not None and sig is not None:
             half = half * torch.clamp((sig * self.std) / self.sref, 0.3, 3.0) ** self.band_p
-        self.gl[..., :2] = self.go[..., :2] - half
-        self.gh[..., :2] = self.go[..., :2] + half
+        if CENTRE_ALPHA == ALPHA or sig is None or HIST_BETA:
+            self.gl[..., :2] = self.go[..., :2] - half
+            self.gh[..., :2] = self.go[..., :2] + half
+            return
+        # Decoupled centre, in the same normalized output space as go: c = y0 + k*(y - y0).
+        # Inside the graph this is 3-4 tiny batch-1 kernels. min/max keep go inside [gl, gh].
+        c = y0 * self.Ad + self.Bd
+        if CENTRE_ALPHA != 0.0:
+            c = c + (CENTRE_ALPHA / ALPHA) * (self.go[..., :2] - c)
+        self.gl[..., :2] = torch.minimum(c - half, self.go[..., :2])
+        self.gh[..., :2] = torch.maximum(c + half, self.go[..., :2])
 
     @torch.no_grad()
     def _capture(self):
@@ -356,6 +369,8 @@ def _load_band(submission_dir: str):
     band = z["base"].astype(np.float32)
     ref = z["sigma_ref"].astype(np.float32)
     p = float(z["p"])
+    global CENTRE_ALPHA
+    CENTRE_ALPHA = float(z["centre_alpha"]) if "centre_alpha" in z.files else ALPHA
     if not (np.all(np.isfinite(band)) and np.all(band >= 0.0)):
         return None, None, 0.0
     if band.shape[1:4] != (T_OUT, H, W) or band.shape[-1] < 2:

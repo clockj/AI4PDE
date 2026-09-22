@@ -179,3 +179,13 @@ bit-identical and every change outward. Against `t2r16_p2ffnoL8_fill.npz` the wh
 little — median +0.19 %, mean |Δ| 1.80e-4, max |Δ| 3.71e-3, narrower at 30.1 % of elements — which is
 what a member swap inside one family and one recipe should look like. It ships in
 `track1_r34_p2ffnoL8sim_fill.zip` (`7193a4ac…`) and `track2_r34_p2ffnoL8sim_fill.zip` (`67c2db05…`).
+
+
+## r35_centre0_fill.npz (2026-09-21) — r35, both tracks
+
+r34's members, twins and flags; band refit with `fit_band.py --alpha 0.60 --band-p 0.45 --fill-unscored
+--centre-alpha 0` (inflate 1.39), **WITH fill** (the shipped band; not the unfilled reference), i.e. `base` solved on |y(α=0) − y| with the interval centred on y(α=0).
+Keys `base`, `sigma_ref`, `p`, `centre_alpha` (= 0.0). Median 0.009205; on the 95.5 % of elements the fill
+did not touch it matches the unfilled CPU reference (Bram, `expected_base_centre0_nofill.npz`) to a median
+relative 3.7e-05. Byte-identical to the `band.npz` inside the uploaded `track1_r35_centre0_fill.zip`
+(`86c38bc6…`) and `track2_r35_centre0_fill.zip` (`1e0f7860…`); built by run 20260921-180408.
