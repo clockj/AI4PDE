@@ -106,15 +106,90 @@ on other AoA 15/20 trajectories. On the one axis where the two venues can be com
 **-0.056..-0.087 final** on §11.2's AoA-20 holdout. The difference is angle-naivety, so on the
 width axis the reporting venue is a **systematically loose proxy**.
 
-Which makes the finding from the same afternoon the operative one: run `20260922-230505`
-(aoa-ceiling PHASE 0, 4 s of GPU) established that `RealPDE/screen` no longer exists and no
-`*aoa*.pth` survives anywhere under the project — so `aoa_holdout_eval.py`, `EVALUATION.md:139`'s
-*"the ONLY OOD instrument we have, and the one that speaks to the PRIVATE test set"*, **has nothing
-to run on**, and §11.2 and §11.3 are not reproducible without retraining. Rebuild priced at
-**~14.5 GPU-h** (`REPRODUCE.md:324`: `pz_aoa20_ffnosim` 3:36:45) and built as
-`pitzer-requests/ilse/aoa-rebuild`, deliberately **not** submitted.
+> **RETRACTED, and the correction is the point.** An earlier version of this paragraph said run
+> `20260922-230505` had established that the AoA-holdout checkpoints no longer existed and that
+> §11.2 and §11.3 were therefore unreproducible, and priced a ~14.5 GPU-h rebuild against that.
+> **That was wrong.** The checkpoints had always been at
+> `/fs/scratch/PAS1187/qwu/tmp/realpde/screen/`; the gateway mounts only `~/envs`, the conda
+> environments and `~/RealPDE`, so scratch is simply invisible from inside a job, and
+> `~/RealPDE/screen` never existed. **I read a mount boundary as an absence** — and I had written
+> the correct caveat ("I can only prove it is absent from the paths we can see") before stating
+> the opposite as a headline. The rebuild was voided, never submitted, and @m4tr1x copied the
+> files to `RealPDE/incoming/screen/` instead.
+
+## What the OOD instrument actually said (run `20260923-023353`, 10 checkpoints)
+
+Read against a pre-registration published before the job ran. `tools/read_aoa.py`.
+
+**§11.2 and §11.3 reproduce exactly** on those checkpoints: held-out `sps` at inflate 1.39
+**38.399** against §11.2's 38.40, fit split **54.444** against 54.44, `wfinal` **79.692** and
+**80.943** against §11.3's 79.692 and 80.943, and the seed-2 pair **79.727 / 80.708** matching its
+replicates. So the section this report leans on is reproducible, and was the whole time.
+
+**The report's central claim is confirmed — and the conclusion it threatened survives for a better
+reason.**
+
+| arm | 3-pt vertex | argmax |
+|---|---|---|
+| `aoa20_ffno_s1` (no-sim — the checkpoint §11.2 actually used) | **1.554** | 1.55 |
+| `aoa20_ffno_s2` (no-sim, seed 2) | **1.569** | 1.55 |
+| `aoa20_ffnosim_s1` (the SHIPPED sim recipe) | **1.366** | 1.39 |
+| `aoa20_ffnosim_s2` (shipped, seed 2) | **1.385** | 1.39 |
+
+The two sim seeds' vertices agree to **0.019** (the pre-registered bar was 0.25), so the vertex is
+resolved at **1.376**. The configuration moves the optimum by ~0.19: **§11.2's headline is wrong
+about its own data — its vertex is 1.55 — and right about the shipped package, whose vertex is
+1.376 ≈ the shipped 1.39.** The right answer from the wrong measurement. **The shipped value does
+not move.**
+
+**The pre-registered rule fired on all ten checkpoints.** In-class reachable — the whole shipped
+construction refitted on the scored cell with inflate swept — came in at **0.567–1.184 sps
+(0.14–0.30 `final`)**, under the 2-sps threshold at which I had committed to stop working on
+intervals within this family. Because it bounds the *family*, `band_p`, `band_smooth` and
+`centre_alpha` need no separate holdout sweeps either: none of them can exceed 0.30 `final`.
+
+**But the axis is not closed, and the headroom transports.** The pointwise absolute bound at the
+novel angle is **+15.65…+15.95 sps = +3.91…+3.98 `final`**, against +3.894 on the reported venue.
+By output granularity (`tools/ood_granularity.py`, all oracle bounds, symmetric path):
+
+| the head emits | `sps` | vs the rung below |
+|---|---|---|
+| one number (global) | 39.169 | — |
+| one per lead-time index | 39.235 | +0.017 `final` |
+| one per window | 39.600 | |
+| one per (window, frame) | 39.774 | +0.151 `final` cumulative |
+| a shared per-element field | 42.078 | +0.727 `final` cumulative |
+| **one per element per window** | **57.083** | **+3.748 `final`** |
+
+So every scalar-output head is capped at +0.15 `final`; a better *universal* field adds +0.16 more,
+the shipped base already holding 98.5 % of that class; and **the whole remaining +3.75 requires the
+head's spatial field to vary with the input window.** A per-frame profile is worth
+**−0.0034 containment** — inside the gate, indistinguishable from zero — because the shipped base
+already carries the lead-time profile, and carries it *sub*-proportionally, which is correct:
+the scored quantity `exp(-2h/σ)·1[|E|≤h]` does not want a band proportional to `|E|`.
+
+**Two things no band touches.** `a_bar` is 34–36 % of the fit→held-out gap, and at a novel angle
+its channel priority is **rel 43 % > tke 39 % > mvpe 18 %** — a *different order* from
+in-distribution cells, where tke leads. And sim's gain at the held-out angle is **64 % containment,
+36 % accuracy** (both seeds agree to 0.4 pp), so "accuracy is the model's job, containment is the
+band's" is false: a model change lands mostly on containment, where the band is already at its
+family ceiling. sim does not consume the width head's room — floor and ceiling rise together and
+the span stays 15.6–16.0 sps.
+
+**The limit on all of the above, which the bounds cannot supply themselves:** @Devi measured a
+*fitted* 81,920-parameter field — exactly the per-element-shared rung — going **+0.032 in-sample to
+−0.555 held out**. Every rung here bounds *can it be done*, never *can it be got*; a head that
+*predicts* the field from the input is not directly covered by that result, but the burden of
+showing it generalises rests on the head, and nothing in this table helps it.
 
 ## Caveats carried by every number here
+
+The AoA-20 holdout has **16** trajectories (per-trajectory pointwise ceilings 44.1–63.9); the
+"three trajectories" limit below belongs to the REPORTED venue only. Everything from
+`aoa_holdout_eval` and from the dumps is on the **symmetric** path (`absE = |P−Y|`, no clamping),
+which is ~+0.47 sps below the deployed clamped path — differences survive that, absolute values
+must not sit beside a board row. My interval scorer was checked against the repo's `sps_score`
+(symmetric) and the kit's `aggregate_sps(lower=,upper=)` (deployed), agreeing to ~1e-10 on both.
 
 Five twins, not the shipped four F + two ViT · AoA>=15 is three trajectories, so the replication is
 leave-one-**trajectory**-out, not multi-seed · the in-class oracle is in sample and can never be
