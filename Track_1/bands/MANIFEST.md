@@ -189,3 +189,39 @@ Keys `base`, `sigma_ref`, `p`, `centre_alpha` (= 0.0). Median 0.009205; on the 9
 did not touch it matches the unfilled CPU reference (Bram, `expected_base_centre0_nofill.npz`) to a median
 relative 3.7e-05. Byte-identical to the `band.npz` inside the uploaded `track1_r35_centre0_fill.zip`
 (`86c38bc6…`) and `track2_r35_centre0_fill.zip` (`1e0f7860…`); built by run 20260921-180408.
+
+
+## f4v1a060_fill.npz (2026-09-23) — the 09-23 package, both tracks
+
+| `f4v1a060_fill.npz` | `3327298f6baa63d767bf3416de82e0ea` | 09-23 `track1_f4v1a060.zip` / `track2_f4v1a060.zip` (staged, **not yet scored**) |
+
+**Promoted BEFORE its board result**, on the `r34` / `t2r16` precedent recorded above: it is the band
+of the method of record, and the method is what the organizers re-train. It was found missing by
+@Ilse on 09-23 — `build_round13.sh` step 5/5 leaves `cp band8.npz Track_1/bands/…` as a prose NEXT
+rather than a line in the script, so a band reaches the repo only if a human remembers. Until this
+commit the file existed **only** inside the two uploaded zips and on the build machine
+(`realpde-packages/20260923/evidence/f4v1a060_fill.npz`), and `REPRODUCE.md` §6.3 says a refit on a
+changed twin set is **not** bit-reproducible — so it could not have been rebuilt from the
+checkpoints. Reuse it through `RPDE_BAND`; never refit to recover it.
+
+Provenance (`pitzer-requests/emre/f4v1_a060b/run.sh`, run 20260922-065558's successor, `AL=0.60`):
+archive members **K=5** — the four all-data `ffno_all_w40l8_sim_s1..s4` plus the single ViT
+`arch_vit_all_cmb3sim_s3`; error/fit twins `p2_ffno_l8_sim_s1..s3` plus **one** ViT,
+`arch_vit_cmb3sim`. Flags as r34/r35: ALPHA 0.60, `--band-p 0.45`, `--inflate 1.39`,
+`RPDE_CENTRE_ALPHA=0`, `RPDE_BAND_FILL=1`, `--band-smooth 3`. Keys `base`, `sigma_ref`, `p` (0.45),
+`centre_alpha` (0.0).
+
+**Why it is a real refit and not a float copy of r35.** r35's fit twins carry **two** ViTs
+(`arch_vit_d384` + `arch_vit_cmb3sim`); this one carries **one**. On the scored channels
+`base[..., :2]` (81 920 elements): median 0.009332, min 2.852e-04 (filled), max 0.039126;
+against r35 **every scored element differs**, max |rel| **24.06 %**, median ratio 1.0144, mean width
+ratio 1.0157, narrower at 29.3 %. float32 eps is 1.19e-07, so 24 % is four orders of magnitude past
+rounding. The control is in the same package: `f4v2a060_fill.npz` (K=6, r35's composition) matches
+r35 to exactly 1.19e-07 — `evidence/band_identity_r35.txt`. @Ilse measured 66.7 % of elements
+differing across all three channels; that figure counts the `[..., 2]` p channel, which is all zero
+in both and never scored — on the two channels SPS actually reads it is 100 %.
+
+**Still missing from this directory:** the 09-22 T1 band `r37_inflate155`
+(`fcec17b2…`, inside `20260922/track1_*.zip`). Same gap, recorded by @Devi's zip hashes. It is a
+**dev-board** band by its own README's rule and must not propagate to the finals, but that is a
+reason to label it, not a reason to leave it unarchived.
