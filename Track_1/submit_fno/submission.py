@@ -245,10 +245,16 @@ CENTRE_ALPHA = ALPHA
 # Safe by construction, and that is the point: a window inside the training range gets exactly
 # the unblended prediction, bit for bit.  If the hidden set is entirely in range this submission
 # returns the previous one's four error subscores unchanged -- which is itself the measurement.
-# DEFAULT OFF, deliberately. Round 14 ships 0.15 via `RPDE_BETA=0.15` on
-# `build_round13.sh`, and the board has not ruled on it yet: every number above is
-# local, and the arm's whole case rests on the hidden set actually containing windows
-# outside the training speed range. Flip this default only after a board round says so.
+# DEFAULT OFF, deliberately.
+# SUPERSEDED (2026-09-23): the sentence below said "Round 14 ships 0.15 via `RPDE_BETA=0.15`".
+# That was true of round 14 and is NOT true of the package of record, which ships BLEND_BETA 0 --
+# see CLAUDE.md:59, CLAUDE.md:294 and bands/MANIFEST.md:114, all three of which say 0. The stale
+# line sat directly above the constant, so a reader met it before the value; kept here rather than
+# deleted so the history stays legible, but it is dead. (Found by @IcanFly.)
+# STILL LIVE, and the reason the default stays off: the board has not ruled on this arm. Every
+# number supporting it is local, and its whole case rests on the hidden set actually containing
+# windows outside the training speed range -- which R14's gate found it does NOT (it fired on zero
+# hidden windows; CLAUDE.md:144-145). Flip this default only after a board round says so.
 BLEND_BETA = 0.0
 BLEND_REF = 0.02
 TRAIN_SPEED = (0.037523, 0.296857)    # per-WINDOW mean streamwise speed, all 82 traj
