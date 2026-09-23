@@ -157,3 +157,53 @@ Kept here because the withdrawn versions circulated and someone may still be hol
 - The toolchain alternative for "all four deltas positive" is excluded by measurement: the 09-22
   reproduction was same-recipe, same-seed, toolchain-only, and its seven F-FNO stages agree to
   within 0.0002 — 35x below the effect at issue.
+
+## 10. Held-out versus in-sample ensemble value (run 20260922-211932, added after section 9)
+
+Section 9 records that I withdrew a pricing of the F-group size because every member in it was
+all-data and scored on trajectories it had trained on. This run measures the same curve on the twins
+-- identical recipes with `--all-data` dropped -- beside the in-sample curve, paired in one job. The
+rule below was fixed in `kcurve-heldout/REQUEST.md` before the run and encoded in
+`tools/read_kcurve.py`, which was tested against a passing and a deliberately broken file first.
+
+Both self-checks passed bit for bit: `IS_F4V2` 84.3029 / 82.1702 and `HO_F3V2` 82.3600 / 79.7964,
+matching the ledger and the two earlier runs.
+
+```
+                                   held-out (twins)   in-sample (all-data)   ratio
+within family, F, K = 1 -> 3
+   full 336                            +0.1998              +0.1478          1.35
+   AoA 15-20                           +0.2366              +0.2278          1.04
+cross family, add the ViT pair
+   full 336                            +0.1737              +0.9719          0.18
+   AoA 15-20                           +0.1890              +1.1733          0.16
+```
+
+**Within family, exposure inflates nothing.** Adding F members is worth as much on trajectories the
+members never saw. The correction to section 9 therefore runs OPPOSITE to the direction I feared: I
+had worried the in-sample numbers overstated the cost of dropping a member; they understate it. That
+arm is more firmly closed than it was when I withdrew it, not less.
+
+**Cross family, 83% of the value is in-sample.** The second family is worth +0.97 in sample and
++0.17 to +0.19 held out, below the 0.20 threshold fixed in advance. Independent support: on 09-21, a
+different instrument measured the ViT pair's benefit decaying about tenfold with exposure (+12.5%
+rel on seen trajectories against +1.3% on unseen); this run gives 5.6x by a different construction.
+
+**Why this belongs in a finals write-up.** The organisers retrain on a private set, which is the
+held-out case. Our package's largest single source of value appears to retain roughly a sixth of it
+there. This does not contradict the board-measured family credit in `CLAUDE.md` (+0.184 / +0.053
+containment): the development board is interpolation, so the two measure different things.
+
+**It also settles section 1's own caveat.** The drift figure is measured in sample, and I recorded
+before this run that a ratio near 1 would mean it transfers. The drift is a within-family F
+perturbation and that ratio is 1.04-1.35, so +0.0102 / +0.0260 stands as measured and is not
+restated as an upper bound.
+
+**Boundary, drawn immediately.** The 0.17 is what the ViT pair's PRESENCE is worth, not what
+PERTURBING it does. Those are different quantities and today's number is not used to predict the
+pending ViT-half drift.
+
+**Limits.** The held-out curve stops at K = 3 (three twins against four shipped members) and is not
+extrapolated to K = 4; single seed; the cross-family rows sit on different bases (three F members
+held out, four in sample); scores come from `screen_eval`, i.e. the symmetric approximation at
+shipped width (section 6a).
