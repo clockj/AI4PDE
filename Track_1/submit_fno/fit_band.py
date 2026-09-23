@@ -53,6 +53,14 @@ import sys
 
 import numpy as np
 
+# The sigma-ratio clip. It is a SHIPPED convention exactly as load-bearing as centre_alpha, but
+# unlike centre_alpha the band did not record it, so it could not be recovered from the artifact --
+# @Fen found this on 2026-09-23. It is also hardcoded a third time in submission.py:575, which this
+# file cannot see. Naming it here removes the in-file duplication; writing it into the .npz below
+# makes future bands self-describing, so the convention audit that works for centre_alpha starts
+# working for clip too. submission.py deliberately NOT touched in the same change (inference path).
+CLIP_LO, CLIP_HI = 0.3, 3.0
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 TRACK1 = os.path.dirname(HERE)
 sys.path.insert(0, TRACK1)
@@ -187,7 +195,7 @@ def main() -> None:
     # from --err-ckpt, because that is about how big the errors honestly are.
     sig_fit = sigma_of(m, fit_d["x"])[keep]
     sigma_ref = np.maximum(sig_fit.mean(0, keepdims=True), 1e-8).astype(np.float32)
-    ratio_f = np.clip(sig_fit / sigma_ref, 0.3, 3.0)
+    ratio_f = np.clip(sig_fit / sigma_ref, CLIP_LO, CLIP_HI)
 
     # Solve on the fitting split's error field -- an offline quantity that uses no test target
     # and no per-window information -- with |error| scaled to board magnitude. Deflating by
@@ -267,7 +275,8 @@ def main() -> None:
     # the same shape as the prediction, so the unscored pressure channel gets a zero column.
     band = np.concatenate([uv_band, np.zeros_like(uv_band[..., :1])], -1).astype(np.float32)
     extra = {} if args.centre_alpha is None else {"centre_alpha": np.float32(args.centre_alpha)}
-    np.savez(args.out, base=band, sigma_ref=sigma_ref, p=np.float32(args.band_p), **extra)
+    np.savez(args.out, base=band, sigma_ref=sigma_ref, p=np.float32(args.band_p),
+             clip_lo=np.float32(CLIP_LO), clip_hi=np.float32(CLIP_HI), **extra)
 
     U = prep(Pu, Yu)
     hi = np.isin(np.array([int(str(i).split(":")[0].split("_")[1]) for i in du["ids"]]),
@@ -276,7 +285,7 @@ def main() -> None:
     dmh, tkh, mvh = sps9.sample_metrics(Pu[hi], Yu[hi])
 
     # The per-window half-widths the submission will actually use, on each reporting split.
-    ratio_u = np.clip(sigma_of(m, du["x"]) / sigma_ref, 0.3, 3.0)
+    ratio_u = np.clip(sigma_of(m, du["x"]) / sigma_ref, CLIP_LO, CLIP_HI)
     h_fit = (uv_band * ratio_f[..., :2] ** args.band_p).astype(np.float32)
     h_all = (uv_band * ratio_u[..., :2] ** args.band_p).astype(np.float32)
     h_hi = h_all[hi]
