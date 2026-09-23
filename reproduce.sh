@@ -55,7 +55,21 @@ export HDF5_USE_FILE_LOCKING=FALSE
 
 for d in "$REAL" "$SIM"; do [ -d "$d" ] || { echo "MISSING data dir $d"; exit 1; }; done
 mkdir -p "$OUT" || exit 1
-$PY $U/train2.py --help > /dev/null || { echo "PREFLIGHT FAILED: train2.py"; exit 1; }
+if ! $PY $U/train2.py --help > /dev/null 2>&1; then
+    # The interpreter EXISTS but cannot run the code -- almost always a missing torch. Checking
+    # -x on $PY would not catch this, and hard-failing when the author's env is absent would break
+    # the documented foreign-stack path (REPRODUCE.md 9.1, verified end to end in edb7c71). So the
+    # fallback stays and this message carries the diagnosis instead.
+    echo "PREFLIGHT FAILED: this interpreter cannot run train2.py (usually: no torch)"
+    echo "  interpreter used : $PY"
+    if [ "$PY" = "$_PY_DEFAULT" ] && [ ! -x /users/PAS1187/qwu/.conda/envs/realpde/bin/python ]; then
+        echo "  note             : the author's conda env is absent here, so PY fell back to PATH"
+        echo "                     python3 BY DESIGN (REPRODUCE.md 9.1) -- the fallback is not the bug,"
+        echo "                     it just landed on an interpreter without the stack."
+    fi
+    echo "  on Pitzer, use   : PY=/users/PAS1187/qwu/envs/mural_osc/bin/python $0 $WHICH"
+    exit 1
+fi
 echo "reproduce.sh: $WHICH   data $RPDE   out $OUT   epochs $EPOCHS   git $(git rev-parse --short HEAD 2>/dev/null || echo '?')"
 
 # A reduced-epoch run produces checkpoints that are NOT the method of record, and
