@@ -67,7 +67,32 @@ work can touch it. Decomposing the fit -> reported gap:
       a_bar   25.2 %   untouchable by any band
       contain 74.8 % , of which band TRANSPORT is 0.462 sps = 0.116 final = 4.0 % of the gap
                        (in-class oracle, in sample, so a generous upper bound)
-      remainder ~70.9 % needs a better model
+      remainder ~70.9 % is out of reach OF THE SHIPPED FAMILY -- how much of it a richer band
+                        could reach was NOT measured for this table; see the correction below
+
+> **CORRECTION, appended the same night.** Where this report says the interval axis is capped at
+> 0.116 `final`, that bounds only the shipped *family* -- element base x per-window
+> `sigma^band_p` x 3-box smooth. A learned width head emits `h` per element per window and is a
+> strictly richer family, so it is **not** bounded by that number, and reading my figure as a
+> ceiling on ALL interval work is wrong by a factor of 33. The bound that holds for every family
+> is pointwise: one element's scored quantity is `exp(-2h/SIGMA) * 1[|E| <= h]`, maximised at
+> `h = |E|`, so `sps_max = 100 * sum_i a_i * sum_e exp(-2|E_ie|/SIGMA) * scored / n_scored`.
+>
+> | venue | shipped | shipped-family refit | **absolute** | shipped -> absolute |
+> |---|---|---|---|---|
+> | fit AoA<15 | 58.322 | 58.939 | **70.877** | +12.555 sps = **+3.136 final** |
+> | REPORTED AoA>=15 | 46.631 | 47.604 | **62.218** | +15.587 sps = **+3.894 final** |
+>
+> So the reported venue has **+3.894 `final`** of interval headroom for a richer band, not 0.116.
+> @Fen's "width-head corr 0.565 -> 0.70 is worth +0.44 `final`" sits at 11 % of that bound and was
+> never in conflict with this report -- my scoping was the conflict. The absolute column is a
+> POINTWISE ORACLE: it needs the target it is scored on, can never be shipped, and says "no head
+> can beat this", not "these points are waiting to be collected".
+>
+> Lesson: **a reported upper bound must name the FAMILY it constrains in the same sentence.**
+> I was the first person misled by my own -- and it is the second time tonight I mis-scoped a
+> bound, after reading `sps9`'s "upper bound on what any band-fitting procedure can do" as
+> covering the shipped band when it covers element-only bands. Script: `tools/abs_ceiling.py`.
 
 `plan_20260917.md` §11.2 says the same thing in words — *"the 16-point sps loss at a novel angle is
 not a width problem (the a-factor and where the error sits, not its scale)"* — and this is the
