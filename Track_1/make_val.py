@@ -29,6 +29,43 @@ SEEN = ["5025_0", "7575_10", "10125_20", "12675_20",
         "17775_10", "19050_5", "22875_15", "25425_0"]
 
 
+def _check_against_authority() -> None:
+    """UNSEEN is typed out above, and MANIFEST.md warns that a hand-typed split leaks:
+
+        "do not type a --exclude list by hand, the (Re, AoA) grid is incomplete and a typed
+         list leaks"
+
+    The authority is `unet/model.py:VAL_TRAJ`. Today the two agree, so nothing here is wrong --
+    but nothing ENFORCES that they keep agreeing. If VAL_TRAJ is ever edited and this list is
+    not, every "held-out" number built from val_unseen.npz silently becomes contaminated, with
+    no error raised anywhere. That is the failure the warning describes.
+
+    Parsed rather than imported: model.py pulls in torch, and this script needs only h5py and
+    numpy. Parsing keeps the check free of that dependency.
+    """
+    import re
+
+    mp = os.path.join(os.path.dirname(os.path.abspath(__file__)), "unet", "model.py")
+    with open(mp, encoding="utf-8") as f:
+        m = re.search(r"VAL_TRAJ\s*=\s*\[(.*?)\]", f.read(), re.S)
+    if m is None:
+        raise SystemExit(f"make_val.py: cannot find VAL_TRAJ in {mp}. Refusing to build a split "
+                         "that cannot be checked against its authority.")
+    val = set(re.findall(r'"([^"]+)"', m.group(1)))
+    if set(UNSEEN) != val:
+        raise SystemExit(
+            "make_val.py: UNSEEN has drifted from unet/model.py:VAL_TRAJ.\n"
+            f"  in UNSEEN but NOT held out (THESE LEAK): {sorted(set(UNSEEN) - val)}\n"
+            f"  held out but missing from UNSEEN:        {sorted(val - set(UNSEEN))}\n"
+            "Fix UNSEEN to match VAL_TRAJ; do not edit VAL_TRAJ to match UNSEEN.")
+    if set(SEEN) & val:
+        raise SystemExit(f"make_val.py: SEEN overlaps the held-out split: "
+                         f"{sorted(set(SEEN) & val)} -- val_seen would not be 'seen'.")
+
+
+_check_against_authority()
+
+
 def build(names: list[str], out: str) -> None:
     xs, ys, ids = [], [], []
     for name in names:
