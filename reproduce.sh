@@ -62,6 +62,19 @@ echo "reproduce.sh: $WHICH   data $RPDE   out $OUT   epochs $EPOCHS   git $(git 
 # build_round13.sh unconditionally stages its two archives into ../sub_candidates (its `SUB` is
 # not overridable). So a smoke must run from a COPY of the repository on scratch, never in the
 # working tree -- REPRODUCE.md section 8 has the three-line recipe.
+# This check was SMOKE-ONLY until 2026-09-23 and therefore did not cover the case that matters:
+# a full-fidelity run (EPOCHS=400, the default) with RPDE_REPRO_OUT unset writes into $U, and the
+# reproduction request now being prepared is exactly a 400-epoch run. The hazard is not "writing to
+# $U" -- that is the documented shipped layout (see OUT= above) -- it is DESTROYING checkpoints that
+# are already there. So the condition is existing .pth files, at any epoch count.
+if [ "$(cd "$OUT" && pwd)" = "$(pwd)/$U" ] && ls "$U"/*.pth >/dev/null 2>&1; then
+  echo "REFUSING: $U already holds $(ls "$U"/*.pth | wc -l) checkpoint(s) and OUT resolves to it,"
+  echo "so this run would overwrite them. Set RPDE_REPRO_OUT to a scratch dir, or export"
+  echo "RPDE_REPRO_FORCE=1 if overwriting them is genuinely what you want."
+  [ "${RPDE_REPRO_FORCE:-0}" = "1" ] || exit 1
+  echo "RPDE_REPRO_FORCE=1 set -- proceeding and overwriting."
+fi
+
 if [ "$EPOCHS" != "400" ]; then
   echo "SMOKE MODE: --epochs $EPOCHS. These checkpoints are NOT the method of record."
   if [ "$(cd "$OUT" && pwd)" = "$(pwd)/$U" ]; then
