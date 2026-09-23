@@ -316,6 +316,11 @@ def main() -> None:
                          "shipped value: the error head is a second auxiliary readout of the "
                          "same trunk and starts at the same price, so the arm is a head being "
                          "ADDED rather than the field objective being re-weighted.")
+    ap.add_argument("--err-loss", choices=["pinball", "mse"], default="pinball",
+                    help="2026-09-23 (Emre): functional of the --err-head loss. 'pinball' (default, Lior's "
+                         "pinball_r code of record: rho_tau on log|pred-y|) keeps every recorded pinball "
+                         "command reproducing unchanged. 'mse' is Bram's errhead_mse code exactly: "
+                         "mean((clamp(logerr) - log(|pred-y| + 1e-4))^2). Recorded in the blob as err_loss.")
     ap.add_argument("--pinball-tau", type=float, default=0.9,
                     help="Lior / pinball_r (2026-09-23): the --err-head loss becomes the PINBALL "
                          "loss at this quantile instead of MSE. The head then estimates the "
@@ -1390,8 +1395,11 @@ def main() -> None:
                     #   rho_tau(r) = r * (tau - 1[r < 0])   =>  tau=0.5 is 0.5*|r| (MAE)
                     err_t = (pred.detach() - y).abs()
                     _r = (err_t + 1e-4).log() - from_ch(logerr.clamp(-8.0, 2.0))
-                    _t = float(getattr(args, "pinball_tau", 0.9))
-                    l_err = torch.mean(torch.maximum(_t * _r, (_t - 1.0) * _r))
+                    if getattr(args, "err_loss", "pinball") == "mse":
+                        l_err = torch.mean(_r ** 2)       # Bram errhead_mse: (logerr - log(err+1e-4))^2
+                    else:
+                        _t = float(getattr(args, "pinball_tau", 0.9))
+                        l_err = torch.mean(torch.maximum(_t * _r, (_t - 1.0) * _r))
                     loss = loss + args.lam_e * l_err
 
                 l_crps = l_svar = torch.zeros((), device=dev)
@@ -1629,7 +1637,9 @@ def main() -> None:
                 # pinball_r: which functional the err head was trained under. Recorded at the
                 # top level next to err_head for the same reason lam_e is: a reader must be able
                 # to tell an MSE head from a pinball head without opening the config dict.
-                "pinball_tau": (getattr(args, "pinball_tau", None) if args.err_head else None),
+                "pinball_tau": (getattr(args, "pinball_tau", None)
+                                if args.err_head and getattr(args, "err_loss", "pinball") == "pinball" else None),
+                "err_loss": (getattr(args, "err_loss", "pinball") if args.err_head else None),
                 "var_hidden": args.var_hidden, "var_deep": args.var_deep,
                 "var_in_std": args.var_in_std, "var_pred_std": args.var_pred_std,
                 "fgn_dim": args.fgn_dim, "hist": args.hist,
