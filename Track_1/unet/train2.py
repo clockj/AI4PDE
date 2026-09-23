@@ -316,11 +316,19 @@ def main() -> None:
                          "shipped value: the error head is a second auxiliary readout of the "
                          "same trunk and starts at the same price, so the arm is a head being "
                          "ADDED rather than the field objective being re-weighted.")
-    ap.add_argument("--err-loss", choices=["pinball", "mse"], default="pinball",
-                    help="2026-09-23 (Emre): functional of the --err-head loss. 'pinball' (default, Lior's "
-                         "pinball_r code of record: rho_tau on log|pred-y|) keeps every recorded pinball "
-                         "command reproducing unchanged. 'mse' is Bram's errhead_mse code exactly: "
-                         "mean((clamp(logerr) - log(|pred-y| + 1e-4))^2). Recorded in the blob as err_loss.")
+    ap.add_argument("--err-loss", choices=["pinball", "mse", "nll", "qd"], default="pinball",
+                    help="2026-09-23: functional of the --err-head loss; the three forks of the night merged "
+                         "under ONE name (Corin's request), each branch copied from its author verbatim. "
+                         "'pinball' (DEFAULT, Lior's pinball_r: rho_tau on log|pred-y|, --pinball-tau) keeps "
+                         "every recorded pinball command reproducing unchanged. 'mse' = Bram's errhead_mse: "
+                         "mean((clamp(logerr) - log(|e| + 1e-4))^2), the conditional geometric mean. 'nll' = "
+                         "Corin's errhead_nll: log h + (|e|+1e-4)^2 / (2 h^2), the conditional RMS. 'qd' = "
+                         "Devi's qd_r (Jonas's spec): h = exp(logerr) IS the half-width, "
+                         "l = -mean(sigmoid((h-|e|)/(T*h.detach())) * exp(-2*h*mul/SIGMA_G)), T = --qd-temp. "
+                         "NOTE the Bram and Corin forks defaulted to 'mse': their commands must pass "
+                         "--err-loss mse / nll explicitly against this tree. Recorded in the blob as err_loss.")
+    ap.add_argument("--qd-temp", type=float, default=0.1,
+                    help="qd_r (Devi): temperature T of the smoothed inside-indicator, relative to h.")
     ap.add_argument("--pinball-tau", type=float, default=0.9,
                     help="Lior / pinball_r (2026-09-23): the --err-head loss becomes the PINBALL "
                          "loss at this quantile instead of MSE. The head then estimates the "
@@ -1394,10 +1402,24 @@ def main() -> None:
                     # tau-quantile of log|pred-y| instead of its conditional mean.
                     #   rho_tau(r) = r * (tau - 1[r < 0])   =>  tau=0.5 is 0.5*|r| (MAE)
                     err_t = (pred.detach() - y).abs()
-                    _r = (err_t + 1e-4).log() - from_ch(logerr.clamp(-8.0, 2.0))
-                    if getattr(args, "err_loss", "pinball") == "mse":
-                        l_err = torch.mean(_r ** 2)       # Bram errhead_mse: (logerr - log(err+1e-4))^2
+                    _el = getattr(args, "err_loss", "pinball")
+                    if _el == "mse":
+                        # Bram errhead_mse, verbatim.
+                        l_err = torch.mean((from_ch(logerr.clamp(-8.0, 2.0))
+                                            - (err_t + 1e-4).log()) ** 2)
+                    elif _el == "nll":
+                        # Corin errhead_nll, verbatim: Gaussian NLL of the error at scale h = exp(logh).
+                        _lh = from_ch(logerr.clamp(-8.0, 2.0))
+                        l_err = torch.mean(_lh + 0.5 * (err_t + 1e-4) ** 2 * torch.exp(-2.0 * _lh))
+                    elif _el == "qd":
+                        # Devi qd_r, verbatim: exp(logerr) IS the half-width h (normalized units); `mul`
+                        # maps to physical, so 2*h*mul is the width the scorer prices.
+                        _h = from_ch(logerr.clamp(-8.0, 2.0)).exp()
+                        _in = torch.sigmoid((_h - err_t) / (float(args.qd_temp) * _h.detach()))
+                        _pen = torch.exp(-2.0 * _h * mul / 0.0563870259)
+                        l_err = -(_in * _pen).mean()
                     else:
+                        _r = (err_t + 1e-4).log() - from_ch(logerr.clamp(-8.0, 2.0))
                         _t = float(getattr(args, "pinball_tau", 0.9))
                         l_err = torch.mean(torch.maximum(_t * _r, (_t - 1.0) * _r))
                     loss = loss + args.lam_e * l_err
@@ -1640,6 +1662,8 @@ def main() -> None:
                 "pinball_tau": (getattr(args, "pinball_tau", None)
                                 if args.err_head and getattr(args, "err_loss", "pinball") == "pinball" else None),
                 "err_loss": (getattr(args, "err_loss", "pinball") if args.err_head else None),
+                "qd_temp": (float(args.qd_temp) if args.err_head
+                            and getattr(args, "err_loss", "pinball") == "qd" else None),
                 "var_hidden": args.var_hidden, "var_deep": args.var_deep,
                 "var_in_std": args.var_in_std, "var_pred_std": args.var_pred_std,
                 "fgn_dim": args.fgn_dim, "hist": args.hist,
