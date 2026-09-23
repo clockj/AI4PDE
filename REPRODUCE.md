@@ -549,3 +549,19 @@ end-to-end `20260922-111450-*-ilse-repro-phase3-build`.
 
 None of the three affects the shipped archives; all three stop a from-scratch reproduction on a fresh machine,
 which is exactly what the organizers will attempt.
+
+**On the Pitzer cluster specifically** (measured 2026-09-23, IcanFly run `20260923-062751`, plus my own
+check of the same paths). Item 1 above says "pass `PY=…`" without saying *which*, so a reader still has to
+fail once to learn it. The three facts that remove that round trip:
+
+```
+PY=/users/PAS1187/qwu/envs/mural_osc/bin/python      # the working stack; the .conda path in item 1 is ABSENT here
+RPDE=/users/PAS1187/qwu/RealPDE                      # 34G: train_real 7.0G, train_sim 9.3G
+OUT / any writable target must live under /work      # inside a job, /fs/scratch/PAS1187/qwu,
+                                                     # RealPDE/incoming and /users/PAS1187/qwu are READ-ONLY
+```
+The third is the expensive one and is the only failure here that costs more than seconds: a script pointing
+`RPDE_REPRO_OUT` at `/fs/scratch` trains successfully and then fails at write time. (Second independent
+confirmation of that mount boundary — Ilse first met it as "the checkpoint was deleted".) The interpreter
+fault, by contrast, is caught by the `train2.py --help` preflight at second 0 and now prints the `PY=` line
+above in its failure message (`b5d2219`).
