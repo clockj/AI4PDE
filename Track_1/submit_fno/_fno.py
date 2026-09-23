@@ -1781,7 +1781,7 @@ class FFNO2d(nn.Module):
     FF_FACTOR = 2
 
     def __init__(self, width: int = 64, modes_y: int = 16, modes_x: int = 32, n_layers: int = 12,
-                 var_head: bool = True, ff: bool = True):
+                 var_head: bool = True, ff: bool = True, err_head: bool = False):
         super().__init__()
         yy, xx = torch.meshgrid(torch.linspace(-1, 1, H), torch.linspace(-1, 1, W),
                                 indexing="ij")
@@ -1796,6 +1796,13 @@ class FFNO2d(nn.Module):
         if var_head:
             self.head_logstd = nn.Sequential(nn.Conv2d(width, 128, 1), nn.GELU(),
                                              nn.Conv2d(128, C, 1))
+        # `--err-head` (2026-09-23): a THIRD readout, log|pred - y| per element PER FRAME, (B, CH, H, W)
+        # in head_field's layout. Built last, as in models_alt._heads, so state_dict keys match.
+        # Only then does forward() return three outputs; every existing member keeps its 2-tuple.
+        self.head_logerr = None
+        if err_head:
+            self.head_logerr = nn.Sequential(nn.Conv2d(width, 128, 1), nn.GELU(),
+                                             nn.Conv2d(128, CH, 1))
 
     def set_spectral_path(self, path: str = "fft"):
         if path not in ("fft", "dense"):
@@ -1813,6 +1820,8 @@ class FFNO2d(nn.Module):
         logstd = None
         if self.head_logstd is not None:
             logstd = self.head_logstd(h.detach() if detach_var else h)
+        if self.head_logerr is not None:
+            return self.head_field(h), logstd, self.head_logerr(h)
         return self.head_field(h), logstd
 
 
@@ -1843,7 +1852,7 @@ def _ffno_member(blob: dict, device: str):
     cfg = blob.get("config", {})
     return FFNO2d(blob.get("width", cfg.get("width", 96)), blob.get("modes_y", 8),
                   blob.get("modes_x", 12), blob.get("n_layers", 4), blob.get("var_head", True),
-                  **FFNO_VARIANTS[arch]).to(device)
+                  err_head=bool(blob.get("err_head", False)), **FFNO_VARIANTS[arch]).to(device)
 
 
 class _StkFFNOLayer(nn.Module):
@@ -2009,6 +2018,12 @@ class StackedFFNO(nn.Module):
             if first.head_logstd is not None:
                 self.hl = nn.ModuleList([_StkPoint([m.head_logstd[0] for m in members]),
                                          _StkPoint([m.head_logstd[2] for m in members])])
+            # --err-head members: fused like head_logstd. All-or-none -- the state_dict key check
+            # above already refuses a stack that mixes head and no-head members.
+            self.he = None
+            if getattr(first, "head_logerr", None) is not None:
+                self.he = nn.ModuleList([_StkPoint([m.head_logerr[0] for m in members]),
+                                         _StkPoint([m.head_logerr[2] for m in members])])
         self.self_norm = bool(getattr(first, "self_norm", False))
 
     def set_spectral_path(self, path: str = "fft"):
@@ -2031,6 +2046,12 @@ class StackedFFNO(nn.Module):
         if self.hl is not None:
             ls = self.hl[1](_F.gelu(self.hl[0](t))).float()
             logstd = ls.clamp(-8.0, 2.0).exp().mean(0).log().permute(0, 3, 1, 2)
+        if self.he is not None:
+            # Same contract as logstd: log of the member mean of exp(clamped log-error), so
+            # predict_fno weights it by n_members like any other err-bearing module.
+            le = self.he[1](_F.gelu(self.he[0](t))).float()
+            logerr = le.clamp(-8.0, 2.0).exp().mean(0).log().permute(0, 3, 1, 2)
+            return field, logstd, logerr
         return field, logstd
 
 
@@ -2319,10 +2340,11 @@ def load_any(path: str, device: str):
         _sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
                                           "..", "unet"))
         cfg = blob.get("config", {})
+        _eh = {"err_head": True} if blob.get("err_head", False) else {}
         m = importlib.import_module("models_alt").build(
             arch, blob.get("width", cfg.get("width", 96)), blob.get("var_head", True), 0,
             blob.get("modes_y", 8), blob.get("modes_x", 12), blob.get("n_layers", 4),
-            dropout=cfg.get("dropout", 0.0)).to(device)
+            dropout=cfg.get("dropout", 0.0), **_eh).to(device)
         m.load_state_dict(blob["model_state_dict"])
         m.eval()
         m.self_norm = _self_norm_of(blob)
@@ -2349,7 +2371,8 @@ def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
                 batch: int = 64, out: np.ndarray | None = None,
                 sigma_out: np.ndarray | None = None,
                 pad_batch: bool = _PAD_BATCH, amp=_AMP,
-                centre_out: np.ndarray | None = None) -> np.ndarray:
+                centre_out: np.ndarray | None = None,
+                err_out: np.ndarray | None = None) -> np.ndarray:
     """(N,20,32,64,>=2) raw physical -> (N,20,32,64,2) raw physical.
 
     predict() is TIMED, and at ~0.1 ms/window of actual compute this function is dominated by
@@ -2400,39 +2423,51 @@ def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
         # across differently-rescaled ones, and K members cost K forward passes but still only
         # ONE host transfer and one output write. At 0.109 ms of compute against ~1.27 ms of
         # fixed API overhead, that is what makes ensembling affordable at all.
-        y = sig = None
-        total = 0
+        y = sig = er = None
+        total = etot = 0
         for m in models:
             # A StackedFNO already averaged over the members it fused, so it stands in for
             # `n_members` of them and must be weighted accordingly -- otherwise fusing would
             # silently change the ensemble's mixture.
             nm = getattr(m, "n_members", 1)
             total += nm
+            # A member (or fused stack) trained with --err-head returns a third output, the
+            # per-frame log|error| (B, CH, H, W); every other module keeps its (field, logstd).
             if amp is None or not cuda:
-                raw, logstd = m(prev)
+                o_ = m(prev)
             else:
                 # Only the network runs reduced-precision; everything after this -- the member
                 # average, the fluctuation rescaling, the denormalization -- stays fp32, so the
                 # variant differs from the reference in exactly one place.
                 with torch.autocast("cuda", dtype=amp):
-                    raw, logstd = m(prev)
-                raw = raw.float()
-                logstd = None if logstd is None else logstd.float()
+                    o_ = m(prev)
+            raw, logstd = o_[0].float(), (None if o_[1] is None else o_[1].float())
+            logerr = o_[2].float() if len(o_) > 2 and o_[2] is not None else None
             yi = raw.reshape(len(xb), T_OUT, C, H, W).permute(0, 1, 3, 4, 2) * nm
             y = yi if y is None else y + yi
             if logstd is not None:
                 si = logstd.clamp(-8.0, 2.0).exp().permute(0, 2, 3, 1).unsqueeze(1) * nm
                 sig = si if sig is None else sig + si
+            if logerr is not None and err_out is not None:
+                # Averaged over the ERR-BEARING members only (etot), not all members: a ViT has
+                # no head, and counting it would shrink H by K_err/K for no reason.
+                ei = logerr.clamp(-8.0, 2.0).exp().reshape(len(xb), T_OUT, C, H, W) \
+                    .permute(0, 1, 3, 4, 2) * nm
+                er = ei if er is None else er + ei
+                etot += nm
         if total > 1:
             y = y / total
             if sig is not None:
                 sig = sig / total
+        if er is not None and etot > 1:
+            er = er / etot
         if pad_batch and len(y) != nb:
             # Drop the padding here, before compose and before the write, so the tail costs
             # only the forward pass it was padded for.  Under `--norm self` the affine is
             # per-window and has to be sliced with it.
             y = y[:nb]
             sig = None if sig is None else sig[:nb]
+            er = None if er is None else er[:nb]
             if sn:
                 mean, std = mean[:nb], std[:nb]
 
@@ -2459,6 +2494,11 @@ def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
             # against 0.482 for ensemble spread, so it says which WINDOWS need a wider
             # interval. Costs one small copy -- 5.5 MB at N=336 against the field's 165 MB.
             sigma_out[i:i + batch] = (sig * std).float().cpu().numpy()
+        if err_out is not None:
+            # Physical units, (B, 20, H, W, 2): the heads' predicted |error| per element per frame.
+            # Stays NaN-free and untouched (zeros) when no member carries a head; callers check.
+            if er is not None:
+                err_out[i:i + batch] = (er * std).float().cpu().numpy()
         hb = (y * std + mean).float().cpu().numpy()
         if _HOSTW == "torch":
             # `torch.from_numpy` is a view, not a copy, and copy_ between two float32 tensors

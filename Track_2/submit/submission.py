@@ -130,6 +130,7 @@ _A = (_fno.STD.astype(np.float64) / _STD_TGT).astype(np.float32)
 _B = ((_fno.MEAN.astype(np.float64) - _MEAN_TGT) / _STD_TGT).astype(np.float32)
 
 ALPHA = 0.60
+_ERR = None       # err-head band settings from band.npz; None = no head term (see _load_band)
 # SPS interval centre, decoupled from the prediction -- see Track_1 submission.py CENTRE_ALPHA.
 # Read from band.npz (`centre_alpha`) in _load_band; no key => ALPHA, the old bounds exactly.
 CENTRE_ALPHA = ALPHA
@@ -189,6 +190,11 @@ class FrozenEnsemble:
             self.sref = torch.from_numpy(
                 np.ascontiguousarray(sigma_ref[..., :2].astype(np.float32))).to(device)
         self.std = torch.from_numpy(_fno.STD).to(device)
+        self.err = _ERR
+        self.eref = None
+        if _ERR is not None and _ERR["ref"] is not None:
+            self.eref = torch.from_numpy(np.ascontiguousarray(_ERR["ref"][..., :2])).to(device)
+        self.std_tgt = torch.from_numpy(_STD_TGT.astype(np.float32)).to(device)
         self.Ad = torch.from_numpy(_A).to(device)
         self.Bd = torch.from_numpy(_B).to(device)
 
@@ -214,18 +220,23 @@ class FrozenEnsemble:
     # -- the device-side step, written once and used by both paths ----------------------
     def _body(self):
         pv = self.gx[..., :2].permute(0, 1, 4, 2, 3).reshape(1, CH, H, W).contiguous()
-        y = sig = None
-        total = 0
+        y = sig = er = None
+        total = etot = 0
         for m in self.models:
             nm = getattr(m, "n_members", 1)      # a fused group stands in for nm members
             total += nm
             if _AMP is None:
-                raw, logstd = m(pv)
+                o_ = m(pv)
             else:
                 with torch.autocast("cuda", dtype=_AMP):
-                    raw, logstd = m(pv)
-                raw = raw.float()
-                logstd = None if logstd is None else logstd.float()
+                    o_ = m(pv)
+            raw, logstd = o_[0].float(), (None if o_[1] is None else o_[1].float())
+            if self.err is not None and len(o_) > 2 and o_[2] is not None:
+                # --err-head: per-frame |error| of the err-bearing members, averaged over them only.
+                ei = o_[2].float().clamp(-8.0, 2.0).exp().reshape(1, T_OUT, 2, H, W) \
+                    .permute(0, 1, 3, 4, 2) * nm
+                er = ei if er is None else er + ei
+                etot += nm
             yi = raw.reshape(1, T_OUT, 2, H, W).permute(0, 1, 3, 4, 2) * nm
             y = yi if y is None else y + yi
             if logstd is not None:
@@ -234,6 +245,8 @@ class FrozenEnsemble:
         if total > 1:
             y = y / total
             sig = None if sig is None else sig / total
+        if er is not None and etot > 1:
+            er = er / etot
         y0 = y                            # pre-compose mean: the interval centre's anchor
         if sig is not None and ALPHA > 0:
             m_ = y.mean(1, keepdim=True)
@@ -247,8 +260,14 @@ class FrozenEnsemble:
         if self.half0 is None:
             return
         half = self.half0
-        if self.band_p and self.sref is not None and sig is not None:
-            half = half * torch.clamp((sig * self.std) / self.sref, 0.3, 3.0) ** self.band_p
+        if self.err is not None and er is not None and self.err["mode"] == "direct":
+            # Head as the band itself: physical k*H, moved into the reported (target-normalized) space.
+            half = (self.err["k"] * (er * self.std)) / self.std_tgt
+        else:
+            if self.band_p and self.sref is not None and sig is not None:
+                half = half * torch.clamp((sig * self.std) / self.sref, 0.3, 3.0) ** self.band_p
+            if self.err is not None and er is not None and self.eref is not None and self.err["q"]:
+                half = half * torch.clamp((er * self.std) / self.eref, 0.3, 3.0) ** self.err["q"]
         if CENTRE_ALPHA == ALPHA or sig is None or HIST_BETA:
             self.gl[..., :2] = self.go[..., :2] - half
             self.gh[..., :2] = self.go[..., :2] + half
@@ -369,8 +388,19 @@ def _load_band(submission_dir: str):
     band = z["base"].astype(np.float32)
     ref = z["sigma_ref"].astype(np.float32)
     p = float(z["p"])
-    global CENTRE_ALPHA
+    global CENTRE_ALPHA, _ERR
     CENTRE_ALPHA = float(z["centre_alpha"]) if "centre_alpha" in z.files else ALPHA
+    # --err-head band (2026-09-23). Absent keys => None => the band is exactly the old one.
+    #   err_mode "drv":    half = base * clip(sigma/sigma_ref)^p * clip(H/err_ref, .3, 3)^err_q
+    #   err_mode "direct": half = err_k * H          (H = heads' predicted |error|, physical)
+    _ERR = None
+    if "err_mode" in z.files:
+        mode = str(z["err_mode"])
+        er = z["err_ref"].astype(np.float32) if "err_ref" in z.files else None
+        ok = mode in ("drv", "direct") and (mode == "direct" or (er is not None and np.all(er > 0)))
+        if ok:
+            _ERR = {"mode": mode, "q": float(z["err_q"]) if "err_q" in z.files else 0.0,
+                    "k": float(z["err_k"]) if "err_k" in z.files else 1.0, "ref": er}
     if not (np.all(np.isfinite(band)) and np.all(band >= 0.0)):
         return None, None, 0.0
     if band.shape[1:4] != (T_OUT, H, W) or band.shape[-1] < 2:
@@ -391,9 +421,9 @@ def _amp_verified(models, dev):
         worst = 0.0
         with torch.no_grad():
             for mdl in models:
-                r0, l0 = mdl(pv)
+                r0, l0 = mdl(pv)[:2]
                 with torch.autocast("cuda", dtype=_AMP):
-                    r1, l1 = mdl(pv)
+                    r1, l1 = mdl(pv)[:2]
                 r1 = r1.float()
                 l1 = None if l1 is None else l1.float()
                 if not bool(torch.isfinite(r1).all()) or (l1 is not None and not bool(torch.isfinite(l1).all())):

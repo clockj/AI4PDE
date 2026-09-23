@@ -159,6 +159,7 @@ GRAPH_ACTIVE = None
 GRAPH_PROBE_DIFF = None
 
 _BAND = os.path.join(_HERE, "band.npz")
+_ERR = None       # err-head band settings read from band.npz by _load(); None = no head term
 _BAND_LEGACY = os.path.join(_HERE, "band.npy")
 
 # fno.pth, then fno_2.pth, fno_3.pth ... as many as were packaged, averaged in raw field space
@@ -368,10 +369,10 @@ class _Graphed:
             nm = getattr(m, "n_members", 1)
             total += nm
             if _AMP_DT is None:
-                raw, logstd = m(prev)
+                raw, logstd = m(prev)[:2]
             else:
                 with torch.autocast("cuda", dtype=_AMP_DT):
-                    raw, logstd = m(prev)
+                    raw, logstd = m(prev)[:2]
                 raw = raw.float()
                 logstd = None if logstd is None else logstd.float()
             yi = raw.reshape(B, 20, 2, 32, 64).permute(0, 1, 3, 4, 2) * nm
@@ -486,8 +487,20 @@ def _load():
         z = np.load(_BAND)
         band, ref, p = (z["base"].astype(np.float32), z["sigma_ref"].astype(np.float32),
                         float(z["p"]))
-        global CENTRE_ALPHA
+        global CENTRE_ALPHA, _ERR
         CENTRE_ALPHA = float(z["centre_alpha"]) if "centre_alpha" in z.files else ALPHA
+        # --err-head band (2026-09-23), same keys and rules as Track_2/submit/submission.py.
+        #   err_mode "drv":    half = base * clip(sigma/sigma_ref)^p * clip(H/err_ref, .3, 3)^err_q
+        #   err_mode "direct": half = err_k * H          (H = heads' predicted |error|, physical)
+        # Absent keys => _ERR None => the band is bit-identical to before.
+        _ERR = None
+        if "err_mode" in z.files:
+            mode = str(z["err_mode"])
+            er = z["err_ref"].astype(np.float32) if "err_ref" in z.files else None
+            if mode in ("drv", "direct") and (mode == "direct" or (er is not None and np.all(er > 0))):
+                _ERR = {"mode": mode, "q": float(z["err_q"]) if "err_q" in z.files else 0.0,
+                        "k": float(z["err_k"]) if "err_k" in z.files else 1.0,
+                        "ref": None if er is None else er[..., :2]}
     elif os.path.exists(_BAND_LEGACY):
         band = np.load(_BAND_LEGACY).astype(np.float32)
     # The ingestion program rejects a non-finite or reversed interval by zeroing EVERY
@@ -507,7 +520,7 @@ def _load():
     # Captured AFTER the batch is chosen and AFTER AMP is decided, so the graph records the
     # chunk size and the precision that will run.
     global GRAPH_ACTIVE
-    graphed = _capture_graph(models, dev, batch, band)
+    graphed = None if _ERR is not None else _capture_graph(models, dev, batch, band)
     GRAPH_ACTIVE = (graphed is not None) if GRAPH else None
     return models, dev, band, ref, p, batch, graphed
 
@@ -534,6 +547,9 @@ def predict(input_array, metadata=None):
     # (N, 1, 32, 64, 2), 5.5 MB at N = 336 against the field's 165 MB -- cheap enough to ask
     # for inside a timed call, and only requested when the band actually uses it.
     sig = np.empty((len(x), 1, 32, 64, 2), dtype=np.float32) if p else None
+    # Heads' per-frame |error|, physical, only when band.npz asks for it. zeros, not empty: a
+    # package whose members carry no head leaves it untouched, and zeros fail loudly below.
+    err = np.zeros((len(x), 20, 32, 64, 2), dtype=np.float32) if _ERR is not None else None
     # Pre-compose mean, only when the interval is centred away from the prediction. The graph
     # path (off since R27) does not produce it, so the centre falls back to `pred` there.
     centre = (np.zeros_like(pred) if (CENTRE_ALPHA != ALPHA and band is not None
@@ -544,7 +560,7 @@ def predict(input_array, metadata=None):
         band = graphed.band_fp            # the fingerprint: base * (1 + GRAPH_FP)
     else:
         _fno.predict_fno(models, x, dev, alpha=ALPHA, batch=batch, out=pred, sigma_out=sig,
-                         amp=_AMP_DT, centre_out=centre)
+                         amp=_AMP_DT, centre_out=centre, err_out=err)
     # Before the band: the interval has to bracket what is actually returned.
     _apply_blend(pred, x)
 
@@ -553,7 +569,7 @@ def predict(input_array, metadata=None):
     # broadcasts against pred natively, so it is never materialized to full size. The live
     # path is the sigma-scaled branch below, which does materialize one full-size array.
     half = band if (band is not None and band.shape[1:] == pred.shape[1:]) else np.float32(0.0065)
-    if p and sig is not None and band is not None and half is band:
+    if ((p and sig is not None) or err is not None) and band is not None and half is band:
         # Per-window widths: base * (sigma / sigma_ref)**p, clipped to the range the fit was
         # solved over. The sigma scaling is +0.51 sps on the board-like proxy and +1.64 on the
         # full split, both in AND out of sample, where the round-6 attempt using ensemble
@@ -572,11 +588,21 @@ def predict(input_array, metadata=None):
         # `upper` doubles as the scratch for `half` -- it is overwritten in place by the last
         # op, so no fourth full-size array is ever live.
         r3 = np.zeros((len(x), 1, 32, 64, 3), dtype=np.float32)
-        np.power(np.clip(sig / ref[..., :2], 0.3, 3.0), np.float32(p), out=r3[..., :2])
+        if p and sig is not None:
+            np.power(np.clip(sig / ref[..., :2], 0.3, 3.0), np.float32(p), out=r3[..., :2])
+        else:
+            r3[..., :2] = 1.0
         lower = np.empty_like(pred)
         upper = np.empty_like(pred)
         t_pred, t_lo, t_hi = (torch.from_numpy(a) for a in (pred, lower, upper))
         torch.mul(torch.from_numpy(band), torch.from_numpy(r3), out=t_hi)   # half -> upper
+        if err is not None:
+            t_e = torch.from_numpy(err)
+            if _ERR["mode"] == "direct":
+                t_hi[..., :2].copy_(t_e * _ERR["k"])                         # half = k * H
+            elif _ERR["q"]:
+                t_hi[..., :2].mul_(torch.clamp(t_e / torch.from_numpy(_ERR["ref"]), 0.3, 3.0)
+                                   .pow_(_ERR["q"]))
         if centre is None:
             torch.sub(t_pred, t_hi, out=t_lo)
             torch.add(t_pred, t_hi, out=t_hi)

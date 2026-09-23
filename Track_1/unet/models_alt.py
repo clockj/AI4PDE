@@ -553,16 +553,24 @@ def build(arch: str, width: int, var_head: bool, extra_ch: int, modes_y: int = 1
           osc_global: bool = False,
           osc_zeromean: bool = False, tbasis: int = 0, mode_drop: float = 0.0,
           p_head: bool = False, sub_head: bool = False, cond_dim: int = 0,
-          drop_path: float | None = None):
+          drop_path: float | None = None, err_head: bool = False,
+          err_detach: bool = False):
     """Factory shared by train2.py and eval_wp.run so both build identical objects.
 
     `fgn_dim` defaults to 0, which builds no `film` module at all -- so a state_dict saved
     before FGN existed still loads with strict=True and every pre-round-12 checkpoint is
     unaffected.
+
+    `err_head` defaults to False and adds no module, so the same sentence holds for it: a
+    checkpoint written without --err-head is byte-identical in structure to what this factory
+    built yesterday. It is F-FNO-only and refuses loudly anywhere else, because the head is
+    built by `_heads` and only FFNO2d's forward knows how to return it.
     """
     from model import UNetTwoHead
     if cond_dim and arch != "fno":
         raise ValueError(f"cond_dim (the --oracle-cond diagnostic) is FNO-only, not {arch}")
+    if err_head and arch not in ("ffno", "ffno_nff"):
+        raise ValueError(f"err_head (--err-head) is F-FNO-only, not {arch}")
     if drop_path is not None and not (arch.startswith("swin_unet") or arch in ("simvp", "stvit")):
         raise ValueError(f"drop_path is not a knob of {arch}")
     if arch == "unet":
@@ -599,7 +607,8 @@ def build(arch: str, width: int, var_head: bool, extra_ch: int, modes_y: int = 1
         # by (width, n_layers, modes_y, modes_x) plus class constants, because _fno.load_any's
         # experimental branch rebuilds a checkpoint from exactly those blob fields.
         return build_wave1(arch, width, var_head, extra_ch, modes_y, modes_x, n_layers,
-                           dropout=dropout, drop_path=drop_path)
+                           dropout=dropout, drop_path=drop_path, err_head=err_head,
+                           err_detach=err_detach)
     raise ValueError(arch)
 
 
@@ -637,12 +646,26 @@ def build(arch: str, width: int, var_head: bool, extra_ch: int, modes_y: int = 1
 # ===========================================================================
 
 
-def _heads(width: int, var_head: bool):
+def _heads(width: int, var_head: bool, err_head: bool = False):
     """The two readouts FNO2d uses, so head capacity is not a confound between families.
 
     A 128-wide MLP on each. `--var-mlp` and `--lift-mlp` were each worth +0.08 on FNO2d
     precisely because its defaults were linear 1x1 probes; starting the new families at the
     linear default would re-run that experiment inside every one of them.
+
+    `err_head` (train2 --err-head, F-FNO only for now) adds a THIRD readout, `head_logerr`,
+    and is the only thing that changes the return arity: with it off this returns the same
+    two-tuple every family has always unpacked, so no other call site moves. The error head
+    emits CH channels, not C -- the same shape as the field output, so it carries the FRAME
+    axis. That is the whole point of it: `head_logstd` regresses onto std_t(y), the target
+    window's per-pixel TEMPORAL std, which is one envelope shared by all 20 forecast frames
+    and is never a function of what the model got wrong. `head_logerr` is trained on the
+    model's OWN |pred - y| per element per frame (train2.py, next to the l_var block).
+    Init mirrors head_logstd exactly -- zero weights, bias log(0.3) -- so the head starts as
+    a constant and its gradient cannot perturb the field head's first steps. It is built LAST
+    so the draws it consumes come after every other parameter's, leaving the trunk's and the
+    field head's initialization bit-identical to a run without it. FFNO2d.forward then feeds
+    it DETACHED trunk features unconditionally; see the note there.
     """
     head_field = nn.Sequential(nn.Conv2d(width, 128, 1), nn.GELU(), nn.Conv2d(128, CH, 1))
     head_logstd = None
@@ -650,7 +673,12 @@ def _heads(width: int, var_head: bool):
         head_logstd = nn.Sequential(nn.Conv2d(width, 128, 1), nn.GELU(), nn.Conv2d(128, C, 1))
         nn.init.zeros_(head_logstd[-1].weight)
         nn.init.constant_(head_logstd[-1].bias, float(np.log(0.3)))
-    return head_field, head_logstd
+    if not err_head:
+        return head_field, head_logstd
+    head_logerr = nn.Sequential(nn.Conv2d(width, 128, 1), nn.GELU(), nn.Conv2d(128, CH, 1))
+    nn.init.zeros_(head_logerr[-1].weight)
+    nn.init.constant_(head_logerr[-1].bias, float(np.log(0.3)))
+    return head_field, head_logstd, head_logerr
 
 
 class _GridIn(nn.Module):
@@ -1271,7 +1299,8 @@ class FFNO2d(_GridIn):
 
     def __init__(self, width: int = 64, modes_y: int = 16, modes_x: int = 32,
                  n_layers: int = 12, var_head: bool = True, extra_ch: int = 0,
-                 dropout: float = 0.0, ff: bool = True):
+                 dropout: float = 0.0, ff: bool = True, err_head: bool = False,
+                 err_detach: bool = False):
         super().__init__()
         self.lift = nn.Sequential(nn.Conv2d(CH + extra_ch + 2, 128, 1), nn.GELU(),
                                   nn.Conv2d(128, width, 1))
@@ -1280,7 +1309,14 @@ class FFNO2d(_GridIn):
                                                 self.FF_FACTOR, grid)
                                      for _ in range(n_layers)])
         self.norm_out = _LayerNorm2d(width)
-        self.head_field, self.head_logstd = _heads(width, var_head)
+        # `err_head` off -> the two-tuple every other family builds, and forward() keeps its
+        # historical (field, logstd) contract, so nothing downstream sees this flag exist.
+        self.head_logerr = None
+        self.err_detach = bool(err_detach)
+        if err_head:
+            self.head_field, self.head_logstd, self.head_logerr = _heads(width, var_head, True)
+        else:
+            self.head_field, self.head_logstd = _heads(width, var_head)
 
     def set_spectral_path(self, path: str = "fft"):
         """'fft' (the default and the as-trained path) or 'dense' (`_FFNOLayer._spectral_dense`:
@@ -1300,7 +1336,36 @@ class FFNO2d(_GridIn):
         logstd = None
         if self.head_logstd is not None:
             logstd = self.head_logstd(h.detach() if detach_var else h)
-        return self.head_field(h), logstd
+        if self.head_logerr is None:
+            return self.head_field(h), logstd
+        # --err-head only: (field, logstd, logerr), logerr (B, CH, H, W) -- the field's own
+        # shape, frame axis included. The arity changes ONLY when the head exists, so every
+        # `raw, logstd = model(...)` site in the project keeps working on every checkpoint
+        # trained before today.
+        #
+        # ALWAYS `.detach()`, not `if detach_var` -- the one place this head deliberately does
+        # NOT mirror head_logstd. It is the mechanism head_logstd's `detach_var` provides,
+        # applied unconditionally, and it is what makes the arm READABLE: with the trunk cut,
+        # this head adds parameters and a loss term but cannot change one gradient the field
+        # head receives, so an --err-head run and its control at the same --seed train the
+        # identical trunk and emit the identical field. Anything that then moves in the
+        # confidence band is the head, not an accuracy change. Routing it through detach_var
+        # instead would have priced the two together: enabling that flag also cuts the sigma
+        # head loose, which is a different recipe from the shipped twin (REPRODUCE.md 1.5) and
+        # would move the field on its own.
+        # CHANGED 2026-09-23 after grepping ROUNDS.md for `detach`, which I should have done
+        # before writing any of this. ROUNDS.md:377-380, measured on the closest analogue:
+        #   "The variance head must be allowed to reshape the shared trunk. Detached it reads
+        #    the mean-flow latent and reaches corr 0.679 -- worse than copying the input
+        #    window's std (0.756). Shared it reaches corr 0.907. Sharing the representation is
+        #    necessary; SHARING THE GRADIENT is what makes it work."
+        # An error head has it worse still: detached, it must predict where THIS MODEL is wrong
+        # using only features the field task had a reason to build, and the field task has no
+        # reason to encode its own failures. So the default is now the SHARED gradient, and the
+        # bitwise ARM/CONTROL fingerprint is given up deliberately -- it was bought with the one
+        # switch the repo had already measured as breaking the head.
+        logerr = self.head_logerr(h.detach() if self.err_detach else h)
+        return self.head_field(h), logstd, logerr
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1839,20 +1904,27 @@ class STViT(_GridIn):
 
 def build_wave1(arch: str, width: int, var_head: bool, extra_ch: int, modes_y: int,
                 modes_x: int, n_layers: int, dropout: float = 0.0,
-                drop_path: float | None = None):
+                drop_path: float | None = None, err_head: bool = False,
+          err_detach: bool = False):
     """Wave-1 / Phase-2 factory, reached from `build`. Only (width, n_layers, modes_y, modes_x)
     vary per checkpoint; `drop_path` (train2 --drop-path) is a training-time rate that leaves no
-    trace in the state_dict, so a loader passing None rebuilds every checkpoint unchanged."""
+    trace in the state_dict, so a loader passing None rebuilds every checkpoint unchanged.
+
+    `err_head` is NOT of that kind: it adds `head_logerr.*` tensors, so a loader that wants an
+    --err-head checkpoint must pass it (the blob records it under the top-level "err_head" key
+    train2.py writes next to "var_head")."""
     kw = {} if drop_path is None else {"drop_path": float(drop_path)}
     if kw and not (arch.startswith("swin_unet") or arch in ("simvp", "stvit")):
         raise ValueError(f"drop_path is not a knob of {arch}")
+    if err_head and arch not in ("ffno", "ffno_nff"):
+        raise ValueError(f"err_head is not a knob of {arch}")
     if arch == "cnext_unet":
         return CNeXtUNet(width, n_layers, var_head, extra_ch, dropout)
     if arch == "unet_mod":
         return UNetMod(width, n_layers, var_head, extra_ch, dropout)
     if arch in ("ffno", "ffno_nff"):
         return FFNO2d(width, modes_y, modes_x, n_layers, var_head, extra_ch, dropout,
-                      ff=(arch == "ffno"))
+                      ff=(arch == "ffno"), err_head=err_head, err_detach=err_detach)
     if arch == "swin_unet":
         return SwinUNet(width, n_layers, var_head, extra_ch, dropout, **kw)
     if arch == "swin_unet_b6":
