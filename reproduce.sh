@@ -27,6 +27,8 @@
 #                            is a SMOKE: the guard below then refuses to write into the repo.
 #   RPDE_REPRO_STAGE="a b"   run only these stage functions, in this order, and no build
 #   RPDE_REPRO_SEEDS="1 2"   narrow every seed loop (default 1 2 3 for twins, 1 2 3 4 for members)
+#   RPDE_REPRO_SMOKE=1       smoke only: let the QD recipe's H-ratio check (exit 2) fall back to the base k. Never set
+#                            it for a real retrain; changing RPDE_REPRO_EPOCHS alone does NOT bypass the check.
 #   RPDE_REPRO_FITBAND=1     FIT the band from the twins (RPDE_BAND_FILL=1) instead of reusing the
 #                            committed one -- what a NEW member set needs, and what the smoke
 #                            exercises. A refit is not bit-reproducible across twin sets.
@@ -319,10 +321,11 @@ qd_k_derive() {
       --twins $(for s in $SEEDS_QDTW; do echo "$OA/qd_twin_s$s.pth"; done) --val val_seen.npz \
       --k-base "${RPDE_QDK_KBASE:-1.1399}" ) > "$W/h_ratio.log" 2>&1
   local rc=$?; cat "$W/h_ratio.log" | tail -3
-  if [ "$rc" = "2" ] && [ "$EPOCHS" != "400" ]; then
-    # SMOKE only: 1-epoch heads are nowhere near calibrated, so |r-1| > 0.10 is expected. Carry on with the stated base k
-    # so the smoke still reaches the build and both gates. A full-fidelity run (EPOCHS=400) stops here for review.
-    echo "  SMOKE: h_ratio_check exit 2 ignored (epochs $EPOCHS); K_USE = base k"
+  if [ "$rc" = "2" ] && [ "${RPDE_REPRO_SMOKE:-0}" = "1" ]; then
+    # EXPLICIT smoke switch only (Devi 09-24): a retrain that merely changes the epoch count must NOT bypass this check.
+    # 1-epoch heads are nowhere near calibrated, so |r-1| > 0.10 is expected in a smoke; carry on with the base k so the
+    # smoke reaches the build and both gates. Without RPDE_REPRO_SMOKE=1 the run stops here for review.
+    echo "  ************ SMOKE: H-ratio check bypassed (RPDE_REPRO_SMOKE=1); K_USE = base k -- NOT a valid package ************"
     echo "K_USE=${RPDE_QDK_KBASE:-1.1399}" >> "$W/h_ratio.log"; rc=0
   fi
   [ "$rc" = "0" ] || { echo "FAILED/REVIEW: h_ratio_check exit $rc (|r-1| > 0.10 exits 2) -- see $W/h_ratio.log"; exit 1; }
