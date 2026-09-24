@@ -21,6 +21,12 @@ the same precision knobs. They differ in the four F-FNO members, the band, and (
 | **QD** | `ffno_all_w40l8_sim_qderr_s1..s4` (§10.1) | `half = k*H`, `err_mode=direct`, `err_k = 1.1399` (§10.3) | `track{1,2}_qd_direct.zip` |
 | **QD_STATIC** | `ffno_all_w40l8_sim_qderr_s1..s4` (§10.1) | static sigma band, fit on the QD twins `qd_twin_s1..s3` (§10.2) + the two ViT twins | `spare_0926/track{1,2}_qd_static.zip` (09-26 T2) |
 
+**T2's A on the board is `track2_r38_alpha080_ds.zip`, built with the 09-23 code.** The A command below builds
+`track2_r38_samecode.zip` instead: its submission.py differs (the ds file carries a dead `CAUSAL_ALPHA = None` block and no `_ERR`) and
+its band.npz md5 differs (two extra clip keys). On 336 val_unseen windows, streamed step by step, prediction / lower / upper are
+**bit-identical** (CPU, tol 0; Jonas 09-24, `work/t2_ident/` in his workspace). A reproduction targets samecode. Limit: the check ran on
+CPU, where fp16 AMP is inactive; the CUDA comparison needs Pitzer (same arithmetic path, expected to match, not measured).
+
 Build (run from the repo root, after the members, twins and `Track_1/val_{seen,unseen}.npz` exist; exactly the job that built the
 09-24 archives, `qd_build` run 20260924-062010):
 ```bash
