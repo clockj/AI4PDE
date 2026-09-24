@@ -79,7 +79,7 @@ else
   # (they trained on the fit split -- memorised errors). Unset = bit-identical to every band fitted before.
   $PY Track_1/submit_fno/fit_band.py --ckpt $A --err-ckpt $M --alpha "$ALPHA" --band-p 0.45 \
       ${RPDE_BAND_FILL:+--fill-unscored} ${RPDE_CENTRE_ALPHA:+--centre-alpha $RPDE_CENTRE_ALPHA} \
-      ${RPDE_ERR_MODE:+--err-mode $RPDE_ERR_MODE} ${RPDE_ERR_K:+--err-k $RPDE_ERR_K} ${RPDE_ERR_Q:+--err-q $RPDE_ERR_Q} \
+      ${RPDE_ERR_MODE:+--err-mode $RPDE_ERR_MODE} ${RPDE_ERR_K:+--err-k $RPDE_ERR_K} ${RPDE_ERR_Q:+--err-q $RPDE_ERR_Q} ${RPDE_ERR_FLOOR:+--err-floor $RPDE_ERR_FLOOR} \
       --out Track_2/submit/band8.npz || exit 1
 fi
 

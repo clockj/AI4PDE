@@ -175,6 +175,10 @@ def main() -> None:
                          "Fen's nested k* on the unseen AoA 15-20 cell) as a stated cross-cell constant.")
     ap.add_argument("--err-q", type=float, default=0.0,
                     help="exponent on clip(H/err_ref) for --err-mode drv")
+    ap.add_argument("--err-floor", type=float, default=0.0,
+                    help="--err-mode direct only (Corin 09-24): half = max(k*H, err_floor*base). The static band never goes "
+                         "below base*clip_lo^p; the direct QD band has no such floor. Pass e.g. 0.3**0.45 = 0.5817 to give it the "
+                         "static band's floor. 0 = no floor (the 09-24 QD package).")
     ap.add_argument("--out", default=os.path.join(HERE, "band.npz"))
     args = ap.parse_args()
 
@@ -321,6 +325,8 @@ def main() -> None:
                      err_ref=err_ref)
         if args.err_mode == "direct":
             extra.update(err_k=np.float32(err_k))
+            if args.err_floor:
+                extra.update(err_floor=np.float32(args.err_floor))
     np.savez(args.out, base=band, sigma_ref=sigma_ref, p=np.float32(args.band_p),
              clip_lo=np.float32(CLIP_LO), clip_hi=np.float32(CLIP_HI), **extra)
 
@@ -339,6 +345,10 @@ def main() -> None:
         H_u = err_of(m, du["x"])
         if args.err_mode == "direct":
             h_fit, h_all = (err_k * H_fit).astype(np.float32), (err_k * H_u).astype(np.float32)
+            if args.err_floor:
+                fl = (np.float32(args.err_floor) * uv_band).astype(np.float32)
+                print(f"--err-floor {args.err_floor}: floor binds on {float((h_all < fl).mean()):.3%} of val_unseen elements")
+                h_fit, h_all = np.maximum(h_fit, fl), np.maximum(h_all, fl)
         elif args.err_q:
             h_fit = (h_fit * ratio_e ** args.err_q).astype(np.float32)
             h_all = (h_all * np.clip(H_u / err_ref, CLIP_LO, CLIP_HI) ** args.err_q).astype(np.float32)

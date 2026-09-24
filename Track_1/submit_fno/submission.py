@@ -500,6 +500,7 @@ def _load():
             if mode in ("drv", "direct") and (mode == "direct" or (er is not None and np.all(er > 0))):
                 _ERR = {"mode": mode, "q": float(z["err_q"]) if "err_q" in z.files else 0.0,
                         "k": float(z["err_k"]) if "err_k" in z.files else 1.0,
+                        "floor": float(z["err_floor"]) if "err_floor" in z.files else 0.0,
                         "ref": None if er is None else er[..., :2]}
     elif os.path.exists(_BAND_LEGACY):
         band = np.load(_BAND_LEGACY).astype(np.float32)
@@ -614,6 +615,8 @@ def predict(input_array, metadata=None):
         if err is not None:
             t_e = torch.from_numpy(err)          # already the finished factor (see err_xform)
             if _ERR["mode"] == "direct":
+                if _ERR.get("floor"):   # half = max(k*H, err_floor*base): the static band's floor (absent key => no floor)
+                    t_e = torch.maximum(t_e, torch.from_numpy(band[..., :2]) * _ERR["floor"])
                 t_hi[..., :2].copy_(t_e)                                        # half = k * H
             else:
                 t_hi[..., :2].mul_(t_e)                          # half *= clip(H/ref)^q

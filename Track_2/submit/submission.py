@@ -201,6 +201,9 @@ class FrozenEnsemble:
         if _ERR is not None and _ERR["ref"] is not None:
             self.eref = torch.from_numpy(np.ascontiguousarray(_ERR["ref"][..., :2])).to(device)
         self.std_tgt = torch.from_numpy(_STD_TGT.astype(np.float32)).to(device)
+        # err_floor (absent => None => the 09-24 direct band exactly): half = max(k*H, err_floor*base).
+        self.floor = (self.half0 * float(_ERR["floor"])
+                      if _ERR is not None and _ERR.get("floor") and self.half0 is not None else None)
         self.Ad = torch.from_numpy(_A).to(device)
         self.Bd = torch.from_numpy(_B).to(device)
 
@@ -301,6 +304,8 @@ class FrozenEnsemble:
         if self.err is not None and er is not None and self.err["mode"] == "direct":
             # Head as the band itself: physical k*H, moved into the reported (target-normalized) space.
             half = (self.err["k"] * (er * self.std)) / self.std_tgt
+            if self.floor is not None:
+                half = torch.maximum(half, self.floor)
         else:
             if self.band_p and self.sref is not None and sig is not None:
                 half = half * torch.clamp((sig * self.std) / self.sref, 0.3, 3.0) ** self.band_p
@@ -438,7 +443,8 @@ def _load_band(submission_dir: str):
         ok = mode in ("drv", "direct") and (mode == "direct" or (er is not None and np.all(er > 0)))
         if ok:
             _ERR = {"mode": mode, "q": float(z["err_q"]) if "err_q" in z.files else 0.0,
-                    "k": float(z["err_k"]) if "err_k" in z.files else 1.0, "ref": er}
+                    "k": float(z["err_k"]) if "err_k" in z.files else 1.0, "ref": er,
+                    "floor": float(z["err_floor"]) if "err_floor" in z.files else 0.0}
     if not (np.all(np.isfinite(band)) and np.all(band >= 0.0)):
         return None, None, 0.0
     if band.shape[1:4] != (T_OUT, H, W) or band.shape[-1] < 2:
