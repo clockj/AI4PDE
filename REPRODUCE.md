@@ -565,3 +565,47 @@ The third is the expensive one and is the only failure here that costs more than
 confirmation of that mount boundary — Ilse first met it as "the checkpoint was deleted".) The interpreter
 fault, by contrast, is caught by the `train2.py --help` preflight at second 0 and now prints the `PY=` line
 above in its failure message (`b5d2219`).
+
+## 10. The QD error-head package (09-24) — members, and where `k` comes from
+
+Status when written (06:2xZ 09-24): the QD arm passed its pre-registered criteria a–e (Devi, `qd_FINAL_verdict.txt`); this section
+records what the organisers must retrain. The package itself is built by `build_round13.sh` with `RPDE_ERR_MODE=direct RPDE_ERR_K=<k>`.
+
+### 10.1 The four all-data F-FNO members (replace `ffno_all_w40l8_sim_s1..s4`)
+§1.4's command **flag for flag**, plus the QD head:
+```bash
+for s in 1 2 3 4; do
+  $PY train2.py <§1.4 flags, --seed $s --all-data ...> \
+      --err-head --err-loss qd --qd-temp 0.1 --ckpt-every 20 --resume \
+      --out ffno_all_w40l8_sim_qderr_s$s.pth
+done
+```
+`--err-loss qd` is Devi's qd_r loss verbatim (`train2.py`, the `qd` branch): h = exp(logerr) is the half-width,
+l = −mean(sigmoid((h−|e|)/(0.1·h.detach())) · exp(−2·h·mul/σ_g)). `--ckpt-every/--resume` change nothing about the weights
+(resume file only). The blob records `err_head=True`, `err_loss='qd'`, `qd_temp=0.1`. ~288 min each on a V100.
+
+### 10.2 The QD twins (6 seeds) — needed only to re-derive `k`
+§1.5's twin command (`--sim-exclude-held`, `--all-data` dropped) plus the same three flags, seeds 1–6
+(`Devi/qd_r_s{1..6}`, arm half). The control half of each pair is §1.5 unchanged at the same seed.
+
+### 10.3 `k` — the one number the package cannot learn from its own members
+The shipped band is `half = k · H` (`band.npz`: `err_mode='direct'`, `err_k`). `k` is **not** fitted on the all-data members —
+they trained on every trajectory, so their H is in-sample (a band fitted on memorised errors scored 36.94 sps in round 6).
+It is chosen on the held-out twins, nested:
+```bash
+# RPDE_QDK_EXPORT = the twin export dir (export_{seen,unseen}.npz, produced by Track_1/qd_k/export.py from the r38 twins)
+# RPDE_QDK_BAND   = the r38 band (md5 02f473e9, Track_1/bands/..., the control)
+for s in 1 2 3 4 5 6; do
+  python Track_1/qd_k/head_direct.py qd_twin_s$s.pth Track_1/unet --family direct --K 20 --direct-kmax 20 \
+      --csv qd_direct_band.csv                      # k chosen per fold on the kept trajectories (log grid, step x1.089)
+done
+```
+Result 09-24: **k\* = 1.1399 in all 18 seed×fold cells and in all 48 leave-one-trajectory-out runs** (8 unseen VAL_TRAJ).
+Shipped k = 1.1399, unless the like-for-like H check (median H of all-data vs twin heads on val_SEEN, where both trained) falls
+below 0.95, in which case one grid step wider (×1.089). The check and the chosen k are printed by the build job and the package README.
+`Track_1/qd_k/` vendors the scripts verbatim (Fen's `head_direct.py`, Bram's `centre_band.py`, Devi's `sweep_guards.py`, the twin
+`export.py` / `load_export.py`); only hard-coded workspace paths were replaced by `RPDE_QDK_*` env vars / the script's own directory.
+
+### 10.4 Reproducibility caveat
+`k` is calibrated against the dev-board stretch (1.39, `calib_band13`). Whether the finals method should widen it for the harder
+private set (new AoA/Re) is a separate decision, as for the r37 inflate band.
