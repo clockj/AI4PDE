@@ -74,8 +74,12 @@ else
   # `optimal_band` returns min|E| ~ 0 and the containment indicator can then never fire on a
   # differently-blanked recording (scout, lit_20260917.md 4.9). Unset = the default path, which
   # is bit-identical to every band fitted before it.
+  # RPDE_ERR_MODE=drv|direct (+ RPDE_ERR_K, RPDE_ERR_Q), 2026-09-24: members trained with --err-head drive the band.
+  # For direct mode pass RPDE_ERR_K: k must come from held-out TWINS, never be searched on the all-data members in $A
+  # (they trained on the fit split -- memorised errors). Unset = bit-identical to every band fitted before.
   $PY Track_1/submit_fno/fit_band.py --ckpt $A --err-ckpt $M --alpha "$ALPHA" --band-p 0.45 \
       ${RPDE_BAND_FILL:+--fill-unscored} ${RPDE_CENTRE_ALPHA:+--centre-alpha $RPDE_CENTRE_ALPHA} \
+      ${RPDE_ERR_MODE:+--err-mode $RPDE_ERR_MODE} ${RPDE_ERR_K:+--err-k $RPDE_ERR_K} ${RPDE_ERR_Q:+--err-q $RPDE_ERR_Q} \
       --out Track_2/submit/band8.npz || exit 1
 fi
 

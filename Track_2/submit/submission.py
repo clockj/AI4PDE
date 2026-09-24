@@ -131,6 +131,12 @@ _B = ((_fno.MEAN.astype(np.float64) - _MEAN_TGT) / _STD_TGT).astype(np.float32)
 
 ALPHA = 0.60
 _ERR = None       # err-head band settings from band.npz; None = no head term (see _load_band)
+
+# PAR_STREAMS (09-23): run the fused groups on separate CUDA streams inside the step, so a
+# batch-1 step that leaves the GPU partly idle can overlap them. Arithmetic is unchanged
+# (verified package-against-package with verify/pkg_identity.py, --tol 0, run 20260923-170904:
+# T2 -1.03 ms/step on a V100); False restores the serial loop.
+PAR_STREAMS = True
 # SPS interval centre, decoupled from the prediction -- see Track_1 submission.py CENTRE_ALPHA.
 # Read from band.npz (`centre_alpha`) in _load_band; no key => ALPHA, the old bounds exactly.
 CENTRE_ALPHA = ALPHA
@@ -213,34 +219,66 @@ class FrozenEnsemble:
         self.hn = 0.0
         self.ghm = torch.zeros_like(self.hsum)
         self.ggate = torch.zeros((), dtype=torch.float32, device=device)
+        self._streams = ([torch.cuda.Stream() for _ in models]
+                         if cuda and PAR_STREAMS and len(models) > 1 else None)
         self.graph = None
         if cuda and use_graph:
             self._capture()
+
+    # -- one fused group's forward, member-weighted: the serial loop's per-group ops ---------
+    @staticmethod
+    def _group(m, pv, err):
+        nm = getattr(m, "n_members", 1)
+        if _AMP is None:
+            o_ = m(pv)
+        else:
+            with torch.autocast("cuda", dtype=_AMP):
+                o_ = m(pv)
+        raw, logstd = o_[0].float(), (None if o_[1] is None else o_[1].float())
+        ei = None
+        if err is not None and len(o_) > 2 and o_[2] is not None:
+            ei = o_[2].float().clamp(-8.0, 2.0).exp().reshape(1, T_OUT, 2, H, W) \
+                .permute(0, 1, 3, 4, 2) * nm
+        yi = raw.reshape(1, T_OUT, 2, H, W).permute(0, 1, 3, 4, 2) * nm
+        si = None
+        if logstd is not None:
+            si = logstd.clamp(-8.0, 2.0).exp().permute(0, 2, 3, 1).unsqueeze(1) * nm
+        return yi, si, ei
 
     # -- the device-side step, written once and used by both paths ----------------------
     def _body(self):
         pv = self.gx[..., :2].permute(0, 1, 4, 2, 3).reshape(1, CH, H, W).contiguous()
         y = sig = er = None
         total = etot = 0
-        for m in self.models:
+        # PAR_STREAMS: each fused group runs on its own side stream (forked from, and joined
+        # back into, the current stream), so the groups' kernels can overlap. Every group still
+        # executes the same kernels on the same inputs, and the member sums below are done on the
+        # current stream in the original order, so the arrays are the serial path's bit for bit.
+        outs = []
+        if self._streams is not None:
+            cur = torch.cuda.current_stream()
+            for m, st in zip(self.models, self._streams):
+                st.wait_stream(cur)
+                with torch.cuda.stream(st):
+                    outs.append(self._group(m, pv, self.err))
+            for st in self._streams:
+                cur.wait_stream(st)
+            if not torch.cuda.is_current_stream_capturing():
+                for o in outs:                   # eager: side streams' blocks are read on `cur`
+                    for t in o:
+                        if t is not None:
+                            t.record_stream(cur)
+        else:
+            outs = [self._group(m, pv, self.err) for m in self.models]
+        for m, (yi, si, ei) in zip(self.models, outs):
             nm = getattr(m, "n_members", 1)      # a fused group stands in for nm members
             total += nm
-            if _AMP is None:
-                o_ = m(pv)
-            else:
-                with torch.autocast("cuda", dtype=_AMP):
-                    o_ = m(pv)
-            raw, logstd = o_[0].float(), (None if o_[1] is None else o_[1].float())
-            if self.err is not None and len(o_) > 2 and o_[2] is not None:
+            if ei is not None:
                 # --err-head: per-frame |error| of the err-bearing members, averaged over them only.
-                ei = o_[2].float().clamp(-8.0, 2.0).exp().reshape(1, T_OUT, 2, H, W) \
-                    .permute(0, 1, 3, 4, 2) * nm
                 er = ei if er is None else er + ei
                 etot += nm
-            yi = raw.reshape(1, T_OUT, 2, H, W).permute(0, 1, 3, 4, 2) * nm
             y = yi if y is None else y + yi
-            if logstd is not None:
-                si = logstd.clamp(-8.0, 2.0).exp().permute(0, 2, 3, 1).unsqueeze(1) * nm
+            if si is not None:
                 sig = si if sig is None else sig + si
         if total > 1:
             y = y / total

@@ -168,6 +168,11 @@ def main() -> None:
                          "the sigma term, and base is solved on |E| deflated by that factor too. "
                          "'direct': half = k*H with ONE global k chosen on the fit split (base unused "
                          "at inference). err_ref / H come from --ckpt (the shipped heads), like sigma_ref.")
+    ap.add_argument("--err-k", type=float, default=None,
+                    help="--err-mode direct only: use this k instead of searching for it. Needed when the --ckpt heads "
+                         "are ALL-DATA members, which trained on the fit split, so their H there is in-sample and a k "
+                         "searched on it does not transfer (Devi 09-24). Pass the k measured on held-out twins (e.g. "
+                         "Fen's nested k* on the unseen AoA 15-20 cell) as a stated cross-cell constant.")
     ap.add_argument("--err-q", type=float, default=0.0,
                     help="exponent on clip(H/err_ref) for --err-mode drv")
     ap.add_argument("--out", default=os.path.join(HERE, "band.npz"))
@@ -234,10 +239,16 @@ def main() -> None:
         # One global k: half = k*H. Scored on the same inflated |E| the base fit uses.
         ks = np.exp(np.linspace(np.log(0.2), np.log(8.0), 61)).astype(np.float32)
         vals = [sps_score(Adef, as_, scored_s, ns, (k * H_fit).astype(np.float32)) for k in ks]
-        err_k = float(ks[int(np.argmax(vals))])
-        edge = err_k in (float(ks[0]), float(ks[-1]))
-        print(f"--err-mode direct: k* = {err_k:.4f}  fit sps {max(vals):.3f}"
+        k_search = float(ks[int(np.argmax(vals))])
+        edge = k_search in (float(ks[0]), float(ks[-1]))
+        print(f"--err-mode direct: searched k* on the fit split = {k_search:.4f}  fit sps {max(vals):.3f}"
               + ("   ** k* AT GRID EDGE -- widen the grid **" if edge else ""))
+        if args.err_k is not None:
+            err_k = float(args.err_k)
+            print(f"--err-k {err_k:.4f} GIVEN (cross-cell constant) -- overrides the searched {k_search:.4f}; "
+                  f"fit sps at the given k {sps_score(Adef, as_, scored_s, ns, (err_k * H_fit).astype(np.float32)):.3f}")
+        else:
+            err_k = k_search
     if args.band_p:
         Adef = (Adef / ratio_f[..., :2] ** args.band_p).astype(np.float32)
     if args.err_mode == "drv" and args.err_q:
