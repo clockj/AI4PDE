@@ -42,7 +42,7 @@ Track 2 latency numbers assume `PAR_STREAMS = True` in `Track_2/submit/submissio
 CUDA streams, predictions bit-identical to the serial loop). Do not switch it off when reproducing the time score (Jonas 09-24).
 Each must print `SUBMITTABLE` twice (T1 `validate_strict.py`, T2 `validate_t2.py`). Before building on a machine other than Pitzer,
 read §9.1 (items 4 and 5: `RPDE_KIT`, `RPDE_SIMCACHE`). Known open gaps are listed in the 09-24 dry-run audit
-(`reproduce.sh` has no QD stages yet; the k derivation of §10.3 still reads two files from outside the repo).
+(`reproduce.sh` has no QD stages yet; the §10.3 k derivation is repo-only since 09-24, Bram).
 
 ---
 
