@@ -1,0 +1,25 @@
+93c93,102
+< SEED=1                             # LITERAL. s2 and s3 are copies with this line changed.
+---
+> SEED=1                             # LITERAL. qdre_s2 is a copy with this line changed.
+> # ---- Fen / qdre (Ilse 08:02Z, #Track-1-W-2): the ONLY other change vs Devi's qd_r_s1 ----------
+> # Held-out set = Track_1/re_split.py's three Re groups (val_relo, val_rehi, val_rein; 26 traj),
+> # taken by CALLING re_split.excluded() -- never a hand-written list -- so training sees 56 traj.
+> # --sim-exclude-held stays (Devi's recipe): sim at the held-out conditions is dropped too.
+> EXCL_STR=$("$PY" -c "import sys; sys.path.insert(0, '$CODE/Track_1'); import re_split; print(' '.join(re_split.excluded('$REAL')))") \
+>     || fail "re_split.excluded() failed"
+> read -r -a EXCL <<< "$EXCL_STR"
+> [ "${#EXCL[@]}" -eq 26 ] || fail "re_split.excluded() returned ${#EXCL[@]} trajectories, expected 26"
+> echo "held out (${#EXCL[@]}): ${EXCL[*]}"
+100c109
+<         --sim-exclude-held)
+---
+>         --sim-exclude-held --exclude "${EXCL[@]}")
+107c116
+< ARM=$CK/qd_arm_s${SEED}.pth
+---
+> ARM=$CK/qdre_arm_s${SEED}.pth
+157c166
+< for half in "qd_arm_s${SEED}.pth:$ARM" "pinball_control_s${SEED}.pth:$CTL"; do
+---
+> for half in "qdre_arm_s${SEED}.pth:$ARM" "pinball_control_s${SEED}.pth:$CTL"; do

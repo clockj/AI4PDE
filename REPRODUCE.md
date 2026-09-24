@@ -615,6 +615,19 @@ below 0.95, in which case one grid step wider (×1.089). The check and the chose
 `Track_1/qd_k/` vendors the scripts verbatim (Fen's `head_direct.py`, Bram's `centre_band.py`, Devi's `sweep_guards.py`, the twin
 `export.py` / `load_export.py`); only hard-coded workspace paths were replaced by `RPDE_QDK_*` env vars / the script's own directory.
 
-### 10.4 Reproducibility caveat
-`k` is calibrated against the dev-board stretch (1.39, `calib_band13`). Whether the finals method should widen it for the harder
-private set (new AoA/Re) is a separate decision, as for the r37 inflate band.
+### 10.4 Reproducibility caveat — Reynolds extrapolation, and the finals `k`
+`k` is calibrated against the dev-board stretch (1.39, `calib_band13`). Whether it holds out of range was CHECKED on 09-24:
+two QD twins trained without `re_split.excluded()`'s 26 trajectories (`Track_1/qd_k/run_qdre_train.sh`, `SEED=1,2`), read with
+`run_qdre_readout.sh` -> `re_gate.py`. At the shipped k = 1.1399 QD beats a recipe band on all 26 held-out trajectories (rehi one-sided
+lower bound +0.185 final; +0.032 even against a control given its in-sample best k). Quote the DIRECTION, not the size: the official
+control is ~2.5 grid steps too narrow on rehi.
+
+**Finals `k` — rule fixed before the readout (#Leaders 09-24 12:19Z), testing kept apart from setting:**
+1. *Test* (`Track_1/qd_k/finals_k.py qdre_tables_1.npz qdre_tables_2.npz`): pick k on rehi Re 25425, evaluate against 1.1399 on
+   Re 26700, and the reverse; both widenings must be > 0. Their mean is the rehi gain.
+2. *Set*: only if (1) passes, pick k once on the whole rehi group; the rein and relo costs at that k must each be smaller than half
+   the rehi gain. Then that k is the finals `err_k`; otherwise the finals use the board k.
+3. Weighted composites (6:1:1, 5:2:1 rehi:rein:relo) are printed for information only; they never decide.
+Result 09-24: (1) passes narrowly (+0.016 and +0.0003), (2) fails on relo (-0.073 vs bar -0.004) => **finals `err_k` = 1.1399**,
+the same as the board. Not measured: AoA values outside the training set (every AoA of the 8 empty real-grid cells is in training;
+new (AoA, Re) combinations are covered by the 8 unseen VAL_TRAJ, 48/48 positive).
