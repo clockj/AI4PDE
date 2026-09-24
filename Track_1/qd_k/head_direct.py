@@ -24,8 +24,11 @@ _ap.add_argument("--direct-kmax", type=float, default=2.5,
                  help="extend the k grid UPWARD for the direct family only (superset of KGRID, same log step, 1.0 kept)")
 _ap.add_argument("--alpha", type=float, default=0.80,
                  help="compose ALPHA. Default 0.80 = what SHIPS (r38). 0.60 only to reproduce the voided old reads.")
-_ap.add_argument("--band", default=os.environ.get("RPDE_QDK_BAND", "/home/william/.slock/agents/6de5ac4e-64c4-4d55-b986-1ca3df157fbb/work/r38band/band.npz"),
-                 help="band file. Default = r38 (md5 02f473e9, == Emre's r38_alpha080_fill). Old: ilse/.../f4v1a060_band_FROM_SHIPPED_ZIP.npz")
+_ap.add_argument("--band", default=os.environ.get("RPDE_QDK_BAND"),
+                 help="control band file (--base band). Build it in-repo, the r38 recipe on the same members: "
+                      "fit_band.py --ckpt <6 all-data> --err-ckpt <5 twins> --alpha 0.80 --band-p 0.45 --fill-unscored "
+                      "--centre-alpha 0 (REPRODUCE.md 10.3). The 09-24 run used r38's band, md5 02f473e9. "
+                      "Not needed with --base recipe. k* does not depend on the control: it only sets the reported delta.")
 _ap.add_argument("--pred-k", type=float, default=None,
                  help="predicted k* for this head (final set: MSE 4.0 | KL 2.1 | pinball 1.5 | QD 1.25)")
 _ap.add_argument("--pred-k-calibration", action="store_true",
@@ -52,7 +55,10 @@ from sweep_guards import check_grid, check_not_edge  # noqa: E402
 import models_alt  # noqa: E402
 from model import from_ch  # noqa: E402
 
-R = os.environ.get("RPDE_QDK_EXPORT", "/home/william/pitzer-requests/emre/twin_export/results/").rstrip("/") + "/"
+R = os.environ.get("RPDE_QDK_EXPORT")
+if not R:
+    sys.exit("set RPDE_QDK_EXPORT to the twin export dir (export_{seen,unseen}.npz from Track_1/qd_k/export.py; REPRODUCE.md 10.3)")
+R = R.rstrip("/") + "/"
 ALPHA, STRETCH, P_SHIP = _args.alpha, 1.39, 0.45   # Corin 23:54Z: ALPHA/band were hard-coded to the voided config
 QGRID = np.array([0.0, 0.05, 0.10, 0.20, 0.30, 0.45, 0.60])   # 0.0 == the shipped band exactly
 KGRID = np.unique(np.concatenate([
@@ -89,8 +95,14 @@ base = fit_base(F0, Ft, np.clip(S["sig_full"][kS] / sref, 0.3, 3.0), af, STRETCH
 # containment is the MOST base-shape-sensitive quantity. This rerun swaps in the shipped base and the
 # shipped sigma_ref (u, v channels only; p is never scored) and changes nothing else.
 import hashlib
-_Z = np.load(_args.band)
-print(f"BAND {_args.band}\n  md5 {hashlib.md5(open(_args.band, 'rb').read()).hexdigest()[:8]}   ALPHA {ALPHA}   STRETCH {STRETCH}   p {P_SHIP}")
+if _args.base == "band":
+    if not _args.band:
+        sys.exit("--base band needs --band (or RPDE_QDK_BAND): the control band file; or use --base recipe")
+    _Z = np.load(_args.band)
+    print(f"BAND {_args.band}\n  md5 {hashlib.md5(open(_args.band, 'rb').read()).hexdigest()[:8]}   ALPHA {ALPHA}   STRETCH {STRETCH}   p {P_SHIP}")
+else:
+    _Z = {"p": np.float32(P_SHIP), "centre_alpha": np.float32(0.0)}   # the recipe control's own conventions
+    print(f"BAND (none: --base recipe, control refit from the twin export)   ALPHA {ALPHA}   STRETCH {STRETCH}   p {P_SHIP}")
 print(f"recipe base median {float(np.median(base)):.6f}  recipe sigma_ref median {float(np.median(sref)):.6f}")
 if _args.base == "band":
     base = _Z["base"][0][..., :2].astype(np.float32)
