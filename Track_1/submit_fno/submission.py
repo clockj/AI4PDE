@@ -512,6 +512,18 @@ def _load():
         band = None
     if band is not None and p and not (ref is not None and np.all(ref > 0.0)):
         p = 0.0
+    # The err-head term is live only if (a) some member actually carries a head -- otherwise
+    # predict_fno would leave the np.empty buffer unwritten -- and (b) it changes the band.
+    # (_ERR is already declared global above, before its first use in this function.)
+    if _ERR is not None:
+        has_head = any(getattr(m, "head_logerr", None) is not None or getattr(m, "he", None) is not None
+                       for m in models)
+        if band is None or not has_head or (_ERR["mode"] == "drv" and not _ERR["q"]):
+            _ERR = None
+        else:
+            ref_dev = (None if _ERR["ref"] is None
+                       else torch.from_numpy(np.ascontiguousarray(_ERR["ref"])).to(dev))
+            _ERR["xform"] = (_ERR["mode"], float(_ERR["q"]), float(_ERR["k"]), ref_dev)
     # Decided BEFORE the batch is timed, so the batch that wins is the one the mode will run.
     global _AMP_DT, AMP_ACTIVE
     _AMP_DT = _amp_verified(models, dev)
@@ -549,7 +561,9 @@ def predict(input_array, metadata=None):
     sig = np.empty((len(x), 1, 32, 64, 2), dtype=np.float32) if p else None
     # Heads' per-frame |error|, physical, only when band.npz asks for it. zeros, not empty: a
     # package whose members carry no head leaves it untouched, and zeros fail loudly below.
-    err = np.zeros((len(x), 20, 32, 64, 2), dtype=np.float32) if _ERR is not None else None
+    # np.empty: _load() guarantees at least one err-bearing member when _ERR is set, so every row
+    # is written by predict_fno (as the finished band FACTOR, computed on the GPU via err_xform).
+    err = np.empty((len(x), 20, 32, 64, 2), dtype=np.float32) if _ERR is not None else None
     # Pre-compose mean, only when the interval is centred away from the prediction. The graph
     # path (off since R27) does not produce it, so the centre falls back to `pred` there.
     centre = (np.zeros_like(pred) if (CENTRE_ALPHA != ALPHA and band is not None
@@ -560,7 +574,8 @@ def predict(input_array, metadata=None):
         band = graphed.band_fp            # the fingerprint: base * (1 + GRAPH_FP)
     else:
         _fno.predict_fno(models, x, dev, alpha=ALPHA, batch=batch, out=pred, sigma_out=sig,
-                         amp=_AMP_DT, centre_out=centre, err_out=err)
+                         amp=_AMP_DT, centre_out=centre, err_out=err,
+                         err_xform=None if _ERR is None else _ERR["xform"])
     # Before the band: the interval has to bracket what is actually returned.
     _apply_blend(pred, x)
 
@@ -597,12 +612,11 @@ def predict(input_array, metadata=None):
         t_pred, t_lo, t_hi = (torch.from_numpy(a) for a in (pred, lower, upper))
         torch.mul(torch.from_numpy(band), torch.from_numpy(r3), out=t_hi)   # half -> upper
         if err is not None:
-            t_e = torch.from_numpy(err)
+            t_e = torch.from_numpy(err)          # already the finished factor (see err_xform)
             if _ERR["mode"] == "direct":
-                t_hi[..., :2].copy_(t_e * _ERR["k"])                         # half = k * H
-            elif _ERR["q"]:
-                t_hi[..., :2].mul_(torch.clamp(t_e / torch.from_numpy(_ERR["ref"]), 0.3, 3.0)
-                                   .pow_(_ERR["q"]))
+                t_hi[..., :2].copy_(t_e)                                        # half = k * H
+            else:
+                t_hi[..., :2].mul_(t_e)                          # half *= clip(H/ref)^q
         if centre is None:
             torch.sub(t_pred, t_hi, out=t_lo)
             torch.add(t_pred, t_hi, out=t_hi)

@@ -2372,7 +2372,7 @@ def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
                 sigma_out: np.ndarray | None = None,
                 pad_batch: bool = _PAD_BATCH, amp=_AMP,
                 centre_out: np.ndarray | None = None,
-                err_out: np.ndarray | None = None) -> np.ndarray:
+                err_out: np.ndarray | None = None, err_xform=None) -> np.ndarray:
     """(N,20,32,64,>=2) raw physical -> (N,20,32,64,2) raw physical.
 
     predict() is TIMED, and at ~0.1 ms/window of actual compute this function is dominated by
@@ -2496,9 +2496,21 @@ def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
             sigma_out[i:i + batch] = (sig * std).float().cpu().numpy()
         if err_out is not None:
             # Physical units, (B, 20, H, W, 2): the heads' predicted |error| per element per frame.
-            # Stays NaN-free and untouched (zeros) when no member carries a head; callers check.
+            # Stays untouched when no member carries a head; callers check.
+            # `err_xform` (Track 1's timed path) turns H into the FINISHED band factor here, on the
+            # GPU -- ("drv", q, _, ref_dev): clip(H/ref, .3, 3)^q; ("direct", _, k, _): k*H -- so the
+            # host does one in-place multiply instead of divide/clamp/pow over 22M elements
+            # (measured 09-24, ds3: the host-side version cost +0.65 ms/window on T1).
             if er is not None:
-                err_out[i:i + batch] = (er * std).float().cpu().numpy()
+                h_ = er * std
+                if err_xform is not None:
+                    mode_, q_, k_, ref_ = err_xform
+                    h_ = (h_ * k_) if mode_ == "direct" else torch.clamp(h_ / ref_, 0.3, 3.0).pow_(q_)
+                hh = h_.float().cpu().numpy()
+                if _HOSTW == "torch":
+                    torch.from_numpy(err_out)[i:i + batch].copy_(torch.from_numpy(hh))
+                else:
+                    err_out[i:i + batch] = hh
         hb = (y * std + mean).float().cpu().numpy()
         if _HOSTW == "torch":
             # `torch.from_numpy` is a view, not a copy, and copy_ between two float32 tensors
