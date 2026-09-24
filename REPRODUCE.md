@@ -7,16 +7,19 @@ parameter regimes; the resulting private-test scores decide the top 3."* A third
 the released data to the uploaded archive with nothing of ours but this repository. §6 lists every place that
 is not yet true.
 
-## FINAL_RECIPE = <TO BE DECIDED after the 09-25 / 09-26 boards>   (the ONE line to change; Ilse 09-24)
+## FINAL_RECIPE_T1 = <TO BE DECIDED after the 09-25 / 09-26 boards>   (A | QD | QD_STATIC)
+## FINAL_RECIPE_T2 = <TO BE DECIDED after the 09-25 / 09-26 boards>   (A | QD | QD_STATIC)
+(The only two lines to change. Per track because the tracks may end on different candidates -- Jonas 09-24; structure: Ilse.)
 
-Two candidates, each written in full; everything below this block is history (older packages of record) and the stages both
+Three candidates, each written in full; everything below this block is history (older packages of record) and the stages both
 candidates share (§1–§3). Both use ALPHA 0.80, centre-0 band, the same two ViT members, the same twins for the band fit, and
-the same precision knobs. They differ in the four F-FNO members and the band.
+the same precision knobs. They differ in the four F-FNO members, the band, and (QD_STATIC) the twins the static band is fit on.
 
 | candidate | F-FNO members (`$A`) | band | shipped 09-24/25 as |
 |---|---|---|---|
 | **A** (r38) | `ffno_all_w40l8_sim_s1..s4` (§1.4) | static sigma band, refit at ALPHA 0.80 (§3) | `track1_r38_samecode.zip` / `track2_r38_alpha080_ds.zip` |
 | **QD** | `ffno_all_w40l8_sim_qderr_s1..s4` (§10.1) | `half = k*H`, `err_mode=direct`, `err_k = 1.1399` (§10.3) | `track{1,2}_qd_direct.zip` |
+| **QD_STATIC** | `ffno_all_w40l8_sim_qderr_s1..s4` (§10.1) | static sigma band, fit on the QD twins `qd_twin_s1..s3` (§10.2) + the two ViT twins | `spare_0926/track{1,2}_qd_static.zip` (09-26 T2) |
 
 Build (run from the repo root, after the members, twins and `Track_1/val_{seen,unseen}.npz` exist; exactly the job that built the
 09-24 archives, `qd_build` run 20260924-062010):
@@ -31,8 +34,13 @@ KNOBS='RPDE_FORCE=1 RPDE_BAND_FILL=1 RPDE_CENTRE_ALPHA=0 RPDE_INT8=1 RPDE_LINEAR
 env $KNOBS RPDE_A="$A_R38" RPDE_M="$M" RPDE_TAG=r38 bash Track_1/submit_fno/build_round13.sh 0.80
 # candidate QD (the band MUST be refit -- RPDE_BAND unset; build_round13.sh refuses RPDE_BAND together with RPDE_ERR_*):
 env $KNOBS RPDE_A="$A_QD" RPDE_M="$M" RPDE_ERR_MODE=direct RPDE_ERR_K=1.1399 RPDE_TAG=qd_direct bash Track_1/submit_fno/build_round13.sh 0.80
+# candidate QD_STATIC (qd_v2 run 20260924-155527): QD members, static band refit on the QD twins
+M_QD="$U/qd_twin_s1.pth $U/qd_twin_s2.pth $U/qd_twin_s3.pth $U/arch_vit_d384.pth $U/arch_vit_cmb3sim.pth"
+env $KNOBS RPDE_A="$A_QD" RPDE_M="$M_QD" RPDE_TAG=qd_static bash Track_1/submit_fno/build_round13.sh 0.80
 ```
-Both must print `SUBMITTABLE` twice (T1 `validate_strict.py`, T2 `validate_t2.py`). Before building on a machine other than Pitzer,
+Track 2 latency numbers assume `PAR_STREAMS = True` in `Track_2/submit/submission.py` (the default; the fused groups run on separate
+CUDA streams, predictions bit-identical to the serial loop). Do not switch it off when reproducing the time score (Jonas 09-24).
+Each must print `SUBMITTABLE` twice (T1 `validate_strict.py`, T2 `validate_t2.py`). Before building on a machine other than Pitzer,
 read §9.1 (items 4 and 5: `RPDE_KIT`, `RPDE_SIMCACHE`). Known open gaps are listed in the 09-24 dry-run audit
 (`reproduce.sh` has no QD stages yet; the k derivation of §10.3 still reads two files from outside the repo).
 
