@@ -55,8 +55,12 @@ if command -v squeue > /dev/null 2>&1; then
     echo "therefore the time_score prediction, will NOT be trustworthy)."
     [ "${RPDE_FORCE:-0}" = "1" ] || exit 1
   fi
-elif pgrep -f "train2\.py" > /dev/null; then
-  echo "REFUSING: train2.py is running on this machine."; exit 1
+else
+  # No Slurm client (e.g. inside a gated job): look for a local train2.py. pgrep is absent on Pitzer compute nodes
+  # (repro_smoke 09-24: "pgrep: command not found" made this branch a silent no-op), so scan /proc directly.
+  if grep -qa "train2\.py" /proc/[0-9]*/cmdline 2>/dev/null; then
+    echo "REFUSING: train2.py is running on this machine."; [ "${RPDE_FORCE:-0}" = "1" ] || exit 1
+  fi
 fi
 for c in $A $M; do [ -f "$c" ] || { echo "MISSING $c"; exit 1; }; done
 

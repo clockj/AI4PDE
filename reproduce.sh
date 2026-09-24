@@ -222,8 +222,14 @@ build_r35() {
 # It does NOT propagate its gates' exit codes (CLAUDE.md), so `build` below runs it through a
 # log and reads the two SUBMITTABLE lines itself -- one per track. Without this the script
 # printed DONE over a failed gate.
+ensure_val() {               # fit_band.py and validate_strict.py read Track_1/val_{seen,unseen}.npz (REPRODUCE §9.1 item 3)
+  [ -f Track_1/val_seen.npz ] && [ -f Track_1/val_unseen.npz ] && return 0
+  echo "== make_val: Track_1/val_{seen,unseen}.npz from $REAL =="
+  ( cd Track_1 && $PY make_val.py --data "$REAL" ) || { echo "FAILED: make_val.py"; exit 1; }
+}
 build() {                    # build <tag> <env assignment>...   -- last arg wins as usual
   local log; log="${RPDE_REPRO_LOG:-${TMPDIR:-/tmp}}/build_$1.log"; shift
+  ensure_val                 # repro_smoke 09-24: the A / QD_STATIC paths reached the band fit with no val files
   mkdir -p "$(dirname "$log")"
   # BUILD_ALPHA: the r25/r28/r34/r35 packages of record were built at 0.60; the 09-24 candidates (A, QD, QD_STATIC) at 0.80.
   env "$@" bash Track_1/submit_fno/build_round13.sh "${BUILD_ALPHA:-0.60}" 2>&1 | tee "$log"
@@ -300,7 +306,7 @@ qd_k_derive() {
   # k is a STATED constant (RPDE_QDK_KBASE, 1.1399); this stage re-derives it as a check and sets K_USE from the H rule.
   echo "== §10.3: derive / check k =="
   local W; W="${RPDE_REPRO_LOG:-${TMPDIR:-/tmp}}/qdk"; mkdir -p "$W"
-  [ -f Track_1/val_seen.npz ] && [ -f Track_1/val_unseen.npz ] || ( cd Track_1 && $PY make_val.py --data "$REAL" ) || exit 1
+  ensure_val
   $PY Track_1/submit_fno/fit_band.py \
       --ckpt $OUT/ffno_all_w40l8_sim_s{1,2,3,4}.pth $OUT/arch_vit_all_s1.pth $OUT/arch_vit_all_cmb3sim_s3.pth \
       --err-ckpt $P2/p2_ffno_l8_sim_s{1,2,3}.pth $OUT/arch_vit_d384.pth $OUT/arch_vit_cmb3sim.pth \
