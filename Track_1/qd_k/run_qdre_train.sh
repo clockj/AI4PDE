@@ -90,7 +90,7 @@ echo "== build val_unseen/val_seen from raw $(date)"
 # REPRODUCE.md 1.5, the F-FNO held-out twin (p2_ffno_l8_sim_s{1,2,3}.pth), copied flag for flag:
 # --all-data dropped (so --exclude = model.VAL_TRAJ) and --sim-exclude-held added. Twins, not the
 # all-data members, because the band's error field is fitted on the twins. Seed 1 for both arms.
-SEED=${SEED:-1}                    # repo copy: seed from env (SEED=2 for s2); the job copies had it literal
+SEED=${SEED:-1}                    # repo copy: seed from env. For pitzer submit write it LITERAL (SEED=2): no env reaches the job
 # ---- Fen / qdre (Ilse 08:02Z, #Track-1-W-2): the ONLY other change vs Devi's qd_r_s1 ----------
 # Held-out set = Track_1/re_split.py's three Re groups (val_relo, val_rehi, val_rein; 26 traj),
 # taken by CALLING re_split.excluded() -- never a hand-written list -- so training sees 56 traj.
