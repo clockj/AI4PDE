@@ -2,6 +2,7 @@
 # Rebuild both packages of record from the released data. READ REPRODUCE.md FIRST.
 #
 #   RPDE_REPRODUCE_GO=1 bash reproduce.sh [t1|t2|both|r25|r28]    # default: both
+#   RPDE_REPRODUCE_GO=1 bash reproduce.sh --recipe A|QD|QD_STATIC   # the 09-24 FINAL_RECIPE candidates (REPRODUCE.md top)
 #
 # t1, t2 and both are the method of record (R30 / T2R17, tag r34): ONE member set, both archives.
 # r25 and r28 rebuild the superseded packages the board actually scored (REPRODUCE.md section 4).
@@ -58,6 +59,7 @@ fi
 P2=${P2:-$OUT}               # where the three F-FNO twins live; see REPRODUCE.md 6.2
 EPOCHS=${RPDE_REPRO_EPOCHS:-400}
 WHICH=${1:-both}
+[ "$WHICH" = "--recipe" ] && WHICH=${2:?"--recipe needs A, QD or QD_STATIC"}
 export HDF5_USE_FILE_LOCKING=FALSE
 
 for d in "$REAL" "$SIM"; do [ -d "$d" ] || { echo "MISSING data dir $d"; exit 1; }; done
@@ -221,7 +223,8 @@ build_r35() {
 build() {                    # build <tag> <env assignment>...   -- last arg wins as usual
   local log; log="${RPDE_REPRO_LOG:-${TMPDIR:-/tmp}}/build_$1.log"; shift
   mkdir -p "$(dirname "$log")"
-  env "$@" bash Track_1/submit_fno/build_round13.sh 0.60 2>&1 | tee "$log"
+  # BUILD_ALPHA: the r25/r28/r34/r35 packages of record were built at 0.60; the 09-24 candidates (A, QD, QD_STATIC) at 0.80.
+  env "$@" bash Track_1/submit_fno/build_round13.sh "${BUILD_ALPHA:-0.60}" 2>&1 | tee "$log"
   local n; n=$(grep -c '^SUBMITTABLE$' "$log")
   echo "gates: $n/2 SUBMITTABLE   (log $log)"
   [ "$n" = "2" ] || { echo "FAILED: a gate did not pass -- read $log"; exit 1; }
@@ -275,6 +278,74 @@ build_r28() {
     RPDE_HOST_WRITE=torch RPDE_FFNO_PATH=dense RPDE_TAG="r27_p2ffno4_a060"
 }
 
+# ============================== the 09-24 FINAL_RECIPE candidates: A, QD, QD_STATIC ===========
+# REPRODUCE.md top block and §10. All three: ALPHA 0.80, centre-0 band REFIT from the twins (never a committed band:
+# the r38 band is not committed, and an err band cannot be reused -- build_round13.sh refuses RPDE_BAND with RPDE_ERR_*).
+QDH="--err-head --err-loss qd --qd-temp 0.1 --lam-e 0.15"            # §10.1 / §10.2 (lam-e pinned: it is the default today)
+SEEDS_QDTW=${RPDE_REPRO_SEEDS:-"1 2 3 4 5 6"}                        # QD twins: seeds 1..6 (§10.2)
+members_ffno_qd() {
+  echo "== all-data F-FNO + sim members WITH the QD error head (4), §10.1 =="
+  for s in $SEEDS_ME; do
+    run $OUT/ffno_all_w40l8_sim_qderr_s$s.pth $FFNO $SIMF --seed $s --all-data $QDH --ckpt-every 20 --resume
+  done
+}
+twins_ffno_qd() {
+  echo "== F-FNO + sim held-out twins WITH the QD error head (6), §10.2 -- k is chosen on these =="
+  for s in $SEEDS_QDTW; do run $OUT/qd_twin_s$s.pth $FFNO $SIMF --sim-exclude-held --seed $s $QDH; done
+}
+qd_k_derive() {
+  # §10.3 (Bram 09-24), repo-only: make_val -> control band (r38 recipe) -> twin export -> k* on the 6 QD twins -> H check.
+  # k is a STATED constant (RPDE_QDK_KBASE, 1.1399); this stage re-derives it as a check and sets K_USE from the H rule.
+  echo "== §10.3: derive / check k =="
+  local W; W="${RPDE_REPRO_LOG:-${TMPDIR:-/tmp}}/qdk"; mkdir -p "$W"
+  [ -f Track_1/val_seen.npz ] && [ -f Track_1/val_unseen.npz ] || ( cd Track_1 && $PY make_val.py --data "$REAL" ) || exit 1
+  $PY Track_1/submit_fno/fit_band.py \
+      --ckpt $OUT/ffno_all_w40l8_sim_s{1,2,3,4}.pth $OUT/arch_vit_all_s1.pth $OUT/arch_vit_all_cmb3sim_s3.pth \
+      --err-ckpt $P2/p2_ffno_l8_sim_s{1,2,3}.pth $OUT/arch_vit_d384.pth $OUT/arch_vit_cmb3sim.pth \
+      --alpha 0.80 --band-p 0.45 --fill-unscored --centre-alpha 0 --out "$W/qdk_ctl_band.npz" > "$W/ctl_band.log" 2>&1 \
+      || { echo "FAILED: control band (see $W/ctl_band.log)"; exit 1; }
+  $PY Track_1/qd_k/export.py --ckpt-root "$OUT" "$P2" --data "$REAL" --out "$W/export" --tmp "$W/export_tmp" \
+      > "$W/export.log" 2>&1 || { echo "FAILED: export (see $W/export.log)"; exit 1; }
+  for s in $SEEDS_QDTW; do
+    RPDE_QDK_EXPORT="$W/export" $PY Track_1/qd_k/head_direct.py "$OUT/qd_twin_s$s.pth" Track_1/unet --real-only \
+        --family direct --direct-kmax 20 --pred-k 1.25 --band "$W/qdk_ctl_band.npz" --csv "$W/qd_direct_band.csv" \
+        > "$W/head_direct_s$s.log" 2>&1 || { echo "FAILED: head_direct s$s (see $W/head_direct_s$s.log)"; exit 1; }
+    grep -h "k\* per fold" "$W/head_direct_s$s.log" | tail -1 | sed "s/^/  twin s$s: /"
+  done
+  echo "  expected: k* per fold [1.14, 1.14, 1.14] for every twin. A different grid point is for a HUMAN to review (§10.3);"
+  echo "  this driver does not move k on its own."
+  local OA; OA="$(cd "$OUT" && pwd)"     # h_ratio_check runs from Track_1/: absolute paths
+  ( cd Track_1 && $PY qd_k/h_ratio_check.py --members $OA/ffno_all_w40l8_sim_qderr_s{1,2,3,4}.pth \
+      --twins $(for s in $SEEDS_QDTW; do echo "$OA/qd_twin_s$s.pth"; done) --val val_seen.npz \
+      --k-base "${RPDE_QDK_KBASE:-1.1399}" ) > "$W/h_ratio.log" 2>&1
+  local rc=$?; cat "$W/h_ratio.log" | tail -3
+  [ "$rc" = "0" ] || { echo "FAILED/REVIEW: h_ratio_check exit $rc (|r-1| > 0.10 exits 2) -- see $W/h_ratio.log"; exit 1; }
+  K_USE=$(grep -oP '^K_USE=\K[0-9.]+' "$W/h_ratio.log")
+  [ -n "$K_USE" ] || { echo "FAILED: no K_USE"; exit 1; }
+  echo "  K_USE=$K_USE"
+}
+_A_R38() { echo "$OUT/ffno_all_w40l8_sim_s1.pth $OUT/ffno_all_w40l8_sim_s2.pth $OUT/ffno_all_w40l8_sim_s3.pth \
+                 $OUT/ffno_all_w40l8_sim_s4.pth $OUT/arch_vit_all_s1.pth $OUT/arch_vit_all_cmb3sim_s3.pth"; }
+_A_QD()  { echo "$OUT/ffno_all_w40l8_sim_qderr_s1.pth $OUT/ffno_all_w40l8_sim_qderr_s2.pth $OUT/ffno_all_w40l8_sim_qderr_s3.pth \
+                 $OUT/ffno_all_w40l8_sim_qderr_s4.pth $OUT/arch_vit_all_s1.pth $OUT/arch_vit_all_cmb3sim_s3.pth"; }
+_M_R38() { echo "$P2/p2_ffno_l8_sim_s1.pth $P2/p2_ffno_l8_sim_s2.pth $P2/p2_ffno_l8_sim_s3.pth $OUT/arch_vit_d384.pth $OUT/arch_vit_cmb3sim.pth"; }
+_M_QD()  { echo "$OUT/qd_twin_s1.pth $OUT/qd_twin_s2.pth $OUT/qd_twin_s3.pth $OUT/arch_vit_d384.pth $OUT/arch_vit_cmb3sim.pth"; }
+_KNOBS=(RPDE_FORCE=1 RPDE_BAND_FILL=1 RPDE_CENTRE_ALPHA=0 RPDE_INT8=1 RPDE_LINEAR=tensor 'RPDE_SHIP_AMP="fp16"'
+        RPDE_SPEC_PATH=bmm RPDE_HOST_WRITE=torch RPDE_FFNO_PATH=dense)
+build_A() {
+  echo "== build candidate A (r38: r34 members, static band refit at ALPHA 0.80) =="
+  BUILD_ALPHA=0.80 build r38 "${_KNOBS[@]}" RPDE_A="$(_A_R38)" RPDE_M="$(_M_R38)" RPDE_TAG=r38
+}
+build_qd() {
+  echo "== build candidate QD (QD members, half = k*H, k = ${K_USE:-${RPDE_QDK_KBASE:-1.1399}}) =="
+  BUILD_ALPHA=0.80 build qd_direct "${_KNOBS[@]}" RPDE_A="$(_A_QD)" RPDE_M="$(_M_R38)" \
+      RPDE_ERR_MODE=direct RPDE_ERR_K="${K_USE:-${RPDE_QDK_KBASE:-1.1399}}" RPDE_TAG=qd_direct
+}
+build_qd_static() {
+  echo "== build candidate QD_STATIC (QD members, static band refit on the QD twins s1..s3 + ViT twins) =="
+  BUILD_ALPHA=0.80 build qd_static "${_KNOBS[@]}" RPDE_A="$(_A_QD)" RPDE_M="$(_M_QD)" RPDE_TAG=qd_static
+}
+
 # ---------------------------------------------------------------------------------------------
 # OPTIONAL: the distilled single-model student (STUDENT=1; OFF by default).
 # Not a package of record -- no student has scored -- but a two-stage recipe is exactly the kind
@@ -306,7 +377,11 @@ case "$WHICH" in
   r34)        twins_vit; twins_ffno; members_vit; members_ffno; build_r34 ;;
   r25)        twins_vit; twins_fno_w96;    members_vit; members_fno_w96;    build_r25 ;;
   r28)        twins_vit; twins_ffno_nosim; members_vit; members_ffno_nosim; build_r28 ;;
-  *) echo "usage: $0 [t1|t2|both|r34|r25|r28]   (r34, r25, r28 are the superseded packages)"; exit 2 ;;
+  A)          twins_vit; twins_ffno; members_vit; members_ffno; build_A ;;
+  # QD needs the r34 members and twins too: the control band and the twin export of the k derivation (§10.3) use them.
+  QD)         twins_vit; twins_ffno; twins_ffno_qd; members_vit; members_ffno; members_ffno_qd; qd_k_derive; build_qd ;;
+  QD_STATIC)  twins_vit; twins_ffno_qd; members_vit; members_ffno_qd; build_qd_static ;;
+  *) echo "usage: $0 [t1|t2|both|r34|r25|r28] | --recipe A|QD|QD_STATIC"; exit 2 ;;
 esac
 [ "${STUDENT:-0}" = "1" ] && student
 

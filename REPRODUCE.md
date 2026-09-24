@@ -40,9 +40,13 @@ env $KNOBS RPDE_A="$A_QD" RPDE_M="$M_QD" RPDE_TAG=qd_static bash Track_1/submit_
 ```
 Track 2 latency numbers assume `PAR_STREAMS = True` in `Track_2/submit/submission.py` (the default; the fused groups run on separate
 CUDA streams, predictions bit-identical to the serial loop). Do not switch it off when reproducing the time score (Jonas 09-24).
+**End to end from the release data** (twins, members, band, k, build, gates; the knobs of §8.1 apply):
+`RPDE_REPRODUCE_GO=1 bash reproduce.sh --recipe A|QD|QD_STATIC`. QD also trains the r34 members and twins, because the §10.3 k
+derivation needs them; it re-derives k as a check (prints k* per twin) and builds with K_USE from `h_ratio_check.py`. Wiring
+tested 09-24 with a stub interpreter (every stage, all three recipes, correct flags and paths); no GPU run of these recipes yet.
 Each must print `SUBMITTABLE` twice (T1 `validate_strict.py`, T2 `validate_t2.py`). Before building on a machine other than Pitzer,
 read §9.1 (items 4 and 5: `RPDE_KIT`, `RPDE_SIMCACHE`). Known open gaps are listed in the 09-24 dry-run audit
-(`reproduce.sh` has no QD stages yet; the §10.3 k derivation is repo-only since 09-24, Bram).
+(the §10.3 k derivation is repo-only since 09-24, Bram).
 
 ---
 
@@ -624,8 +628,11 @@ constant of §10.3. (`build_round13.sh` refuses `RPDE_BAND` together with `RPDE_
 §1.4's command **flag for flag**, plus the QD head:
 ```bash
 for s in 1 2 3 4; do
-  $PY train2.py <§1.4 flags, --seed $s --all-data ...> \
-      --err-head --err-loss qd --qd-temp 0.1 --ckpt-every 20 --resume \
+  $PY train2.py --data "$REAL" --arch ffno --width 40 --n-layers 8 --modes-y 16 --modes-x 32 --dropout 0.3 --var-head \
+      --loss mse --lam-f 0.0 --lam-cov 2.0 --cov-c 0.25 --lam-grad 1.0 --lam-tgrad 0.3 --lam-v 0.15 --lam-t 0.15 --alpha-train 0.0 \
+      --stride 5 --batch 32 --lr 2e-4 --epochs 400 --wd 1e-5 \
+      --sim "$SIM" --lam-sim 0.3 --sim-loss full --sim-map scalar --sim-stride 5 --seed $s --all-data \
+      --err-head --err-loss qd --qd-temp 0.1 --lam-e 0.15 --ckpt-every 20 --resume \
       --out ffno_all_w40l8_sim_qderr_s$s.pth
 done
 ```
