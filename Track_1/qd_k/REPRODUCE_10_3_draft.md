@@ -42,3 +42,10 @@ not the choice: `--base recipe` (control refit from the export, no band file) gi
 ```
 Rule: 0.95 ≤ r ≤ 1.05 → k = 1.1399. r < 0.95 → 1.1399 × 1.0912 = 1.2438. r > 1.05 → 1.1399, noted in the README.
 |r − 1| > 0.10 → exit 2, review. The 09-24 build gave r = 0.9884 → K_USE = 1.1399. Pass K_USE as `RPDE_ERR_K`.
+
+**Checked 09-24 (job qdk_repro, run 20260924-165948, repo snapshot = this branch, release checkpoints + the six twins):**
+- step 1's in-repo band: `base` and `sigma_ref` **bit-identical** to the shipped r38 band (md5 02f473e9). The file md5 differs
+  (ad833a4a) only because today's `fit_band.py` also writes the `clip_lo`/`clip_hi` keys.
+- step 3: k* = 1.1399 in all 3 folds for all 6 twins, with both the in-repo band and `--base recipe` (12/12). Direct-band gain
+  +0.107 to +0.116 final per twin.
+- H check: all-data 0.005961, twins 0.006031, **ratio 0.9884 → K_USE = 1.1399**, the 09-24 build's value.
