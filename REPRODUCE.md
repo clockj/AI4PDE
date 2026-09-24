@@ -585,8 +585,11 @@ l = −mean(sigmoid((h−|e|)/(0.1·h.detach())) · exp(−2·h·mul/σ_g)). `--
 (resume file only). The blob records `err_head=True`, `err_loss='qd'`, `qd_temp=0.1`. ~288 min each on a V100.
 
 ### 10.2 The QD twins (6 seeds) — needed only to re-derive `k`
-§1.5's twin command (`--sim-exclude-held`, `--all-data` dropped) plus the same three flags, seeds 1–6
-(`Devi/qd_r_s{1..6}`, arm half). The control half of each pair is §1.5 unchanged at the same seed.
+§1.5's twin command (`--sim-exclude-held`, `--all-data` dropped) plus `--err-head --err-loss qd --qd-temp 0.1`, seeds 1–6,
+400 epochs (`Devi/qd_r_s{1..6}`, arm half; the six run.sh differ only in the literal `SEED=` line, verified by diff). The control
+half of each pair is §1.5 unchanged at the same seed. The twins were trained with Devi's `train2.py` (sha256 95b1aeae…); this tree's
+`train2.py` merges all four `--err-loss` branches and its `qd` branch is that code verbatim (Devi's full draft with every sha:
+`Devi/tools/REPRODUCE_qd_twins_draft.md`).
 
 ### 10.3 `k` — the one number the package cannot learn from its own members
 The shipped band is `half = k · H` (`band.npz`: `err_mode='direct'`, `err_k`). `k` is **not** fitted on the all-data members —
@@ -596,10 +599,16 @@ It is chosen on the held-out twins, nested:
 # RPDE_QDK_EXPORT = the twin export dir (export_{seen,unseen}.npz, produced by Track_1/qd_k/export.py from the r38 twins)
 # RPDE_QDK_BAND   = the r38 band (md5 02f473e9, Track_1/bands/..., the control)
 for s in 1 2 3 4 5 6; do
-  python Track_1/qd_k/head_direct.py qd_twin_s$s.pth Track_1/unet --family direct --K 20 --direct-kmax 20 \
-      --csv qd_direct_band.csv                      # k chosen per fold on the kept trajectories (log grid, step x1.089)
+  python Track_1/qd_k/head_direct.py qd_twin_s$s.pth Track_1/unet --real-only --family direct --direct-kmax 20 \
+      --pred-k 1.25 --csv qd_direct_band.csv       # add --fixed-k 1.244 for the fixed-k column, --all-unseen for check e
 done
 ```
+Convention baked into the defaults: ALPHA 0.80, control band = r38 (md5 02f473e9), stretch 1.39, p 0.45; reporting cell = the unseen
+AoA ≥ 15 trajectories 11400_20, 21600_15, 8850_20, k picked by nested leave-one-trajectory-out (the control band's own k is also
+picked nested per fold). **Units:** H = exp(logerr) is in NORMALISED units; the half-width is h = k·H·STD per channel,
+STD = [0.0968057, 0.0159607]. **k is a grid value**: 22-point log grid 0.4–2.5 plus 1.0, extended upward at the same ratio (×1.089);
+the neighbours of 1.1399 are 1.0446 and 1.2438 (a continuous search gives ~1.091 — the source of Bram's +0.098 vs Fen's +0.116).
+Vendored script = sha256 367bd95f… (Fen-reviewed) with only the path lines changed.
 Result 09-24: **k\* = 1.1399 in all 18 seed×fold cells and in all 48 leave-one-trajectory-out runs** (8 unseen VAL_TRAJ).
 Shipped k = 1.1399, unless the like-for-like H check (median H of all-data vs twin heads on val_SEEN, where both trained) falls
 below 0.95, in which case one grid step wider (×1.089). The check and the chosen k are printed by the build job and the package README.
