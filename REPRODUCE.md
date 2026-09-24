@@ -665,24 +665,67 @@ done
 ### 10.3 `k` — the one number the package cannot learn from its own members
 The shipped band is `half = k · H` (`band.npz`: `err_mode='direct'`, `err_k`). `k` is **not** fitted on the all-data members —
 they trained on every trajectory, so their H is in-sample (a band fitted on memorised errors scored 36.94 sps in round 6).
-It is chosen on the held-out twins, nested:
+It is chosen on the held-out twins, nested. The derivation below uses only the repository, the release data and checkpoints
+(text: Bram, verified on Pitzer 09-24; closes dry-run gaps #9/#10):
+
+**Scope (Devi, 09-24).** This section reproduces *k from the six twins*: make_val → fit_band → export → k* → H ratio.
+It does NOT reproduce the twins themselves. Their training is §10.2's recipe (about 26 GPU-h), which is only checked when
+the whole pipeline is retrained for the finals. The 09-24 check (job qdk_repro) ran this section on the 09-23 twins
+(Devi's qd_r_s1..6, byte-identical); "k reproduced end to end" means this section only.
+
+Everything below runs from a clean checkout plus the release data and checkpoints. No file comes from anyone's workspace.
+Run from the repo root. `$CKD` is the directory holding the r34 members and twins (`ffno_all_w40l8_sim_s1..4`, the two
+all-data ViTs, `p2_ffno_l8_sim_s1..3`, `arch_vit_d384`, `arch_vit_cmb3sim`). `qd_twin_s1..6.pth` come from §10.2.
+
 ```bash
-# RPDE_QDK_EXPORT = the twin export dir (export_{seen,unseen}.npz, produced by Track_1/qd_k/export.py from the r38 twins)
-# RPDE_QDK_BAND   = the r38 band (md5 02f473e9, Track_1/bands/..., the control)
+# 0. validation windows (writes Track_1/val_{seen,unseen}.npz)
+(cd Track_1 && $PY make_val.py --data "$REAL")
+
+# 1. the control band, fitted in-repo with the r38 recipe (same members, ALPHA 0.80, centre decoupled)
+U=Track_1/unet
+$PY Track_1/submit_fno/fit_band.py \
+    --ckpt $U/ffno_all_w40l8_sim_s{1,2,3,4}.pth $U/arch_vit_all_s1.pth $U/arch_vit_all_cmb3sim_s3.pth \
+    --err-ckpt $U/p2_ffno_l8_sim_s{1,2,3}.pth $U/arch_vit_d384.pth $U/arch_vit_cmb3sim.pth \
+    --alpha 0.80 --band-p 0.45 --fill-unscored --centre-alpha 0 --out qdk_ctl_band.npz
+
+# 2. the twin export the derivation reads
+$PY Track_1/qd_k/export.py --ckpt-root $CKD --data "$REAL" --out qdk_export --tmp /tmp/qdk_exp_tmp
+
+# 3. k on the six QD twins, nested leave-one-trajectory-out over the unseen AoA >= 15 trajectories
+export RPDE_QDK_EXPORT=qdk_export
 for s in 1 2 3 4 5 6; do
-  python Track_1/qd_k/head_direct.py qd_twin_s$s.pth Track_1/unet --real-only --family direct --direct-kmax 20 \
-      --pred-k 1.25 --csv qd_direct_band.csv       # add --fixed-k 1.244 for the fixed-k column, --all-unseen for check e
+  $PY Track_1/qd_k/head_direct.py qd_twin_s$s.pth Track_1/unet --real-only --family direct --direct-kmax 20 \
+      --pred-k 1.25 --band qdk_ctl_band.npz --csv qd_direct_band.csv
 done
 ```
-Convention baked into the defaults: ALPHA 0.80, control band = r38 (md5 02f473e9), stretch 1.39, p 0.45; reporting cell = the unseen
+
+**Check:** every run prints `k* per fold [1.14, 1.14, 1.14]` (grid point 1.1399; neighbours 1.0446 / 1.2438; grid step
+(2.5/0.4)^(1/21) = 1.0912). `k*` depends on the twins and the export only. The control band sets the reported gain,
+not the choice: `--base recipe` (control refit from the export, no band file) gives the same k* (checked 09-24).
+
+**Shipped k = K_USE from the like-for-like H check** (§10.1 members vs these twins, both in-sample on val_seen):
+```bash
+(cd Track_1 && $PY qd_k/h_ratio_check.py --members unet/ffno_all_w40l8_sim_qderr_s{1,2,3,4}.pth \
+     --twins ../qd_twin_s{1,2,3,4,5,6}.pth --val val_seen.npz --k-base 1.1399)
+```
+Rule: 0.95 ≤ r ≤ 1.05 → k = 1.1399. r < 0.95 → 1.1399 × 1.0912 = 1.2438. r > 1.05 → 1.1399, noted in the README.
+|r − 1| > 0.10 → exit 2, review. The 09-24 build gave r = 0.9884 → K_USE = 1.1399. Pass K_USE as `RPDE_ERR_K`.
+
+**Checked 09-24 (job qdk_repro, run 20260924-165948, repo snapshot = this branch, release checkpoints + the six twins):**
+- step 1's in-repo band: `base` and `sigma_ref` **bit-identical** to the shipped r38 band (md5 02f473e9). The file md5 differs
+  (ad833a4a) only because today's `fit_band.py` also writes the `clip_lo`/`clip_hi` keys.
+- step 3: k* = 1.1399 in all 3 folds for all 6 twins, with both the in-repo band and `--base recipe` (12/12). Direct-band gain
+  +0.107 to +0.116 final per twin.
+- H check: all-data 0.005961, twins 0.006031, **ratio 0.9884 → K_USE = 1.1399**, the 09-24 build's value.
+
+Convention baked into the defaults: ALPHA 0.80, control band = the r38 recipe band (step 1 above; base/sigma_ref bit-identical to md5 02f473e9), stretch 1.39, p 0.45; reporting cell = the unseen
 AoA ≥ 15 trajectories 11400_20, 21600_15, 8850_20, k picked by nested leave-one-trajectory-out (the control band's own k is also
 picked nested per fold). **Units:** H = exp(logerr) is in NORMALISED units; the half-width is h = k·H·STD per channel,
-STD = [0.0968057, 0.0159607]. **k is a grid value**: 22-point log grid 0.4–2.5 plus 1.0, extended upward at the same ratio (×1.089);
+STD = [0.0968057, 0.0159607]. **k is a grid value**: 22-point log grid 0.4–2.5 plus 1.0, extended upward at the same ratio (×1.0912);
 the neighbours of 1.1399 are 1.0446 and 1.2438 (a continuous search gives ~1.091 — the source of Bram's +0.098 vs Fen's +0.116).
 Vendored script = sha256 367bd95f… (Fen-reviewed) with only the path lines changed.
 Result 09-24: **k\* = 1.1399 in all 18 seed×fold cells and in all 48 leave-one-trajectory-out runs** (8 unseen VAL_TRAJ).
-Shipped k = 1.1399, unless the like-for-like H check (median H of all-data vs twin heads on val_SEEN, where both trained) falls
-below 0.95, in which case one grid step wider (×1.089). The check and the chosen k are printed by the build job and the package README.
+The shipped k is K_USE from `h_ratio_check.py` above (rule and 09-24 value there).
 `Track_1/qd_k/` vendors the scripts verbatim (Fen's `head_direct.py`, Bram's `centre_band.py`, Devi's `sweep_guards.py`, the twin
 `export.py` / `load_export.py`); only hard-coded workspace paths were replaced by `RPDE_QDK_*` env vars / the script's own directory.
 
