@@ -7,6 +7,37 @@ parameter regimes; the resulting private-test scores decide the top 3."* A third
 the released data to the uploaded archive with nothing of ours but this repository. §6 lists every place that
 is not yet true.
 
+## FINAL_RECIPE = <TO BE DECIDED after the 09-25 / 09-26 boards>   (the ONE line to change; Ilse 09-24)
+
+Two candidates, each written in full; everything below this block is history (older packages of record) and the stages both
+candidates share (§1–§3). Both use ALPHA 0.80, centre-0 band, the same two ViT members, the same twins for the band fit, and
+the same precision knobs. They differ in the four F-FNO members and the band.
+
+| candidate | F-FNO members (`$A`) | band | shipped 09-24/25 as |
+|---|---|---|---|
+| **A** (r38) | `ffno_all_w40l8_sim_s1..s4` (§1.4) | static sigma band, refit at ALPHA 0.80 (§3) | `track1_r38_samecode.zip` / `track2_r38_alpha080_ds.zip` |
+| **QD** | `ffno_all_w40l8_sim_qderr_s1..s4` (§10.1) | `half = k*H`, `err_mode=direct`, `err_k = 1.1399` (§10.3) | `track{1,2}_qd_direct.zip` |
+
+Build (run from the repo root, after the members, twins and `Track_1/val_{seen,unseen}.npz` exist; exactly the job that built the
+09-24 archives, `qd_build` run 20260924-062010):
+```bash
+U=Track_1/unet
+V="$U/arch_vit_all_s1.pth $U/arch_vit_all_cmb3sim_s3.pth"                                   # §1.2
+M="$U/p2_ffno_l8_sim_s1.pth $U/p2_ffno_l8_sim_s2.pth $U/p2_ffno_l8_sim_s3.pth $U/arch_vit_d384.pth $U/arch_vit_cmb3sim.pth"  # §1.3, §1.5
+A_R38="$U/ffno_all_w40l8_sim_s1.pth $U/ffno_all_w40l8_sim_s2.pth $U/ffno_all_w40l8_sim_s3.pth $U/ffno_all_w40l8_sim_s4.pth $V"
+A_QD="$U/ffno_all_w40l8_sim_qderr_s1.pth $U/ffno_all_w40l8_sim_qderr_s2.pth $U/ffno_all_w40l8_sim_qderr_s3.pth $U/ffno_all_w40l8_sim_qderr_s4.pth $V"
+KNOBS='RPDE_FORCE=1 RPDE_BAND_FILL=1 RPDE_CENTRE_ALPHA=0 RPDE_INT8=1 RPDE_LINEAR=tensor RPDE_SHIP_AMP="fp16" RPDE_SPEC_PATH=bmm RPDE_HOST_WRITE=torch RPDE_FFNO_PATH=dense'
+# candidate A:
+env $KNOBS RPDE_A="$A_R38" RPDE_M="$M" RPDE_TAG=r38 bash Track_1/submit_fno/build_round13.sh 0.80
+# candidate QD (the band MUST be refit -- RPDE_BAND unset; build_round13.sh refuses RPDE_BAND together with RPDE_ERR_*):
+env $KNOBS RPDE_A="$A_QD" RPDE_M="$M" RPDE_ERR_MODE=direct RPDE_ERR_K=1.1399 RPDE_TAG=qd_direct bash Track_1/submit_fno/build_round13.sh 0.80
+```
+Both must print `SUBMITTABLE` twice (T1 `validate_strict.py`, T2 `validate_t2.py`). Before building on a machine other than Pitzer,
+read §9.1 (items 4 and 5: `RPDE_KIT`, `RPDE_SIMCACHE`). Known open gaps are listed in the 09-24 dry-run audit
+(`reproduce.sh` has no QD stages yet; the k derivation of §10.3 still reads two files from outside the repo).
+
+---
+
 **ONE method of record on both tracks, as of 2026-09-20** — the same six members, the same band, the
 same baked constants; the two archives differ only in the entry point (`predict` vs `ttt_step`) and in
 `HOST_WRITE`, which Track 2 does not use:
@@ -544,10 +575,18 @@ end-to-end `20260922-111450-*-ilse-repro-phase3-build`.
    files, and then **Track 1 builds while Track 2 refuses** with `submit/_fno.py is not Track 1's _fno.py;
    the tracks would diverge`. Ship the tree with symlinks intact, or recreate them before building.
 3. **`validate_strict.py` needs `Track_1/val_unseen.npz` at GATE time**, not only for scoring. Build the
-   validation sets (`make_val.py`) *before* `reproduce.sh`, or the Track 1 gate fails with
+   validation sets *before* `reproduce.sh` with `(cd Track_1 && $PY make_val.py --data "$RPDE/train_real/train_real")`
+   (it writes `val_{seen,unseen}.npz` into the current directory), or the Track 1 gate fails with
    `FileNotFoundError` on a package that is otherwise fine.
+4. **The v9 scoring kit is found through `RPDE_KIT`** (added 2026-09-24; `Track_1/sps9.py`, `Track_1/submit_fno/validate_strict.py`,
+   `Track_2/validate_t2.py`). Set it to the directory that holds the kit's `scoring.py`
+   (`realpde_t1_starting_kit_v9/realpde_t1_starting_kit_v9` from the release). Unset, each file keeps its old Pitzer default
+   (two different sub-paths of the same mount). Without it, `fit_band.py` and both gates die at import on any other machine.
+5. **The sim-map cache is found through `RPDE_SIMCACHE`** (`Track_1/unet/simreal.py`; default a Pitzer scratch path). Every `--sim`
+   stage writes the cache there. `reproduce.sh` now falls back to `$OUT/simcache` when the default is not writable (2026-09-24);
+   when calling `train2.py` directly, export `RPDE_SIMCACHE=<writable dir>` yourself.
 
-None of the three affects the shipped archives; all three stop a from-scratch reproduction on a fresh machine,
+None of the five affects the shipped archives; all five stop a from-scratch reproduction on a fresh machine,
 which is exactly what the organizers will attempt.
 
 **On the Pitzer cluster specifically** (measured 2026-09-23, IcanFly run `20260923-062751`, plus my own
@@ -569,7 +608,9 @@ above in its failure message (`b5d2219`).
 ## 10. The QD error-head package (09-24) — members, and where `k` comes from
 
 Status when written (06:2xZ 09-24): the QD arm passed its pre-registered criteria a–e (Devi, `qd_FINAL_verdict.txt`); this section
-records what the organisers must retrain. The package itself is built by `build_round13.sh` with `RPDE_ERR_MODE=direct RPDE_ERR_K=<k>`.
+records what the organisers must retrain. The package itself is built by the **QD** command of the `FINAL_RECIPE` block at the
+top of this file. Unlike §3, the QD band is **refit, never reused**: `half = k*H` needs the retrained heads, and `k` is the stated
+constant of §10.3. (`build_round13.sh` refuses `RPDE_BAND` together with `RPDE_ERR_*`, which it used to ignore silently.)
 
 ### 10.1 The four all-data F-FNO members (replace `ffno_all_w40l8_sim_s1..s4`)
 §1.4's command **flag for flag**, plus the QD head:
@@ -584,12 +625,34 @@ done
 l = −mean(sigmoid((h−|e|)/(0.1·h.detach())) · exp(−2·h·mul/σ_g)). `--ckpt-every/--resume` change nothing about the weights
 (resume file only). The blob records `err_head=True`, `err_loss='qd'`, `qd_temp=0.1`. ~288 min each on a V100.
 
-### 10.2 The QD twins (6 seeds) — needed only to re-derive `k`
-§1.5's twin command (`--sim-exclude-held`, `--all-data` dropped) plus `--err-head --err-loss qd --qd-temp 0.1`, seeds 1–6,
-400 epochs (`Devi/qd_r_s{1..6}`, arm half; the six run.sh differ only in the literal `SEED=` line, verified by diff). The control
-half of each pair is §1.5 unchanged at the same seed. The twins were trained with Devi's `train2.py` (sha256 95b1aeae…); this tree's
-`train2.py` merges all four `--err-loss` branches and its `qd` branch is that code verbatim (Devi's full draft with every sha:
-`Devi/tools/REPRODUCE_qd_twins_draft.md`).
+### 10.2 The QD twins (6 seeds) — for choosing k in §10.3 (text: Devi, 2026-09-24)
+The twin recipe is §1.5, the F-FNO held-out twin, flag for flag. It does not use `--all-data`, so `--exclude` defaults to
+`model.VAL_TRAJ`, and it adds `--sim-exclude-held`. On top of that it adds the QD error head. Run from `Track_1/unet/`:
+
+```bash
+for s in 1 2 3 4 5 6; do
+  $PY train2.py --data "$REAL" --arch ffno --width 40 --n-layers 8 --modes-y 16 --modes-x 32 \
+      --dropout 0.3 --var-head \
+      --loss mse --lam-f 0.0 --lam-cov 2.0 --cov-c 0.25 --lam-grad 1.0 --lam-tgrad 0.3 \
+      --lam-v 0.15 --lam-t 0.15 --alpha-train 0.0 \
+      --stride 5 --batch 32 --lr 2e-4 --epochs 400 --wd 1e-5 --seed $s \
+      --sim "$SIM" --lam-sim 0.3 --sim-loss full --sim-map scalar --sim-stride 5 --sim-exclude-held \
+      --err-head --err-loss qd --qd-temp 0.1 \
+      --out qd_twin_s$s.pth
+done
+```
+
+- Output names are `qd_twin_s1.pth` … `qd_twin_s6.pth`, which is what the §10.3 loop reads. The original runs wrote
+  `qd_arm_s$s.pth`; only the file name differs.
+- **Code.** The QD branch of the repo's `train2.py` (`l_err = -mean(sigmoid((h-|e|)/(T*h.detach())) *
+  exp(-2*h*mul/0.0563870259))`, h = exp(clamp(logerr, -8, 2))) is byte-identical to the one the 09-23 runs used
+  (sha256 `95b1aeae…`, informational only; that file is not in the tree). The repo's file differs from it only by the added
+  `mse`/`nll` branches, the argparse `choices` and help text, and formatting. None of these touch the `qd` path.
+- **Cost.** 6 × about 4.3 h on one GPU (the 09-23 runs, 400 epochs), about 26 GPU-h in all, or about 5 h of wall clock if run in parallel.
+- **Check.** §10.3 must give k = 1.1399 (grid point; neighbours 1.0446 / 1.2438) on every fold. A retrained set of twins that lands one
+  grid step away still passes, per the §10.3 rule.
+- The paired pinball controls of the 09-23 runs (`pinball_control_s$s.pth`) are **not** needed to reproduce the method. They
+  served only the pre-registered readout.
 
 ### 10.3 `k` — the one number the package cannot learn from its own members
 The shipped band is `half = k · H` (`band.npz`: `err_mode='direct'`, `err_k`). `k` is **not** fitted on the all-data members —

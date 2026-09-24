@@ -34,8 +34,11 @@ import time
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, "Track_1", "submit_fno"))
-sys.path.insert(0, os.path.join(HERE, "Track_1"))
+# Vendored into Track_1/qd_k/ on 09-24: the repo root is two levels up (the original lived at the root;
+# REPRODUCE dry-run gap #11). RPDE_QDK_REPO overrides.
+REPO = os.environ.get("RPDE_QDK_REPO", os.path.abspath(os.path.join(HERE, "..", "..")))
+sys.path.insert(0, os.path.join(REPO, "Track_1", "submit_fno"))
+sys.path.insert(0, os.path.join(REPO, "Track_1"))
 
 FULL = ["ffno_all_w40l8_sim_s1.pth", "ffno_all_w40l8_sim_s2.pth", "ffno_all_w40l8_sim_s3.pth",
         "ffno_all_w40l8_sim_s4.pth", "arch_vit_all_s1.pth", "arch_vit_all_cmb3sim_s3.pth"]

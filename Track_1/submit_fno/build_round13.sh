@@ -67,6 +67,11 @@ echo "=== 1/5  band for ALPHA=$ALPHA ===========================================
 # being about `time`.  Unset -> fit, exactly as before.
 if [ -n "${RPDE_BAND:-}" ]; then
   [ -f "$RPDE_BAND" ] || { echo "MISSING band $RPDE_BAND"; exit 1; }
+  # RPDE_ERR_* only reach fit_band (the refit branch below). With RPDE_BAND set they would be silently ignored and a
+  # non-err band shipped -- refuse instead (REPRODUCE dry-run gap #3, 2026-09-24). An err band is reused by passing
+  # its own band.npz here WITHOUT RPDE_ERR_*: the err keys travel inside the file.
+  [ -z "${RPDE_ERR_MODE:-}${RPDE_ERR_K:-}${RPDE_ERR_Q:-}${RPDE_ERR_FLOOR:-}" ] || {
+    echo "REFUSING: RPDE_BAND is set together with RPDE_ERR_* -- those only act on a refit. Unset one of them."; exit 1; }
   cp "$RPDE_BAND" Track_2/submit/band8.npz
   echo "  REUSING band $RPDE_BAND (no refit) -- md5 $(md5sum < Track_2/submit/band8.npz)"
 else

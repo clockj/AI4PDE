@@ -45,7 +45,7 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent / "Track_1"))
 import t2_common as t2  # noqa: E402
 
-KIT = "/users/PAS1187/qwu/RealPDE/official/t1_v9/realpde_t1_starting_kit_v9"
+KIT = os.environ.get("RPDE_KIT", "/users/PAS1187/qwu/RealPDE/official/t1_v9/realpde_t1_starting_kit_v9")   # dir holding the v9 kit's scoring.py; default = the Pitzer mount (REPRODUCE §9.1)
 _s = importlib.util.spec_from_file_location("sc9", os.path.join(KIT, "scoring.py"))
 sc = importlib.util.module_from_spec(_s); _s.loader.exec_module(sc)
 import final_v9  # noqa: E402

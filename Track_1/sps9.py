@@ -27,7 +27,7 @@ import os
 
 import numpy as np
 
-KIT9 = "/users/PAS1187/qwu/RealPDE/realpde_t1_starting_kit_v9/realpde_t1_starting_kit_v9"
+KIT9 = os.environ.get("RPDE_KIT", "/users/PAS1187/qwu/RealPDE/realpde_t1_starting_kit_v9/realpde_t1_starting_kit_v9")   # dir holding the v9 kit's scoring.py; default = the Pitzer mount (REPRODUCE §9.1)
 _spec = importlib.util.spec_from_file_location("sc9", os.path.join(KIT9, "scoring.py"))
 sc = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(sc)

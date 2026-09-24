@@ -48,6 +48,13 @@ REAL=$RPDE/train_real/train_real
 SIM=$RPDE/train_sim/train_sim
 U=Track_1/unet                          # the CODE: train2.py and model.py live here
 OUT=${RPDE_REPRO_OUT:-$U}               # the CHECKPOINTS: default = the code dir, as shipped
+# Sim-map cache (Track_1/unet/simreal.py reads RPDE_SIMCACHE; its default is a Pitzer scratch path). Where that default is not
+# writable (any other machine, or a Pitzer job where /fs/scratch is read-only), put the cache next to the checkpoints instead.
+# Unchanged wherever the default works. (REPRODUCE §2 / §9.1; dry-run gap #6, 2026-09-24)
+if [ -z "${RPDE_SIMCACHE:-}" ] && ! { mkdir -p /fs/scratch/PAS1187/qwu/tmp/realpde/work 2>/dev/null && [ -w /fs/scratch/PAS1187/qwu/tmp/realpde/work ]; }; then
+  export RPDE_SIMCACHE="$OUT/simcache"
+  echo "RPDE_SIMCACHE unset and the default is not writable -> $RPDE_SIMCACHE"
+fi
 P2=${P2:-$OUT}               # where the three F-FNO twins live; see REPRODUCE.md 6.2
 EPOCHS=${RPDE_REPRO_EPOCHS:-400}
 WHICH=${1:-both}
