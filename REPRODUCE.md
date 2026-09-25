@@ -765,3 +765,19 @@ control is ~2.5 grid steps too narrow on rehi.
 Result 09-24: (1) passes narrowly (+0.016 and +0.0003), (2) fails on relo (-0.073 vs bar -0.004) => **finals `err_k` = 1.1399**,
 the same as the board. Not measured: AoA values outside the training set (every AoA of the 8 empty real-grid cells is in training;
 new (AoA, Re) combinations are covered by the 8 unseen VAL_TRAJ, 48/48 positive).
+
+## 11. Track 2 only: R1, causal per-pixel online band calibration (09-25)
+
+Approved for Track 2 only (the Codabench T2 page names "calibration" as a legal adaptation inside `ttt_step`; at step t the
+platform reveals the target of step t-1 and nothing later). NEVER port it to Track 1: its batch holds future windows.
+- **What it is.** For each (y, x, c), running sums over the trajectory's PAST windows of the scorer's element term for K=9
+  candidate multipliers k = 0.5*2**(j/4); the current window takes the per-pixel argmax, a 3x3 replicate-padded box mean, and
+  a shrink toward 1 by n/(n+2), applied to the half-width as a continuous multiplier. First window of a trajectory: k = 1.
+- **The method is the shipped code**: `Track_2/submit/submission.py` with `R1 = True`, `R1_KS`, `R1_SNAP = False`, `R1_FP32 = True`
+  (fp32 sums). `Track_2/r1_ref/` holds Ramesh's float64 numpy / torch references as checking tools; see its README for the
+  expected fp32-vs-fp64 difference (~1e-5 of pixels; an fp64 build, `R1_FP32 = False`, matches the numpy reference bit for bit).
+- **Required checks for an R1 package** (all run by the `r1_build*` jobs): `validate_t2.py --adaptive`; `stream_eval.py --causal-check`
+  (§9.1 item 6); with `prev_target_norm = None` on every step the package equals the same package with `R1 = False` bit for bit.
+- **Nothing to train**: R1 has no weights and no fitted constants beyond `R1_KS` / `R1_N0`; the package is any T2 package with
+  `R1 = True` set in its baked `submission.py`.
+
