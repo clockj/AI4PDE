@@ -142,6 +142,64 @@ PAR_STREAMS = True
 CENTRE_ALPHA = ALPHA
 
 # ---------------------------------------------------------------------------------------
+# R1 (2026-09-25, Ramesh; approved for TRACK 2 ONLY by Jonas): causal per-pixel online calibration of the SPS
+# half-width from this trajectory's own REVEALED errors. The Codabench T2 page names "calibration" as a legal
+# adaptation inside ttt_step; at step t the platform hands us the target of step t-1 and nothing later.
+# For every (y, x, c) keep, per candidate multiplier k in R1_KS, the running sum over PAST windows of the scorer's
+# element term 1[lo<=y<=hi]*exp(-(hi-lo)/SIGMA_G) on scored elements (unweighted). Current window: per-pixel argmax,
+# 3x3 replicate-padded box mean, shrink toward 1 by n/(n+R1_N0), snap to the grid; first window of a trajectory k=1.
+# base, sigma ratio, centre and the min/max clamp are untouched: only half -> k*half. Off (False) = bit-identical.
+# Reference: Ramesh's causal_band.py (numpy) / causal_band_t2.py (torch, this class verbatim minus its self-test).
+# NEVER port to Track 1: its batch holds future windows, so the same statistic would read their answers.
+R1 = False
+R1_KS = tuple(round(0.5 + 0.1 * i, 3) for i in range(16))   # k_min 0.5, k_max 2.0, step 0.1 (Jonas 09-25)
+R1_N0 = 2.0
+R1_UNSCORED_TOL = 1e-6                                      # |yn - z_c| below this = an unscored (physical 0) element
+_SIGMA_G = 0.0563870259
+
+
+def _r1_box3(a):                             # (H,W,C) float64, replicate-padded 3x3 mean, reference op order
+    o = a
+    for ax in (0, 1):
+        q = o.movedim(ax, 0); L = q.shape[0]
+        q = torch.cat([q[:1], q, q[-1:]], 0)
+        o = (((q[0:L] + q[1:L + 1]) + q[2:L + 2]) / 3.0).movedim(0, ax)
+    return o
+
+
+class _CausalBandScalerT:
+    def __init__(self, ks, n0, std_tgt, sigma, device, shape=(32, 64, 2)):
+        self.ks = torch.tensor(list(ks), dtype=torch.float64, device=device)
+        self.ks32 = self.ks.to(torch.float32)
+        self.n0 = torch.tensor(float(n0), dtype=torch.float64, device=device)
+        self.std_tgt = torch.tensor(list(std_tgt), dtype=torch.float64, device=device)
+        self.sigma = float(sigma)
+        self.cum = torch.zeros((len(ks),) + tuple(shape), dtype=torch.float64, device=device)
+        self.n = torch.zeros((), dtype=torch.float64, device=device)
+        self.one = torch.ones((), dtype=torch.float64, device=device)
+
+    @torch.no_grad()
+    def reset(self):
+        self.cum.zero_(); self.n.zero_()
+
+    @torch.no_grad()
+    def kfield(self):                        # -> (1,1,H,W,C) float32, from PAST windows only
+        kh = _r1_box3(self.ks[self.cum.argmax(0)])
+        k = 1.0 + (kh - 1.0) * self.n / (self.n + self.n0)          # n = 0 -> exactly 1.0
+        j = (self.ks[:, None, None, None] - k[None]).abs().argmin(0)
+        return self.ks32[j][None, None]
+
+    @torch.no_grad()
+    def update(self, P, C, h, y_tgt, scored):
+        """(1,T,H,W,C) target-normalised; call AFTER the window's target is revealed."""
+        hk = h * self.ks32[:, None, None, None, None]
+        lo = torch.minimum(C - hk, P); hi = torch.maximum(C + hk, P)
+        w = torch.exp(-((hi - lo).to(torch.float64) * self.std_tgt) / self.sigma)
+        cov = (y_tgt >= lo) & (y_tgt <= hi) & scored
+        self.cum += torch.where(cov, w, torch.zeros_like(w)).sum(1)
+        self.n += self.one
+
+# ---------------------------------------------------------------------------------------
 # THE RUNNING-HISTORY MEAN. Off by default (HIST_BETA = 0), so the step is bit-identical to
 # the round-13 package until it is switched on.
 #
@@ -222,6 +280,18 @@ class FrozenEnsemble:
         self.hn = 0.0
         self.ghm = torch.zeros_like(self.hsum)
         self.ggate = torch.zeros((), dtype=torch.float32, device=device)
+        # R1 state: gk = this window's multiplier field (read inside the graph), gH / gC = this window's pre-multiplier
+        # half-width and centre (written inside the graph); at the NEXT step, before the replay overwrites them, they
+        # and go are exactly the previous window's P / C / h that the revealed target is scored against.
+        self.r1 = None
+        if R1 and self.half0 is not None:
+            self.r1 = _CausalBandScalerT(R1_KS, R1_N0, _STD_TGT.tolist(), _SIGMA_G, device, (H, W, 2))
+            self.gk = torch.ones((1, 1, H, W, 2), dtype=torch.float32, device=device)
+            self.gH = torch.zeros((1, T_OUT, H, W, 2), dtype=torch.float32, device=device)
+            self.gC = torch.zeros((1, T_OUT, H, W, 2), dtype=torch.float32, device=device)
+            self.r1_z = torch.from_numpy((-_fno.MEAN.astype(np.float64).reshape(-1)[:2]
+                                          / _fno.STD.astype(np.float64).reshape(-1)[:2]).astype(np.float32)).to(device)
+            self.r1_prev = False
         self._streams = ([torch.cuda.Stream() for _ in models]
                          if cuda and PAR_STREAMS and len(models) > 1 else None)
         self.graph = None
@@ -311,7 +381,12 @@ class FrozenEnsemble:
                 half = half * torch.clamp((sig * self.std) / self.sref, 0.3, 3.0) ** self.band_p
             if self.err is not None and er is not None and self.eref is not None and self.err["q"]:
                 half = half * torch.clamp((er * self.std) / self.eref, 0.3, 3.0) ** self.err["q"]
+        if self.r1 is not None:
+            self.gH.copy_(half.expand_as(self.gH))
+            half = half * self.gk
         if CENTRE_ALPHA == ALPHA or sig is None or HIST_BETA:
+            if self.r1 is not None:
+                self.gC.copy_(self.go[..., :2])
             self.gl[..., :2] = self.go[..., :2] - half
             self.gh[..., :2] = self.go[..., :2] + half
             return
@@ -320,6 +395,8 @@ class FrozenEnsemble:
         c = y0 * self.Ad + self.Bd
         if CENTRE_ALPHA != 0.0:
             c = c + (CENTRE_ALPHA / ALPHA) * (self.go[..., :2] - c)
+        if self.r1 is not None:
+            self.gC.copy_(c)
         self.gl[..., :2] = torch.minimum(c - half, self.go[..., :2])
         self.gh[..., :2] = torch.maximum(c + half, self.go[..., :2])
 
@@ -368,6 +445,10 @@ class FrozenEnsemble:
         """
         self.hsum.zero_()
         self.hn = 0.0
+        if self.r1 is not None:
+            self.r1.reset()
+            self.gk.fill_(1.0)
+            self.r1_prev = False
 
     @torch.no_grad()
     def ttt_step(self, input_norm, prev_target_norm=None) -> Tuple[Any, Dict[str, Any]]:
@@ -385,10 +466,20 @@ class FrozenEnsemble:
             d = torch.clamp(torch.maximum(lo - spd, spd - hi), min=0.0) / max(
                 (hi - lo) * BLEND_REF, 1e-9)
             torch.clamp(d, 0.0, 1.0, out=self.ggate)
+        if self.r1 is not None:
+            # go / gC / gH still hold the PREVIOUS window (this step's replay has not run yet): score them against the
+            # target the platform just revealed, then set this window's multiplier from past windows only.
+            if prev_target_norm is not None and self.r1_prev:
+                yp = torch.as_tensor(prev_target_norm).to(self.gx.device, torch.float32)[..., :2]
+                scored = (yp - self.r1_z).abs() >= R1_UNSCORED_TOL
+                self.r1.update(self.go[..., :2], self.gC, self.gH, yp * self.Ad + self.Bd, scored)
+            self.gk.copy_(self.r1.kfield())
         if self.graph is not None:
             self.graph.replay()
         else:
             self._body()
+        if self.r1 is not None:
+            self.r1_prev = True
         srcs = (self.go,) if self.half0 is None else (self.go, self.gl, self.gh)
         out = self._fetch(srcs, x.is_cuda)
         if self.half0 is None:
