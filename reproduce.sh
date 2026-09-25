@@ -396,7 +396,6 @@ case "$WHICH" in
   # QD needs the r34 members and twins too: the control band and the twin export of the k derivation (§10.3) use them.
   QD)         twins_vit; twins_ffno; twins_ffno_qd; members_vit; members_ffno; members_ffno_qd; qd_k_derive; build_qd ;;
   QD_STATIC)  twins_vit; twins_ffno_qd; members_vit; members_ffno_qd; build_qd_static ;;
-  CAND4)      echo "CAND4 is a reserved slot (fnll or covmapB, REPRODUCE.md top table): not defined unless its gate passes."; exit 2 ;;
   *) echo "usage: $0 [t1|t2|both|r34|r25|r28] | --recipe A|QD|QD_STATIC"; exit 2 ;;
 esac
 [ "${STUDENT:-0}" = "1" ] && student

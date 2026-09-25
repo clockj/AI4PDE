@@ -7,8 +7,8 @@ parameter regimes; the resulting private-test scores decide the top 3."* A third
 the released data to the uploaded archive with nothing of ours but this repository. §6 lists every place that
 is not yet true.
 
-## FINAL_RECIPE_T1 = <TO BE DECIDED after the 09-25 / 09-26 boards>   (A | QD | QD_STATIC)
-## FINAL_RECIPE_T2 = <TO BE DECIDED after the 09-25 / 09-26 boards>   (A | QD | QD_STATIC)
+## FINAL_RECIPE_T1 = <TO BE DECIDED after the 09-25 / 09-26 boards>   (A | QD | QD_STATIC; T2 may add R1, §11)
+## FINAL_RECIPE_T2 = <TO BE DECIDED after the 09-25 / 09-26 boards>   (A | QD | QD_STATIC; T2 may add R1, §11)
 (The only two lines to change. Per track because the tracks may end on different candidates -- Jonas 09-24; structure: Ilse.)
 
 Three candidates, each written in full; everything below this block is history (older packages of record) and the stages both
@@ -20,7 +20,6 @@ the same precision knobs. They differ in the four F-FNO members, the band, and (
 | **A** (r38) | `ffno_all_w40l8_sim_s1..s4` (§1.4) | static sigma band, refit at ALPHA 0.80 (§3) | `track1_r38_samecode.zip` / `track2_r38_alpha080_ds.zip` |
 | **QD** | `ffno_all_w40l8_sim_qderr_s1..s4` (§10.1) | `half = k*H`, `err_mode=direct`, `err_k = 1.1399` (§10.3) | `track{1,2}_qd_direct.zip` |
 | **QD_STATIC** | `ffno_all_w40l8_sim_qderr_s1..s4` (§10.1) | static sigma band, fit on the QD twins `qd_twin_s1..s3` (§10.2) + the two ViT twins | `spare_0926/track{1,2}_qd_static.zip` (09-26 T2) |
-| *(reserved)* **CAND4** | fnll (QD members + `--fnll-beta 0.5 --lam-fnll 1.0`) **or** covmapB (band fit before members: a serial dependency) | tbd | only if its #Brainstorm-Only gate passes (readout ~03-04Z 09-25, Jonas); otherwise this row is deleted. Its `train2.py` patch must be merged into this repo first. |
 
 **T2's A on the board is `track2_r38_alpha080_ds.zip`, built with the 09-23 code.** The A command below builds
 `track2_r38_samecode.zip` instead: its submission.py differs (the ds file carries a dead `CAUSAL_ALPHA = None` block and no `_ERR`) and
