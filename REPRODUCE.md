@@ -605,6 +605,12 @@ end-to-end `20260922-111450-*-ilse-repro-phase3-build`.
    stage writes the cache there. `reproduce.sh` now falls back to `$OUT/simcache` when the default is not writable (2026-09-24);
    when calling `train2.py` directly, export `RPDE_SIMCACHE=<writable dir>` yourself.
 
+6. **Adaptive Track 2 packages must pass the causality assertion** (added 2026-09-25):
+   `python Track_2/stream_eval.py --submission <dir> --split unseen --causal-check`. In each trajectory it replaces every window
+   after the middle one (input and revealed truth) with noise and requires every earlier pred / lower / upper to be bit-identical.
+   The static packages pass trivially; any online-calibrated band (R1) must pass it before it ships. Checked 09-25 on CPU: the
+   09-25 T2 package passes (max |diff| 0.0), and a wrapper that peeks one window ahead is caught.
+
 None of the five affects the shipped archives; all five stop a from-scratch reproduction on a fresh machine,
 which is exactly what the organizers will attempt.
 
