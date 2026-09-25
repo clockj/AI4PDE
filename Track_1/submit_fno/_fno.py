@@ -2366,9 +2366,10 @@ def load_any(path: str, device: str):
     return m
 
 
-# D2 step 2: in the band_gpu path, write the 3-channel prediction straight into a contiguous (N,20,H,W,3) `dst`.
-# False = the D2 (c868b3a) path, byte for byte.
-D2_DIRECT_PRED = True
+# D2 step 2 (D2b): in the band_gpu path, write the 3-channel prediction straight into a contiguous (N,20,H,W,3) `dst`.
+# False = the D2 (c868b3a) path, byte for byte. OPT-IN since 09-25 18Z: it trades +0.03 ms/window on a many-core host for
+# -0.18 on one core, and is stacked only if D2's board read says CPU-bound; build_round13 bakes it (RPDE_SHIP_DIRECT_PRED).
+D2_DIRECT_PRED = False
 
 
 @torch.no_grad()
