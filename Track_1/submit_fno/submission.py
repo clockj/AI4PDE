@@ -154,6 +154,13 @@ AMP_PROBE_DIFF = None
 # locally measured amount (`verify/graph_path.py`). Board sps identical to the eager package's
 # means the fallback ran.
 GRAPH = False
+# GPU_BAND (D2, 2026-09-25): finish the SPS interval on the GPU inside predict_fno's chunk loop (see _fno.predict_fno
+# band_gpu) and hand a float64 input to the GPU unconverted. Measured on one CPU core (d2_profile run 20260925-043642):
+# the host-side band cost 0.59 ms/window and a float64->float32 host conversion 0.17. Used only where it is BIT-IDENTICAL
+# to the host path (sigma-scaled static band, no err head, no blend, centre = pred or CENTRE_ALPHA 0, no graph); else the
+# host path below runs unchanged.
+GPU_BAND = True
+_BAND_DEV = None
 GRAPH_FP = 1e-4
 GRAPH_ACTIVE = None
 GRAPH_PROBE_DIFF = None
@@ -551,6 +558,24 @@ def predict(input_array, metadata=None):
         _state = _load()
     models, dev, band, ref, p, batch = _state[:6]
     graphed = _state[6] if len(_state) > 6 else None
+
+    use_gpu_band = (GPU_BAND and graphed is None and band is not None and _ERR is None and not BLEND_BETA
+                    and p and str(dev).startswith("cuda") and band.shape[1:] == (20, 32, 64, 3)
+                    and (CENTRE_ALPHA == ALPHA or CENTRE_ALPHA == 0.0))
+    if use_gpu_band:
+        global _BAND_DEV
+        if _BAND_DEV is None:
+            _BAND_DEV = torch.from_numpy(np.ascontiguousarray(band)).to(dev)
+        xin = np.asarray(input_array)
+        # float32 or float64 go up as they are (predict_fno casts on the GPU; f64->f32 rounding is identical there)
+        xin = np.ascontiguousarray(xin) if xin.dtype in (np.float32, np.float64) else np.ascontiguousarray(xin, dtype=np.float32)
+        pred = np.zeros((len(xin), 20, 32, 64, 3), dtype=np.float32)
+        sig = np.empty((len(xin), 1, 32, 64, 2), dtype=np.float32)
+        lower = np.empty_like(pred)
+        upper = np.empty_like(pred)
+        _fno.predict_fno(models, xin, dev, alpha=ALPHA, batch=batch, out=pred, sigma_out=sig, amp=_AMP_DT,
+                         band_gpu=(_BAND_DEV, ref, p, lower, upper, CENTRE_ALPHA != ALPHA))
+        return {"prediction": pred, "lower": lower, "upper": upper}
 
     x = np.ascontiguousarray(input_array, dtype=np.float32)
     # Allocate the output once, zero-filled, and let the model write u,v into it. The pressure

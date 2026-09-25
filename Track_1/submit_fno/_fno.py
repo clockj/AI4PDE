@@ -2372,7 +2372,7 @@ def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
                 sigma_out: np.ndarray | None = None,
                 pad_batch: bool = _PAD_BATCH, amp=_AMP,
                 centre_out: np.ndarray | None = None,
-                err_out: np.ndarray | None = None, err_xform=None) -> np.ndarray:
+                err_out: np.ndarray | None = None, err_xform=None, band_gpu=None) -> np.ndarray:
     """(N,20,32,64,>=2) raw physical -> (N,20,32,64,2) raw physical.
 
     predict() is TIMED, and at ~0.1 ms/window of actual compute this function is dominated by
@@ -2386,6 +2386,13 @@ def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
         host first makes a non-contiguous view that ascontiguousarray must copy.
     """
     models = list(model) if isinstance(model, (list, tuple)) else [model]
+    # band_gpu (D2, 09-25): (base_dev (1,20,H,W,3), ref (1,1,H,W,>=2) host, p, lower_out, upper_out, centred).
+    # The SPS interval is finished HERE, per chunk, on the GPU, instead of in five full-size host passes
+    # after the loop (0.59 ms/window on one CPU core, d2_profile run 20260925-043642). Bit-identical to the
+    # host path: the only non-exact op, the sigma-ratio pow, stays on the HOST in numpy exactly as there
+    # (numpy f32 pow != a float64-rounded or CUDA pow on ~0.06 % of values); everything done on the GPU --
+    # one multiply, then subtract/add and min/max as SEPARATE kernels (no FMA) -- is exact IEEE float32.
+    # `centred` False: interval = pred -/+ half; True: centre = the pre-compose mean y0 (CENTRE_ALPHA 0).
     # A `--norm self` member divides each window by its own mean streamwise speed before the
     # standardization, so its affine is per-WINDOW. Mixing the two conventions in one ensemble
     # would average fields that were never in the same space; refuse rather than average.
@@ -2471,6 +2478,7 @@ def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
             if sn:
                 mean, std = mean[:nb], std[:nb]
 
+        c_dev = (y * std + mean).float() if (band_gpu is not None and band_gpu[5]) else None
         if centre_out is not None:
             # The member average BEFORE compose, physical units: the SPS interval centre when
             # it is decoupled from the point prediction (Bram, 2026-09-21: centring the band on
@@ -2511,7 +2519,23 @@ def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
                     torch.from_numpy(err_out)[i:i + batch].copy_(torch.from_numpy(hh))
                 else:
                     err_out[i:i + batch] = hh
-        hb = (y * std + mean).float().cpu().numpy()
+        yp = (y * std + mean).float()
+        if band_gpu is not None:
+            base_d, ref_h, p_, lo_out, hi_out, centred = band_gpu
+            # sigma ratio on the HOST (small: 1/20 of the field), same numpy expression as submission.py
+            s_h = sigma_out[i:i + batch] if sigma_out is not None else (sig * std).float().cpu().numpy()
+            r3 = np.zeros((len(yp), 1, H, W, 3), dtype=np.float32)
+            np.power(np.clip(s_h / ref_h[..., :2], 0.3, 3.0), np.float32(p_), out=r3[..., :2])
+            half = torch.mul(base_d, torch.from_numpy(r3).to(device, non_blocking=True))       # (B,20,H,W,3)
+            p3 = torch.zeros_like(half); p3[..., :2] = yp
+            if centred:
+                c3 = torch.zeros_like(half); c3[..., :2] = c_dev
+                lo = torch.minimum(torch.sub(c3, half), p3); hi = torch.maximum(torch.add(c3, half), p3)
+            else:
+                lo = torch.sub(p3, half); hi = torch.add(p3, half)
+            torch.from_numpy(lo_out)[i:i + batch].copy_(lo)
+            torch.from_numpy(hi_out)[i:i + batch].copy_(hi)
+        hb = yp.cpu().numpy()
         if _HOSTW == "torch":
             # `torch.from_numpy` is a view, not a copy, and copy_ between two float32 tensors
             # of the same shape is exact -- so this is bit-identical, only threaded.
