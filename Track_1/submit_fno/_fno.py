@@ -2366,6 +2366,11 @@ def load_any(path: str, device: str):
     return m
 
 
+# D2 step 2: in the band_gpu path, write the 3-channel prediction straight into a contiguous (N,20,H,W,3) `dst`.
+# False = the D2 (c868b3a) path, byte for byte.
+D2_DIRECT_PRED = True
+
+
 @torch.no_grad()
 def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
                 batch: int = 64, out: np.ndarray | None = None,
@@ -2535,6 +2540,12 @@ def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
                 lo = torch.sub(p3, half); hi = torch.add(p3, half)
             torch.from_numpy(lo_out)[i:i + batch].copy_(lo)
             torch.from_numpy(hi_out)[i:i + batch].copy_(hi)
+            if D2_DIRECT_PRED and dst.shape[-1] == 3 and dst.flags.c_contiguous:
+                # D2 step 2 (09-25): p3 is the prediction with channel 2 = +0.0, which is what the caller pre-zeroed, so one
+                # contiguous device->host copy into `dst` replaces yp.cpu() (a fresh full-size host allocation) plus a second
+                # host copy into dst[..., :2]. Same float32 bits in every channel.
+                torch.from_numpy(dst)[i:i + batch].copy_(p3)
+                continue
         hb = yp.cpu().numpy()
         if _HOSTW == "torch":
             # `torch.from_numpy` is a view, not a copy, and copy_ between two float32 tensors
