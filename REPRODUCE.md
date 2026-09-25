@@ -803,4 +803,6 @@ absorbed by the six-member average. **Nondeterminism (supersedes the "bit-identi
 same card does NOT give the same weights — F-FNO end ~0.5 % apart (relative L2), ViT ~10 %, against the 09-21 retrain; the printed
 epoch-399 loss can still agree to 5 digits. Judge a reproduction on ② and ③, not on log lines. Code review (Corin 09-25) found the
 default training path unchanged by the err-head commits since 09-22 (no extra module, no extra RNG draw when `--err-head` is off).
-Wall time: all-data F-FNO ~4:41, twin F-FNO ~4:41, ViT `cmb3sim` 4:46 (twin) / 5:22 (all-data), ViT no-sim ~2:30 on a V100S.
+Wall time: all-data F-FNO ~4:41, twin F-FNO ~4:41, ViT `cmb3sim` 4:47 (twin) / 5:21 (all-data), ViT no-sim 2:28-2:45 on a V100S (training time from the logs; set limits >= 330 min for
+the sim runs). Example of why log lines are not evidence (Devi): `me_vitc`'s printed epoch-399 loss differs from 09-21 by 2e-5 while its
+single-model AoA 15-20 wfinal differs by −0.019.
