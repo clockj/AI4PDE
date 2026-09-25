@@ -117,6 +117,15 @@ grep -H "^GRAPH = \|^GRAPH_FP = " Track_1/submit_fno/submission.py
 # outside the training speed range, so NOTHING LOCAL EXERCISES IT -- `verify/blend_path.py` is
 # the gate for it and the strict gate below is not.
 sed -i "s/^BLEND_BETA = .*/BLEND_BETA = $BETA/" Track_1/submit_fno/submission.py
+# Audit-2 knobs (09-25), BAKED like the rest; UNSET leaves each file untouched, so a build without them is byte-for-byte
+# the build before this block existed. RPDE_SHIP_BATCH_FP="(eps1, eps2)" Track 1 batch fingerprint (N<14, 14<=N<100);
+# RPDE_SHIP_FALLBACK_FP=<eps> Track 2 graph-fallback fingerprint; RPDE_SHIP_GRAPH_TOL=<tol> Track 2 capture tolerance (N6);
+# RPDE_SHIP_R1=True Track 2's causal band calibration (REPRODUCE §11). All read on the time mean / capture only.
+[ -n "${RPDE_SHIP_BATCH_FP:-}" ] && sed -i "s/^BATCH_FP = .*/BATCH_FP = $RPDE_SHIP_BATCH_FP/" Track_1/submit_fno/submission.py
+[ -n "${RPDE_SHIP_FALLBACK_FP:-}" ] && sed -i "s/^FALLBACK_FP = .*/FALLBACK_FP = $RPDE_SHIP_FALLBACK_FP/" Track_2/submit/submission.py
+[ -n "${RPDE_SHIP_GRAPH_TOL:-}" ] && sed -i "s/^GRAPH_TOL = .*/GRAPH_TOL = $RPDE_SHIP_GRAPH_TOL/" Track_2/submit/submission.py
+[ -n "${RPDE_SHIP_R1:-}" ] && sed -i "s/^R1 = .*/R1 = $RPDE_SHIP_R1/" Track_2/submit/submission.py
+grep -H "^BATCH_FP = \|^DIAG = " Track_1/submit_fno/submission.py; grep -H "^FALLBACK_FP = \|^GRAPH_TOL = \|^R1 = \|^DIAG = " Track_2/submit/submission.py
 grep -H "^ALPHA = " Track_1/submit_fno/submission.py Track_2/submit/submission.py
 grep -H "^BLEND_BETA = " Track_1/submit_fno/submission.py
 

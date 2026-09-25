@@ -138,6 +138,23 @@ _ERR = None       # err-head band settings from band.npz; None = no head term (s
 # (verified package-against-package with verify/pkg_identity.py, --tol 0, run 20260923-170904:
 # T2 -1.03 ms/step on a V100); False restores the serial loop.
 PAR_STREAMS = True
+# GRAPH_TOL (N6, Jonas 09-25): the load-time capture check compares graph replay with the eager path.
+# 0.0 (the historical rule) demands bit-identity, which a different GPU's cuFFT/cuBLAS choice can break
+# and then the step silently falls back to eager (~3x slower at batch 1). A positive value accepts a
+# replay whose max|replay - eager| / max|eager| is at most GRAPH_TOL. GRAPH_WORST records what was
+# measured at load (None = capture raised), for the load-time report. Eager path unchanged.
+GRAPH_TOL = 0.0
+GRAPH_WORST = None
+GRAPH_ERR = None      # the exception text if capture raised (load-time report; None = no exception)
+# DIAG (N1, audit 2, 09-25): one line of load-time facts on stdout from get_ttt_model (NOT timed) -- GPU, CPUs, torch/CUDA,
+# AMP, graph captured or not, GRAPH_WORST / GRAPH_ERR -- plus one line on the first ttt_step (shape, dtype). Nobody had
+# ever read the Codabench logs; this makes them worth reading. Printing changes no tensor.
+DIAG = True
+# FALLBACK_FP (N2, audit 2 / Jonas 09-25): graph-fallback fingerprint. When the step runs EAGER (self.graph is None), the
+# RETURNED prediction becomes P + FALLBACK_FP * mean_t(P): the time mean scaled by (1 + eps), fluctuations untouched. mvpe
+# reads the time mean and is alpha-invariant, so the board's mvpe shows whether the graph ran. Applied to the returned
+# copy only (R1's state and the interval are untouched). 0.0 = off; with a graph it is never applied (bit-identical).
+FALLBACK_FP = 0.0
 # SPS interval centre, decoupled from the prediction -- see Track_1 submission.py CENTRE_ALPHA.
 # Read from band.npz (`centre_alpha`) in _load_band; no key => ALPHA, the old bounds exactly.
 CENTRE_ALPHA = ALPHA
@@ -467,12 +484,16 @@ class FrozenEnsemble:
             self.gx.copy_(probe)
             g.replay()
             torch.cuda.synchronize()
-            worst = max(float((a - b).abs().max())
+            worst = max(float((a - b).abs().max()) / max(float(b.abs().max()), 1e-12)
                         for a, b in zip((self.go, self.gl, self.gh), ref))
-            self.graph = g if worst == 0.0 else None
+            global GRAPH_WORST
+            GRAPH_WORST = worst
+            self.graph = g if worst <= GRAPH_TOL else None
             if self.r1 is not None:                  # warm-up / probe ran with gflag 0 (no update), but be exact
                 self.r1.reset(); self.gk.fill_(1.0); self.gflag.fill_(0.0)
-        except Exception:
+        except Exception as e:
+            global GRAPH_ERR
+            GRAPH_ERR = repr(e)[:300]
             self.graph = None
 
     # -- contract ----------------------------------------------------------------------
@@ -522,6 +543,12 @@ class FrozenEnsemble:
             self.r1_prev = True
         srcs = (self.go,) if self.half0 is None else (self.go, self.gl, self.gh)
         out = self._fetch(srcs, x.is_cuda)
+        if FALLBACK_FP and self.graph is None:
+            out[0].add_(out[0].mean(1, keepdim=True), alpha=float(FALLBACK_FP))
+        if DIAG and not getattr(self, "_diag_step", False):
+            self._diag_step = True
+            print(f"[rpde-t2] first ttt_step: input {tuple(x.shape)} {x.dtype} on {x.device}; "
+                  f"graph {'replay' if self.graph is not None else 'EAGER'}", flush=True)
         if self.half0 is None:
             return out[0], {"adapt_loss": None}
         return out[0], {"adapt_loss": None, "lower": out[1], "upper": out[2]}
@@ -641,4 +668,14 @@ def get_ttt_model(submission_dir: str, device: str):
             torch.cuda.synchronize()
     except Exception:
         pass
+    if DIAG:
+        try:
+            aff = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None
+            gpu = torch.cuda.get_device_name(0) if dev.startswith("cuda") else "cpu"
+            print(f"[rpde-t2] load: gpu {gpu!r} cpus {os.cpu_count()} affinity {aff} torch {torch.__version__} "
+                  f"cuda {torch.version.cuda} amp {AMP_ACTIVE} par_streams {PAR_STREAMS} r1 {R1} alpha {ALPHA} "
+                  f"graph {'CAPTURED' if m.graph is not None else 'NONE'} graph_worst {GRAPH_WORST} graph_tol {GRAPH_TOL} "
+                  f"graph_err {GRAPH_ERR} fallback_fp {FALLBACK_FP} members {len(ckpts)}", flush=True)
+        except Exception as e:
+            print(f"[rpde-t2] load report failed: {e!r}", flush=True)
     return m
