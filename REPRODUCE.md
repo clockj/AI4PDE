@@ -780,3 +780,27 @@ platform reveals the target of step t-1 and nothing later). NEVER port it to Tra
 - **Nothing to train**: R1 has no weights and no fitted constants beyond `R1_KS` / `R1_N0`; the package is any T2 package with
   `R1 = True` set in its baked `submission.py`.
 
+
+---
+
+## 12. `reproduce.sh --recipe A` end to end at 400 epochs on the current code (2026-09-25, Emre; accepted by Ilse)
+
+The organisers' step, run as they would: a clean `git archive` of qwu/agent **7be7d58** (c868b3a + the ViT stage split of §8's
+`RPDE_REPRO_STAGE`), no checkpoint in the tree, the eleven training stages as eleven parallel Pitzer V100S jobs
+(`RPDE_REPRO_STAGE` = `twins_vit_p|twins_vit_c|twins_ffno|members_vit_p|members_vit_c|members_ffno`, `RPDE_REPRO_SEEDS` one seed each,
+`RPDE_REPRO_OUT` a scratch dir), then one build job reading the eleven retrained checkpoints (every stage must print SKIP).
+Run ids `20260925-0902..0924xx-*-emre-reproA_<stage>`, build `20260925-144524-*-emre-reproA_build`; evidence `~/realpde-packages/repro_20260925/`.
+
+| acceptance (written before the run) | result |
+|---|---|
+| ① both gates | 2/2 SUBMITTABLE |
+| ② AoA 15-20 wfinal, retrained 6 members vs shipped (Ilse's `repro_score.py`) — pass <= 0.005 | **+0.0006** (full +0.0040); 09-22 anchor −0.0019 / +0.0022 |
+| ③ refit band vs shipped r38 band | base rel-L2 2.6 %, sigma_ref 0.24 %; p, clip, centre_alpha identical |
+| ④ provenance | 11 retrained sha256 = training-job logs = owner-staged SHA256SUMS; none equals a shipped checkpoint; 11 stages SKIPped |
+
+Per member (AoA 15-20, retrained vs shipped): F-FNO within ±0.0002; `arch_vit_all_s1` +0.0011; `arch_vit_all_cmb3sim_s3` −0.019,
+absorbed by the six-member average. **Nondeterminism (supersedes the "bit-identical at epoch 399" reading):** same seed, same code,
+same card does NOT give the same weights — F-FNO end ~0.5 % apart (relative L2), ViT ~10 %, against the 09-21 retrain; the printed
+epoch-399 loss can still agree to 5 digits. Judge a reproduction on ② and ③, not on log lines. Code review (Corin 09-25) found the
+default training path unchanged by the err-head commits since 09-22 (no extra module, no extra RNG draw when `--err-head` is off).
+Wall time: all-data F-FNO ~4:41, twin F-FNO ~4:41, ViT `cmb3sim` 4:46 (twin) / 5:22 (all-data), ViT no-sim ~2:30 on a V100S.
