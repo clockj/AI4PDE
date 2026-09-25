@@ -151,9 +151,12 @@ run() {                      # run <out.pth> <flags...>
 # and wherever --sim is present the twin adds --sim-exclude-held.
 twins_vit() {
   echo "== ViT twins (2), shared by every package below =="
-  run $OUT/arch_vit_d384.pth    $VITP --seed 1
-  run $OUT/arch_vit_cmb3sim.pth $VITC --seed 1 $SIMF --sim-exclude-held
+  twins_vit_p; twins_vit_c
 }
+# One function per ViT run so RPDE_REPRO_STAGE can put each in its own job (a V100 job is capped at 6 h and the
+# two runs together exceed it). Same flags, same outputs; twins_vit / members_vit above and below are unchanged.
+twins_vit_p() { run $OUT/arch_vit_d384.pth    $VITP --seed 1; }
+twins_vit_c() { run $OUT/arch_vit_cmb3sim.pth $VITC --seed 1 $SIMF --sim-exclude-held; }
 twins_ffno() {
   echo "== F-FNO + sim twins (3) -- the band's error field on BOTH tracks =="
   for s in $SEEDS_TW; do
@@ -164,9 +167,10 @@ twins_ffno() {
 # ============================== stage 2: ALL-DATA MEMBERS (what ships) ======================
 members_vit() {
   echo "== all-data ViT members (2), shared by every package below =="
-  run $OUT/arch_vit_all_s1.pth         $VITP --seed 1 --all-data
-  run $OUT/arch_vit_all_cmb3sim_s3.pth $VITC --seed 3 --all-data $SIMF
+  members_vit_p; members_vit_c
 }
+members_vit_p() { run $OUT/arch_vit_all_s1.pth         $VITP --seed 1 --all-data; }
+members_vit_c() { run $OUT/arch_vit_all_cmb3sim_s3.pth $VITC --seed 3 --all-data $SIMF; }
 members_ffno() {
   echo "== all-data F-FNO + sim members (4) =="
   for s in $SEEDS_ME; do run $OUT/ffno_all_w40l8_sim_s$s.pth $FFNO $SIMF --seed $s --all-data; done
