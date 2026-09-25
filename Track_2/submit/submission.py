@@ -36,6 +36,7 @@ Track 1 is the band for it here.
 """
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 from typing import Any, Dict, Optional, Tuple
@@ -305,6 +306,9 @@ class FrozenEnsemble:
             self.r1_prev = False
             self.gyp = torch.zeros((1, T_OUT, H, W, 3), dtype=torch.float32, device=device)   # revealed target (input norm)
             self.gflag = torch.zeros((), dtype=torch.float64, device=device)                   # 1 = gyp is valid this step
+            # R1 runs on its own CUDA stream, overlapping the member forwards (it only reads the PREVIOUS window's
+            # go / gC / gH and the revealed target); joined back before go / gC / gH / gk are used or overwritten.
+            self.r1_stream = torch.cuda.Stream() if cuda else None
         self._streams = ([torch.cuda.Stream() for _ in models]
                          if cuda and PAR_STREAMS and len(models) > 1 else None)
         self.graph = None
@@ -333,13 +337,18 @@ class FrozenEnsemble:
 
     # -- the device-side step, written once and used by both paths ----------------------
     def _body(self):
+        r1s = None
         if self.r1 is not None:
             # R1, inside the graph: score the PREVIOUS window (go / gC / gH are not yet overwritten) against the target
             # revealed this step (gyp, valid iff gflag == 1), then set this window's multiplier from past windows only.
-            yp = self.gyp[..., :2]
-            self.r1.update_gated(self.go[..., :2], self.gC, self.gH, yp * self.Ad + self.Bd,
-                                 (yp - self.r1_z).abs() >= R1_UNSCORED_TOL, self.gflag)
-            self.gk.copy_(self.r1.kfield())
+            if self.r1_stream is not None:
+                r1s = self.r1_stream
+                r1s.wait_stream(torch.cuda.current_stream())
+            with (torch.cuda.stream(r1s) if r1s is not None else contextlib.nullcontext()):
+                yp = self.gyp[..., :2]
+                self.r1.update_gated(self.go[..., :2], self.gC, self.gH, yp * self.Ad + self.Bd,
+                                     (yp - self.r1_z).abs() >= R1_UNSCORED_TOL, self.gflag)
+                self.gk.copy_(self.r1.kfield())
         pv = self.gx[..., :2].permute(0, 1, 4, 2, 3).reshape(1, CH, H, W).contiguous()
         y = sig = er = None
         total = etot = 0
@@ -387,6 +396,8 @@ class FrozenEnsemble:
             # Unconditional tensor arithmetic: ggate is 0 for an in-range window, so this is
             # an identity there and no branch is needed inside the graph.
             y = y + (HIST_BETA * self.ggate) * (self.ghm - y.mean(1, keepdim=True))
+        if r1s is not None:
+            torch.cuda.current_stream().wait_stream(r1s)     # R1 has finished reading go / gC / gH and writing gk
         self.go[..., :2] = y * self.Ad + self.Bd
         if self.half0 is None:
             return
