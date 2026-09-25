@@ -153,9 +153,13 @@ CENTRE_ALPHA = ALPHA
 # Reference: Ramesh's causal_band.py (numpy) / causal_band_t2.py (torch, this class verbatim minus its self-test).
 # NEVER port to Track 1: its batch holds future windows, so the same statistic would read their answers.
 R1 = False
-R1_KS = tuple(round(0.5 + 0.1 * i, 3) for i in range(16))   # k_min 0.5, k_max 2.0, step 0.1 (Jonas 09-25)
+R1_KS = tuple(0.5 * 2 ** (j / 4) for j in range(9))        # K=9 log grid 0.5..2.0, contains 1.0 exactly (Jonas 01:41Z 09-25)
+R1_SNAP = False            # False: the smoothed, shrunk k is applied CONTINUOUSLY (the grid only indexes the running sums;
+                           # Jeff/Jonas 09-25: +0.016..0.019 sps over snapping, and K=9 == K=16 within 0.003). True = legacy snap
 R1_N0 = 2.0
 R1_UNSCORED_TOL = 1e-6                                      # |yn - z_c| below this = an unscored (physical 0) element
+R1_FP32 = True             # True: width term + running sum in float32 (Ramesh 09-25: gains identical to 3 decimals, ~half the
+                           # memory traffic and V100 fp32 rate); False: float64, bit-matching his numpy reference
 _SIGMA_G = 0.0563870259
 
 
@@ -173,9 +177,10 @@ class _CausalBandScalerT:
         self.ks = torch.tensor(list(ks), dtype=torch.float64, device=device)
         self.ks32 = self.ks.to(torch.float32)
         self.n0 = torch.tensor(float(n0), dtype=torch.float64, device=device)
-        self.std_tgt = torch.tensor(list(std_tgt), dtype=torch.float64, device=device)
+        self.adt = torch.float32 if R1_FP32 else torch.float64          # accumulation / width-term dtype
+        self.std_tgt = torch.tensor(list(std_tgt), dtype=self.adt, device=device)
         self.sigma = float(sigma)
-        self.cum = torch.zeros((len(ks),) + tuple(shape), dtype=torch.float64, device=device)
+        self.cum = torch.zeros((len(ks),) + tuple(shape), dtype=self.adt, device=device)
         self.n = torch.zeros((), dtype=torch.float64, device=device)
         self.one = torch.ones((), dtype=torch.float64, device=device)
 
@@ -187,15 +192,17 @@ class _CausalBandScalerT:
     def kfield(self):                        # -> (1,1,H,W,C) float32, from PAST windows only
         kh = _r1_box3(self.ks[self.cum.argmax(0)])
         k = 1.0 + (kh - 1.0) * self.n / (self.n + self.n0)          # n = 0 -> exactly 1.0
-        j = (self.ks[:, None, None, None] - k[None]).abs().argmin(0)
-        return self.ks32[j][None, None]
+        if R1_SNAP:
+            j = (self.ks[:, None, None, None] - k[None]).abs().argmin(0)
+            return self.ks32[j][None, None]
+        return k.to(torch.float32)[None, None]
 
     @torch.no_grad()
     def update(self, P, C, h, y_tgt, scored):
         """(1,T,H,W,C) target-normalised; call AFTER the window's target is revealed."""
         hk = h * self.ks32[:, None, None, None, None]
         lo = torch.minimum(C - hk, P); hi = torch.maximum(C + hk, P)
-        w = torch.exp(-((hi - lo).to(torch.float64) * self.std_tgt) / self.sigma)
+        w = torch.exp(-((hi - lo).to(self.adt) * self.std_tgt) / self.sigma)
         cov = (y_tgt >= lo) & (y_tgt <= hi) & scored
         self.cum += torch.where(cov, w, torch.zeros_like(w)).sum(1)
         self.n += self.one
@@ -206,9 +213,9 @@ class _CausalBandScalerT:
         whole R1 step live inside the CUDA graph with no host-side branch (flag set per step before the replay)."""
         hk = h * self.ks32[:, None, None, None, None]
         lo = torch.minimum(C - hk, P); hi = torch.maximum(C + hk, P)
-        w = torch.exp(-((hi - lo).to(torch.float64) * self.std_tgt) / self.sigma)
+        w = torch.exp(-((hi - lo).to(self.adt) * self.std_tgt) / self.sigma)
         cov = (y_tgt >= lo) & (y_tgt <= hi) & scored
-        self.cum += torch.where(cov, w, torch.zeros_like(w)).sum(1) * flag
+        self.cum += torch.where(cov, w, torch.zeros_like(w)).sum(1) * flag.to(self.adt)
         self.n += flag
 
 # ---------------------------------------------------------------------------------------
