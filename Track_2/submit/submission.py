@@ -199,6 +199,17 @@ class _CausalBandScalerT:
         self.cum += torch.where(cov, w, torch.zeros_like(w)).sum(1)
         self.n += self.one
 
+    @torch.no_grad()
+    def update_gated(self, P, C, h, y_tgt, scored, flag):
+        """update() times a device flag (float64 0/1): flag 0 adds exact zeros, so the state is unchanged. Lets the
+        whole R1 step live inside the CUDA graph with no host-side branch (flag set per step before the replay)."""
+        hk = h * self.ks32[:, None, None, None, None]
+        lo = torch.minimum(C - hk, P); hi = torch.maximum(C + hk, P)
+        w = torch.exp(-((hi - lo).to(torch.float64) * self.std_tgt) / self.sigma)
+        cov = (y_tgt >= lo) & (y_tgt <= hi) & scored
+        self.cum += torch.where(cov, w, torch.zeros_like(w)).sum(1) * flag
+        self.n += flag
+
 # ---------------------------------------------------------------------------------------
 # THE RUNNING-HISTORY MEAN. Off by default (HIST_BETA = 0), so the step is bit-identical to
 # the round-13 package until it is switched on.
@@ -292,6 +303,8 @@ class FrozenEnsemble:
             self.r1_z = torch.from_numpy((-_fno.MEAN.astype(np.float64).reshape(-1)[:2]
                                           / _fno.STD.astype(np.float64).reshape(-1)[:2]).astype(np.float32)).to(device)
             self.r1_prev = False
+            self.gyp = torch.zeros((1, T_OUT, H, W, 3), dtype=torch.float32, device=device)   # revealed target (input norm)
+            self.gflag = torch.zeros((), dtype=torch.float64, device=device)                   # 1 = gyp is valid this step
         self._streams = ([torch.cuda.Stream() for _ in models]
                          if cuda and PAR_STREAMS and len(models) > 1 else None)
         self.graph = None
@@ -320,6 +333,13 @@ class FrozenEnsemble:
 
     # -- the device-side step, written once and used by both paths ----------------------
     def _body(self):
+        if self.r1 is not None:
+            # R1, inside the graph: score the PREVIOUS window (go / gC / gH are not yet overwritten) against the target
+            # revealed this step (gyp, valid iff gflag == 1), then set this window's multiplier from past windows only.
+            yp = self.gyp[..., :2]
+            self.r1.update_gated(self.go[..., :2], self.gC, self.gH, yp * self.Ad + self.Bd,
+                                 (yp - self.r1_z).abs() >= R1_UNSCORED_TOL, self.gflag)
+            self.gk.copy_(self.r1.kfield())
         pv = self.gx[..., :2].permute(0, 1, 4, 2, 3).reshape(1, CH, H, W).contiguous()
         y = sig = er = None
         total = etot = 0
@@ -432,6 +452,8 @@ class FrozenEnsemble:
             worst = max(float((a - b).abs().max())
                         for a, b in zip((self.go, self.gl, self.gh), ref))
             self.graph = g if worst == 0.0 else None
+            if self.r1 is not None:                  # warm-up / probe ran with gflag 0 (no update), but be exact
+                self.r1.reset(); self.gk.fill_(1.0); self.gflag.fill_(0.0)
         except Exception:
             self.graph = None
 
@@ -448,6 +470,7 @@ class FrozenEnsemble:
         if self.r1 is not None:
             self.r1.reset()
             self.gk.fill_(1.0)
+            self.gflag.fill_(0.0)
             self.r1_prev = False
 
     @torch.no_grad()
@@ -467,13 +490,12 @@ class FrozenEnsemble:
                 (hi - lo) * BLEND_REF, 1e-9)
             torch.clamp(d, 0.0, 1.0, out=self.ggate)
         if self.r1 is not None:
-            # go / gC / gH still hold the PREVIOUS window (this step's replay has not run yet): score them against the
-            # target the platform just revealed, then set this window's multiplier from past windows only.
+            # Hand the revealed target to the graph; _body scores the previous window with it (flag 1) or skips (flag 0).
             if prev_target_norm is not None and self.r1_prev:
-                yp = torch.as_tensor(prev_target_norm).to(self.gx.device, torch.float32)[..., :2]
-                scored = (yp - self.r1_z).abs() >= R1_UNSCORED_TOL
-                self.r1.update(self.go[..., :2], self.gC, self.gH, yp * self.Ad + self.Bd, scored)
-            self.gk.copy_(self.r1.kfield())
+                self.gyp.copy_(torch.as_tensor(prev_target_norm), non_blocking=True)
+                self.gflag.fill_(1.0)
+            else:
+                self.gflag.fill_(0.0)
         if self.graph is not None:
             self.graph.replay()
         else:
