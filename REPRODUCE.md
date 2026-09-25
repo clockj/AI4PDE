@@ -7,8 +7,8 @@ parameter regimes; the resulting private-test scores decide the top 3."* A third
 the released data to the uploaded archive with nothing of ours but this repository. §6 lists every place that
 is not yet true.
 
-## FINAL_RECIPE_T1 = <TO BE DECIDED after the 09-25 / 09-26 boards>   (A | QD | QD_STATIC; T2 may add R1, §11)
-## FINAL_RECIPE_T2 = <TO BE DECIDED after the 09-25 / 09-26 boards>   (A | QD | QD_STATIC; T2 may add R1, §11)
+## FINAL_RECIPE_T1 = <TO BE DECIDED after the 09-25 / 09-26 boards>   (A | QD | QD_STATIC; never R1)
+## FINAL_RECIPE_T2 = <TO BE DECIDED after the 09-25 / 09-26 boards>   (A | QD | QD_STATIC, each optionally + R1, §11)
 (The only two lines to change. Per track because the tracks may end on different candidates -- Jonas 09-24; structure: Ilse.)
 
 Three candidates, each written in full; everything below this block is history (older packages of record) and the stages both
