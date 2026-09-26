@@ -183,6 +183,9 @@ R1_KS = tuple(0.5 * 2 ** (j / 4) for j in range(9))        # K=9 log grid 0.5..2
 R1_SNAP = False            # False: the smoothed, shrunk k is applied CONTINUOUSLY (the grid only indexes the running sums;
                            # Jeff/Jonas 09-25: +0.016..0.019 sps over snapping, and K=9 == K=16 within 0.003). True = legacy snap
 R1_N0 = 2.0
+R1_ASYM = False            # True (Jonas 09-26, r1_asym.py): separate causal k_lo / k_hi per pixel from a K x K table of past windows
+                           # (lower bound only matters when the target is below the centre, upper when above; the width term splits
+                           # into two factors), argmax over the K*K cells, each field box-smoothed and shrunk like R1. False = R1 as shipped.
 R1_UNSCORED_TOL = 1e-6                                      # |yn - z_c| below this = an unscored (physical 0) element
 R1_FP32 = True             # True: width term + running sum in float32 (Ramesh 09-25: gains identical to 3 decimals, ~half the
                            # memory traffic and V100 fp32 rate); False: float64, bit-matching his numpy reference
@@ -209,10 +212,39 @@ class _CausalBandScalerT:
         self.cum = torch.zeros((len(ks),) + tuple(shape), dtype=self.adt, device=device)
         self.n = torch.zeros((), dtype=torch.float64, device=device)
         self.one = torch.ones((), dtype=torch.float64, device=device)
+        self.shape = tuple(shape)
+        self.npix = int(np.prod(shape))
+        self.cum2 = (torch.zeros((len(ks), len(ks)) + tuple(shape), dtype=self.adt, device=device) if R1_ASYM else None)
 
     @torch.no_grad()
     def reset(self):
         self.cum.zero_(); self.n.zero_()
+        if self.cum2 is not None:
+            self.cum2.zero_()
+
+    @torch.no_grad()
+    def kfield_asym(self):                   # -> (k_lo, k_hi), each (1,1,H,W,C) float32, from PAST windows only
+        # Jonas' spec (work/r1_asym/causal_band_asym_t.py): first max in row-major (lo, hi) order over the K*K cells.
+        K = len(self.ks)
+        flat = self.cum2.flatten(0, 1).argmax(0)
+        al, ah = torch.div(flat, K, rounding_mode="floor"), flat % K
+        sh = self.n / (self.n + self.n0)
+        klo = 1.0 + (_r1_box3(self.ks[al]) - 1.0) * sh
+        khi = 1.0 + (_r1_box3(self.ks[ah]) - 1.0) * sh
+        return klo.to(torch.float32)[None, None], khi.to(torch.float32)[None, None]
+
+    @torch.no_grad()
+    def update_gated_asym(self, P, C, h, y_tgt, scored, flag):
+        """K x K table, Jonas' spec verbatim. lo <= C <= hi always, so inside = [y<C ? y>=lo_a : 1] * [y>=C ? y<=hi_b : 1] and
+        exp(-(hi-lo)/s) = exp(-(C-lo)/s) * exp(-(hi-C)/s): cum[a,b] += sum_t A[t,a] B[t,b] (an einsum over t, not 81 evaluations)."""
+        hk = h * self.ks32[:, None, None, None, None]                       # (K,T,H,W,C)
+        lo = torch.minimum(C - hk, P); hi = torch.maximum(C + hk, P)
+        st = self.std_tgt / self.sigma
+        below = y_tgt < C
+        A = torch.exp(-((C - lo).to(self.adt) * st)) * torch.where(below, y_tgt >= lo, True) * scored
+        B = torch.exp(-((hi - C).to(self.adt) * st)) * torch.where(below, True, y_tgt <= hi)
+        self.cum2 += torch.einsum("athwc,bthwc->abhwc", A, B) * flag.to(self.adt)
+        self.n += flag
 
     @torch.no_grad()
     def kfield(self):                        # -> (1,1,H,W,C) float32, from PAST windows only
@@ -332,6 +364,7 @@ class FrozenEnsemble:
         if R1 and self.half0 is not None:
             self.r1 = _CausalBandScalerT(R1_KS, R1_N0, _STD_TGT.tolist(), _SIGMA_G, device, (H, W, 2))
             self.gk = torch.ones((1, 1, H, W, 2), dtype=torch.float32, device=device)
+            self.gk2 = torch.ones((1, 1, H, W, 2), dtype=torch.float32, device=device) if R1_ASYM else None   # k_hi (R1_ASYM)
             self.gH = torch.zeros((1, T_OUT, H, W, 2), dtype=torch.float32, device=device)
             self.gC = torch.zeros((1, T_OUT, H, W, 2), dtype=torch.float32, device=device)
             self.r1_z = torch.from_numpy((-_fno.MEAN.astype(np.float64).reshape(-1)[:2]
@@ -379,9 +412,15 @@ class FrozenEnsemble:
                 r1s.wait_stream(torch.cuda.current_stream())
             with (torch.cuda.stream(r1s) if r1s is not None else contextlib.nullcontext()):
                 yp = self.gyp[..., :2]
-                self.r1.update_gated(self.go[..., :2], self.gC, self.gH, yp * self.Ad + self.Bd,
-                                     (yp - self.r1_z).abs() >= R1_UNSCORED_TOL, self.gflag)
-                self.gk.copy_(self.r1.kfield())
+                if R1_ASYM:
+                    self.r1.update_gated_asym(self.go[..., :2], self.gC, self.gH, yp * self.Ad + self.Bd,
+                                              (yp - self.r1_z).abs() >= R1_UNSCORED_TOL, self.gflag)
+                    k_lo, k_hi = self.r1.kfield_asym()
+                    self.gk.copy_(k_lo); self.gk2.copy_(k_hi)
+                else:
+                    self.r1.update_gated(self.go[..., :2], self.gC, self.gH, yp * self.Ad + self.Bd,
+                                         (yp - self.r1_z).abs() >= R1_UNSCORED_TOL, self.gflag)
+                    self.gk.copy_(self.r1.kfield())
         pv = self.gx[..., :2].permute(0, 1, 4, 2, 3).reshape(1, CH, H, W).contiguous()
         y = sig = er = None
         total = etot = 0
@@ -445,14 +484,19 @@ class FrozenEnsemble:
                 half = half * torch.clamp((sig * self.std) / self.sref, 0.3, 3.0) ** self.band_p
             if self.err is not None and er is not None and self.eref is not None and self.err["q"]:
                 half = half * torch.clamp((er * self.std) / self.eref, 0.3, 3.0) ** self.err["q"]
+        half_hi = None
         if self.r1 is not None:
             self.gH.copy_(half.expand_as(self.gH))
+            if self.gk2 is not None:
+                half_hi = half * self.gk2
             half = half * self.gk
+        if half_hi is None:
+            half_hi = half                   # symmetric (R1 / no R1): the same tensor, so the ops below are unchanged
         if CENTRE_ALPHA == ALPHA or sig is None or HIST_BETA:
             if self.r1 is not None:
                 self.gC.copy_(self.go[..., :2])
             self.gl[..., :2] = self.go[..., :2] - half
-            self.gh[..., :2] = self.go[..., :2] + half
+            self.gh[..., :2] = self.go[..., :2] + half_hi
             return
         # Decoupled centre, in the same normalized output space as go: c = y0 + k*(y - y0).
         # Inside the graph this is 3-4 tiny batch-1 kernels. min/max keep go inside [gl, gh].
@@ -462,7 +506,7 @@ class FrozenEnsemble:
         if self.r1 is not None:
             self.gC.copy_(c)
         self.gl[..., :2] = torch.minimum(c - half, self.go[..., :2])
-        self.gh[..., :2] = torch.maximum(c + half, self.go[..., :2])
+        self.gh[..., :2] = torch.maximum(c + half_hi, self.go[..., :2])
 
     @torch.no_grad()
     def _capture(self):
@@ -500,6 +544,8 @@ class FrozenEnsemble:
             self.graph = g if worst <= GRAPH_TOL else None
             if self.r1 is not None:                  # warm-up / probe ran with gflag 0 (no update), but be exact
                 self.r1.reset(); self.gk.fill_(1.0); self.gflag.fill_(0.0)
+                if self.gk2 is not None:
+                    self.gk2.fill_(1.0)
         except Exception as e:
             global GRAPH_ERR
             GRAPH_ERR = repr(e)[:300]
@@ -518,6 +564,8 @@ class FrozenEnsemble:
         if self.r1 is not None:
             self.r1.reset()
             self.gk.fill_(1.0)
+            if self.gk2 is not None:
+                self.gk2.fill_(1.0)
             self.gflag.fill_(0.0)
             self.r1_prev = False
 
@@ -687,7 +735,7 @@ def get_ttt_model(submission_dir: str, device: str):
             aff = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None
             gpu = torch.cuda.get_device_name(0) if dev.startswith("cuda") else "cpu"
             print(f"[rpde-t2] load: gpu {gpu!r} cpus {os.cpu_count()} affinity {aff} torch {torch.__version__} "
-                  f"cuda {torch.version.cuda} amp {AMP_ACTIVE} par_streams {PAR_STREAMS} r1 {R1} alpha {ALPHA} "
+                  f"cuda {torch.version.cuda} amp {AMP_ACTIVE} par_streams {PAR_STREAMS} r1 {R1} r1_asym {R1_ASYM} alpha {ALPHA} "
                   f"graph {'CAPTURED' if m.graph is not None else 'NONE'} graph_worst {GRAPH_WORST} graph_tol {GRAPH_TOL} "
                   f"graph_err {GRAPH_ERR} fallback_fp {FALLBACK_FP} stacked_out {STACKED_OUT} numpy_out {NUMPY_OUT} members {len(ckpts)}", flush=True)
         except Exception as e:
