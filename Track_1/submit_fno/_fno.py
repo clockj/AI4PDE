@@ -2370,6 +2370,10 @@ def load_any(path: str, device: str):
 # False = the D2 (c868b3a) path, byte for byte. OPT-IN since 09-25 18Z: it trades +0.03 ms/window on a many-core host for
 # -0.18 on one core, and is stacked only if D2's board read says CPU-bound; build_round13 bakes it (RPDE_SHIP_DIRECT_PRED).
 D2_DIRECT_PRED = False
+# GPU_FP (Track 1 submission.py, 09-26): the batch fingerprint eps, set by the caller for one call; 0.0 = off. Applied below
+# to each chunk's prediction just before the direct copy; _PRED_FP_HITS counts the chunks it was applied to.
+_PRED_FP = 0.0
+_PRED_FP_HITS = 0
 
 
 @torch.no_grad()
@@ -2545,6 +2549,11 @@ def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
                 # D2 step 2 (09-25): p3 is the prediction with channel 2 = +0.0, which is what the caller pre-zeroed, so one
                 # contiguous device->host copy into `dst` replaces yp.cpu() (a fresh full-size host allocation) plus a second
                 # host copy into dst[..., :2]. Same float32 bits in every channel.
+                if _PRED_FP:
+                    global _PRED_FP_HITS
+                    pu = p3[..., :2]
+                    pu.add_(pu.mean(1, keepdim=True).mul_(_PRED_FP))      # host: pu += eps * mean_t(pu), fp32
+                    _PRED_FP_HITS += 1
                 torch.from_numpy(dst)[i:i + batch].copy_(p3)
                 continue
         hb = yp.cpu().numpy()

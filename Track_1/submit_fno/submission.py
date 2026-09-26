@@ -170,6 +170,14 @@ _DIAG_CALLS = 0
 # 1 + eps, fluctuations untouched). mvpe reads the time mean and is alpha-invariant, so the board's mvpe row says how the
 # evaluator batches predict(). (0.0, 0.0) = off; at N >= 100 the output is bit-identical to the unfingerprinted package.
 BATCH_FP = (0.0, 0.0)
+# GPU_FP (09-26, t1_curve): apply BATCH_FP on the GPU inside predict_fno's GPU-band chunk loop, to each chunk's prediction
+# just before its device->host copy (the band is already computed, as on the host path), instead of on the host after the
+# call. The host version is a single-threaded numpy mean + in-place add over (N,20,32,64,2): ~0.7 ms/window on V100S for
+# N < 100 (t1_curve 09-26: N=98 342 ms/call vs N=111 310). Same eps, same formula (mean_t in fp32, times eps, added);
+# differs from the host version only in the last bit of some elements (reduction order). N >= 100 (eps 0): identical.
+# Used only when the GPU-band path with D2_DIRECT_PRED runs; otherwise the host version applies as before.
+GPU_FP = False
+_GPU_FP_DONE = False
 # WARM_TAILS (Corin / Ilse 09-26): cold-start fix. predict() sees one real input, whose last chunk has N mod batch rows -- a shape
 # nothing at import has run (cuFFT plans, lazy CUDA module loads, cuDNN/AMP kernel choice), so its first-use cost lands INSIDE the
 # timed call. True: at import, run predict() once for every row count 1..batch, in float32 and float64 (not timed). Outputs of the
@@ -661,10 +669,12 @@ def _warm_tails():
 
 def predict(input_array, metadata=None):
     """(N, 20, 32, 64, 3) raw physical -> dict with prediction, lower, upper."""
+    global _GPU_FP_DONE
+    _GPU_FP_DONE = False
     out = _predict(input_array, metadata)
     n = len(out["prediction"])
     eps = BATCH_FP[0] if n < 14 else (BATCH_FP[1] if n < 100 else 0.0)
-    if eps:
+    if eps and not _GPU_FP_DONE:
         pu = out["prediction"][..., :2]
         pu += np.float32(eps) * pu.mean(axis=1, keepdims=True, dtype=np.float32)
     if DIAG:
@@ -698,8 +708,22 @@ def _predict(input_array, metadata=None):
         sig = np.empty((len(xin), 1, 32, 64, 2), dtype=np.float32)
         lower = np.empty_like(pred)
         upper = np.empty_like(pred)
-        _fno.predict_fno(models, xin, dev, alpha=ALPHA, batch=batch, out=pred, sigma_out=sig, amp=_AMP_DT,
-                         band_gpu=(_BAND_DEV, ref, p, lower, upper, CENTRE_ALPHA != ALPHA))
+        n_ = len(xin)
+        eps_ = (BATCH_FP[0] if n_ < 14 else (BATCH_FP[1] if n_ < 100 else 0.0)) if GPU_FP else 0.0
+        _fno._PRED_FP, _fno._PRED_FP_HITS = float(eps_), 0
+        try:
+            _fno.predict_fno(models, xin, dev, alpha=ALPHA, batch=batch, out=pred, sigma_out=sig, amp=_AMP_DT,
+                             band_gpu=(_BAND_DEV, ref, p, lower, upper, CENTRE_ALPHA != ALPHA))
+        finally:
+            _fno._PRED_FP = 0.0
+        if eps_:
+            # every chunk takes the same branch (same dst), so either all chunks were fingerprinted on the GPU or none
+            hits, chunks = _fno._PRED_FP_HITS, -(-n_ // batch)
+            if hits == chunks:
+                global _GPU_FP_DONE
+                _GPU_FP_DONE = True
+            elif hits:
+                raise RuntimeError(f"GPU_FP applied to {hits} of {chunks} chunks")
         return {"prediction": pred, "lower": lower, "upper": upper}
 
     x = np.ascontiguousarray(input_array, dtype=np.float32)
