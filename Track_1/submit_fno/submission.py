@@ -197,6 +197,13 @@ WARM_TAILS = False
 SMALL_GRAPH = False
 SMALL_N = 4                 # l3_test (09-26): batch-1 graph 6.3-6.6 ms/window vs eager 14.96 at N=1 but 4.5 at N=7 and 4.4 at N=13 -> only N <= 3
 SMALL_GRAPH_ACTIVE = None
+# SMALL_GRAPH_LAZY (Jonas / Corin / Ilse 09-26, #Leaders:ab48d221): capture the batch-1 graph not at import but on the SECOND real
+# call with N < SMALL_N (warm-up calls excluded); the first such call runs eager. A process that sees at most one small call never
+# holds a graph and runs exactly the no-L3 code; repeated small calls pay the one-off capture + probe once. Failure -> eager, same outputs.
+SMALL_GRAPH_LAZY = False
+_G1_TRIED = False
+_WARMING = False
+_SMALL_SEEN = 0
 SMALL_GRAPH_DIFF = None
 GRAPH_FP = 1e-4
 GRAPH_ACTIVE = None
@@ -634,8 +641,9 @@ def _load():
     graphed = None if _ERR is not None else _capture_graph(models, dev, batch, band)
     GRAPH_ACTIVE = (graphed is not None) if GRAPH else None
     global SMALL_GRAPH_ACTIVE
-    g1 = None if (_ERR is not None or BLEND_BETA) else _capture_graph1(models, dev, band)
-    SMALL_GRAPH_ACTIVE = (g1 is not None) if SMALL_GRAPH else None
+    lazy = SMALL_GRAPH and SMALL_GRAPH_LAZY
+    g1 = None if (_ERR is not None or BLEND_BETA or lazy) else _capture_graph1(models, dev, band)
+    SMALL_GRAPH_ACTIVE = ("lazy" if lazy else (g1 is not None)) if SMALL_GRAPH else None
     if DIAG:
         try:
             aff = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None
@@ -656,10 +664,11 @@ except Exception:                 # fall back to a lazy load inside predict()
 
 
 def _warm_tails():
-    global _DIAG_CALLS
+    global _DIAG_CALLS, _WARMING
     if not (WARM_TAILS and _state is not None and str(_state[1]).startswith("cuda")):
         return
     try:
+        _WARMING = True
         b = int(_state[5])
         for dt in (np.float32, np.float64):
             for r in range(1, b + 1):
@@ -670,6 +679,7 @@ def _warm_tails():
     except Exception as e:
         print(f"[rpde-t1] warm_tails failed (harmless): {e!r}", flush=True)
     finally:
+        _WARMING = False
         _DIAG_CALLS = 0
 
 
@@ -692,12 +702,23 @@ def predict(input_array, metadata=None):
 
 
 def _predict(input_array, metadata=None):
-    global _state
+    global _state, _G1_TRIED, SMALL_GRAPH_ACTIVE, _SMALL_SEEN
     if _state is None:
         _state = _load()
     models, dev, band, ref, p, batch = _state[:6]
     graphed = _state[6] if len(_state) > 6 else None
     g1 = _state[7] if len(_state) > 7 else None
+    if (SMALL_GRAPH and SMALL_GRAPH_LAZY and g1 is None and not _G1_TRIED and not _WARMING
+            and len(input_array) < SMALL_N and _ERR is None and not BLEND_BETA):
+        _SMALL_SEEN += 1
+    if (SMALL_GRAPH and SMALL_GRAPH_LAZY and g1 is None and not _G1_TRIED and not _WARMING and _SMALL_SEEN >= 2
+            and len(input_array) < SMALL_N):
+        _G1_TRIED = True
+        g1 = _capture_graph1(models, dev, band)
+        SMALL_GRAPH_ACTIVE = g1 is not None
+        _state = tuple(_state[:7]) + (None,) * max(0, 7 - len(_state)) + (g1,)
+        if DIAG:
+            print(f"[rpde-t1] lazy small_graph capture at N {len(input_array)}: {SMALL_GRAPH_ACTIVE} diff {SMALL_GRAPH_DIFF}", flush=True)
     use_small = g1 is not None and len(input_array) < SMALL_N
 
     use_gpu_band = (not use_small and GPU_BAND and graphed is None and band is not None and _ERR is None and not BLEND_BETA

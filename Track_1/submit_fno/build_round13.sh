@@ -130,6 +130,7 @@ sed -i "s/^BLEND_BETA = .*/BLEND_BETA = $BETA/" Track_1/submit_fno/submission.py
 [ -n "${RPDE_SHIP_NUMPY_OUT:-}" ] && sed -i "s/^NUMPY_OUT = .*/NUMPY_OUT = $RPDE_SHIP_NUMPY_OUT/" Track_2/submit/submission.py
 [ -n "${RPDE_SHIP_SMALL_GRAPH:-}" ] && sed -i "s/^SMALL_GRAPH = .*/SMALL_GRAPH = $RPDE_SHIP_SMALL_GRAPH/" Track_1/submit_fno/submission.py
 [ -n "${RPDE_SHIP_SMALL_N:-}" ] && sed -i "s/^SMALL_N = [0-9]*/SMALL_N = $RPDE_SHIP_SMALL_N/" Track_1/submit_fno/submission.py   # keeps the trailing comment
+[ -n "${RPDE_SHIP_SMALL_GRAPH_LAZY:-}" ] && sed -i "s/^SMALL_GRAPH_LAZY = .*/SMALL_GRAPH_LAZY = $RPDE_SHIP_SMALL_GRAPH_LAZY/" Track_1/submit_fno/submission.py
 [ -n "${RPDE_SHIP_WARM_TAILS:-}" ] && sed -i "s/^WARM_TAILS = .*/WARM_TAILS = $RPDE_SHIP_WARM_TAILS/" Track_1/submit_fno/submission.py
 [ -n "${RPDE_SHIP_DIRECT_PRED:-}" ] && sed -i "s/^D2_DIRECT_PRED = .*/D2_DIRECT_PRED = $RPDE_SHIP_DIRECT_PRED/" Track_1/submit_fno/_fno.py
 [ -n "${RPDE_SHIP_GPU_FP:-}" ] && sed -i "s/^GPU_FP = .*/GPU_FP = $RPDE_SHIP_GPU_FP/" Track_1/submit_fno/submission.py
