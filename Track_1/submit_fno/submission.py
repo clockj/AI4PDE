@@ -175,6 +175,15 @@ BATCH_FP = (0.0, 0.0)
 # timed call. True: at import, run predict() once for every row count 1..batch, in float32 and float64 (not timed). Outputs of the
 # real call are unchanged bit for bit (same kernels, same inputs); only untimed load time grows.
 WARM_TAILS = False
+# SMALL_GRAPH (L3, audit 2 N5, 09-26): if the evaluator calls predict() with few windows at a time (H1), each call runs the
+# batched eager path at a tiny batch. True: at import, also capture predict_fno's device chunk as a CUDA graph at batch 1
+# (verified bit-exact against eager predict_fno at batch 1, prediction / sigma / centre), and serve every call with
+# N < SMALL_N by replaying it window by window; the interval is then finished by the unchanged host path. Outputs equal
+# the eager batch-1 numbers, which differ from the batched ones only by fp16 kernel choice (~1e-4). Off = no change.
+SMALL_GRAPH = False
+SMALL_N = 14
+SMALL_GRAPH_ACTIVE = None
+SMALL_GRAPH_DIFF = None
 GRAPH_FP = 1e-4
 GRAPH_ACTIVE = None
 GRAPH_PROBE_DIFF = None
@@ -379,6 +388,7 @@ class _Graphed:
         self.gs = torch.zeros((B, 1, 32, 64, 2), dtype=torch.float32, device=dev)
         self.graph = None
         self.band_fp = None if band is None else (band * np.float32(1.0 + GRAPH_FP)).astype(np.float32)
+        self.gc = None                   # pre-compose mean (interval centre); only the SMALL_GRAPH instance sets it
 
     def body(self):
         B = self.batch
@@ -405,6 +415,8 @@ class _Graphed:
             y = y / total
             if sig is not None:
                 sig = sig / total
+        if self.gc is not None:
+            self.gc.copy_((y * self.std + self.mean).float())
         if sig is not None and ALPHA > 0:
             m_ = y.mean(1, keepdim=True)
             f_ = y - m_
@@ -413,6 +425,17 @@ class _Graphed:
         if sig is not None:
             self.gs.copy_((sig * self.std).float())
         self.gy.copy_((y * self.std + self.mean).float())
+
+    def run1(self, x, pred, sig, centre):
+        """Batch-1 replay, window by window (SMALL_GRAPH). Fills pred[..., :2], sig and centre[..., :2]."""
+        for i in range(len(x)):
+            self.gx.copy_(torch.from_numpy(x[i:i + 1]))
+            self.graph.replay()
+            if sig is not None:
+                sig[i:i + 1] = self.gs.cpu().numpy()
+            torch.from_numpy(pred)[i:i + 1, ..., :2].copy_(self.gy.cpu())
+            if centre is not None:
+                torch.from_numpy(centre)[i:i + 1, ..., :2].copy_(self.gc.cpu())
 
     def run(self, x, pred, sig):
         B, n = self.batch, len(x)
@@ -469,6 +492,46 @@ def _capture_graph(models, dev, batch, band):
         GRAPH_PROBE_DIFF = d
         return G if d == 0.0 else None
     except Exception:
+        return None
+
+
+def _capture_graph1(models, dev, band):
+    """SMALL_GRAPH: a verified batch-1 `_Graphed` with the centre buffer, or None. Never raises; import only."""
+    global SMALL_GRAPH_DIFF
+    if not SMALL_GRAPH or dev != "cuda":
+        return None
+    try:
+        if any(getattr(m, "self_norm", False) for m in models):
+            return None
+        G = _Graphed(models, dev, 1, band)
+        G.band_fp = band                                  # no band fingerprint on this path
+        G.gc = torch.zeros((1, 20, 32, 64, 2), dtype=torch.float32, device=dev)
+        s = torch.cuda.Stream()
+        s.wait_stream(torch.cuda.current_stream())
+        with torch.no_grad(), torch.cuda.stream(s):
+            for _ in range(3):
+                G.body()
+        torch.cuda.current_stream().wait_stream(s)
+        torch.cuda.synchronize()
+        g = torch.cuda.CUDAGraph()
+        with torch.no_grad(), torch.cuda.graph(g):
+            G.body()
+        G.graph = g
+        rng = np.random.default_rng(2)
+        probe = np.zeros((3, 20, 32, 64, 3), dtype=np.float32)
+        probe[..., :2] = (_fno.MEAN + _fno.STD * rng.standard_normal((3, 20, 32, 64, 2))).astype(np.float32)
+        ref, sref, cref = np.zeros_like(probe), np.zeros((3, 1, 32, 64, 2), np.float32), np.zeros_like(probe)
+        with torch.no_grad():
+            _fno.predict_fno(models, probe, dev, alpha=ALPHA, batch=1, out=ref, sigma_out=sref, amp=_AMP_DT, centre_out=cref)
+        outp, outs, outc = np.zeros_like(probe), np.zeros_like(sref), np.zeros_like(probe)
+        with torch.no_grad():
+            G.run1(probe, outp, outs, outc)
+        torch.cuda.synchronize()
+        d = max(float(np.abs(outp - ref).max()), float(np.abs(outs - sref).max()), float(np.abs(outc - cref).max()))
+        SMALL_GRAPH_DIFF = d
+        return G if d == 0.0 else None
+    except Exception as e:
+        SMALL_GRAPH_DIFF = repr(e)[:200]
         return None
 
 
@@ -556,6 +619,9 @@ def _load():
     global GRAPH_ACTIVE
     graphed = None if _ERR is not None else _capture_graph(models, dev, batch, band)
     GRAPH_ACTIVE = (graphed is not None) if GRAPH else None
+    global SMALL_GRAPH_ACTIVE
+    g1 = None if (_ERR is not None or BLEND_BETA) else _capture_graph1(models, dev, band)
+    SMALL_GRAPH_ACTIVE = (g1 is not None) if SMALL_GRAPH else None
     if DIAG:
         try:
             aff = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None
@@ -563,10 +629,10 @@ def _load():
             print(f"[rpde-t1] load: gpu {gpu!r} cpus {os.cpu_count()} affinity {aff} torch {torch.__version__} "
                   f"cuda {torch.version.cuda} batch {batch} amp {AMP_ACTIVE} graph {GRAPH_ACTIVE} gpu_band {GPU_BAND} "
                   f"direct_pred {getattr(_fno, 'D2_DIRECT_PRED', None)} alpha {ALPHA} centre_alpha {CENTRE_ALPHA} "
-                  f"batch_fp {BATCH_FP} members {len(_CKPTS)}", flush=True)
+                  f"batch_fp {BATCH_FP} small_graph {SMALL_GRAPH_ACTIVE} small_graph_diff {SMALL_GRAPH_DIFF} members {len(_CKPTS)}", flush=True)
         except Exception as e:
             print(f"[rpde-t1] load report failed: {e!r}", flush=True)
-    return models, dev, band, ref, p, batch, graphed
+    return models, dev, band, ref, p, batch, graphed, g1
 
 
 try:
@@ -615,8 +681,10 @@ def _predict(input_array, metadata=None):
         _state = _load()
     models, dev, band, ref, p, batch = _state[:6]
     graphed = _state[6] if len(_state) > 6 else None
+    g1 = _state[7] if len(_state) > 7 else None
+    use_small = g1 is not None and len(input_array) < SMALL_N
 
-    use_gpu_band = (GPU_BAND and graphed is None and band is not None and _ERR is None and not BLEND_BETA
+    use_gpu_band = (not use_small and GPU_BAND and graphed is None and band is not None and _ERR is None and not BLEND_BETA
                     and p and str(dev).startswith("cuda") and band.shape[1:] == (20, 32, 64, 3)
                     and (CENTRE_ALPHA == ALPHA or CENTRE_ALPHA == 0.0))
     if use_gpu_band:
@@ -651,7 +719,10 @@ def _predict(input_array, metadata=None):
     # path (off since R27) does not produce it, so the centre falls back to `pred` there.
     centre = (np.zeros_like(pred) if (CENTRE_ALPHA != ALPHA and band is not None
                                        and graphed is None) else None)
-    if graphed is not None:
+    if use_small:
+        with torch.no_grad():
+            g1.run1(x, pred, sig, centre)
+    elif graphed is not None:
         with torch.no_grad():
             graphed.run(x, pred, sig)
         band = graphed.band_fp            # the fingerprint: base * (1 + GRAPH_FP)
