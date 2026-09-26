@@ -181,7 +181,7 @@ WARM_TAILS = False
 # N < SMALL_N by replaying it window by window; the interval is then finished by the unchanged host path. Outputs equal
 # the eager batch-1 numbers, which differ from the batched ones only by fp16 kernel choice (~1e-4). Off = no change.
 SMALL_GRAPH = False
-SMALL_N = 14
+SMALL_N = 4                 # l3_test (09-26): batch-1 graph 6.3-6.6 ms/window vs eager 14.96 at N=1 but 4.5 at N=7 and 4.4 at N=13 -> only N <= 3
 SMALL_GRAPH_ACTIVE = None
 SMALL_GRAPH_DIFF = None
 GRAPH_FP = 1e-4
