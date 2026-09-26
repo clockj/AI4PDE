@@ -2376,6 +2376,40 @@ _PRED_FP = 0.0
 _PRED_FP_HITS = 0
 
 
+# EBAND (09-27 T1 arm, #Leaders tasks #1 / #2, variant B): a per-element log-linear factor on the SPS half-width, from five
+# window-local features (definitions and numpy reference: band_feats.py; frozen #Leaders:c5f77dfd 5b156c79):
+#   logsig log(sigma+1e-8) | loggrad log(|grad_yx C0|+1e-6) (np.gradient, unit spacing) | t/19 | loginstd log(std_t x+1e-6) | logfluc
+#   log(|C0-mean_t C0|+1e-6);  yhat = F @ beta[ch][:5] + beta[ch][5];  mode "mult": half = half_static * exp(yhat)
+#   (variant B: beta = gamma*(beta_full - beta_sigma-only), folded at build time), mode "replace": half = exp(yhat).
+def _eb_grad(a, dim):
+    n = a.shape[dim]
+    g = torch.empty_like(a)
+    g.narrow(dim, 1, n - 2).copy_((a.narrow(dim, 2, n - 2) - a.narrow(dim, 0, n - 2)) / 2.0)
+    g.narrow(dim, 0, 1).copy_(a.narrow(dim, 1, 1) - a.narrow(dim, 0, 1))
+    g.narrow(dim, n - 1, 1).copy_(a.narrow(dim, n - 1, 1) - a.narrow(dim, n - 2, 1))
+    return g
+
+
+def eband_features(c0, sig, x):
+    """c0 (B,20,H,W,2) alpha-0 field, sig (B,1,H,W,2) sigma head, x (B,20,H,W,>=2) input window; physical, float32
+    -> (B,20,H,W,2,5)."""
+    c0 = c0.float()
+    gy, gx = _eb_grad(c0, 2), _eb_grad(c0, 3)
+    t = torch.arange(c0.shape[1], device=c0.device, dtype=torch.float32) / 19.0
+    xs = x[..., :2].float().std(dim=1, keepdim=True, unbiased=False)
+    return torch.stack([torch.log(sig.float() + 1e-8).expand_as(c0),
+                        torch.log(torch.sqrt(gy * gy + gx * gx) + 1e-6),
+                        t.reshape(1, -1, 1, 1, 1).expand_as(c0),
+                        torch.log(xs + 1e-6).expand_as(c0),
+                        torch.log(torch.abs(c0 - c0.mean(dim=1, keepdim=True)) + 1e-6)], dim=-1)
+
+
+def eband_yhat(c0, sig, x, beta_dev, clip=None):
+    """beta_dev (2, 6) float32 on the device -> yhat (B,20,H,W,2), optionally clamped."""
+    y = (eband_features(c0, sig, x) * beta_dev[:, :5]).sum(-1) + beta_dev[:, 5]
+    return y if clip is None else y.clamp(float(clip[0]), float(clip[1]))
+
+
 @torch.no_grad()
 def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
                 batch: int = 64, out: np.ndarray | None = None,
@@ -2488,7 +2522,8 @@ def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
             if sn:
                 mean, std = mean[:nb], std[:nb]
 
-        c_dev = (y * std + mean).float() if (band_gpu is not None and band_gpu[5]) else None
+        eband = band_gpu[6] if (band_gpu is not None and len(band_gpu) > 6) else None
+        c_dev = (y * std + mean).float() if (band_gpu is not None and (band_gpu[5] or eband is not None)) else None
         if centre_out is not None:
             # The member average BEFORE compose, physical units: the SPS interval centre when
             # it is decoupled from the point prediction (Bram, 2026-09-21: centring the band on
@@ -2531,12 +2566,18 @@ def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
                     err_out[i:i + batch] = hh
         yp = (y * std + mean).float()
         if band_gpu is not None:
-            base_d, ref_h, p_, lo_out, hi_out, centred = band_gpu
+            base_d, ref_h, p_, lo_out, hi_out, centred = band_gpu[:6]
             # sigma ratio on the HOST (small: 1/20 of the field), same numpy expression as submission.py
             s_h = sigma_out[i:i + batch] if sigma_out is not None else (sig * std).float().cpu().numpy()
             r3 = np.zeros((len(yp), 1, H, W, 3), dtype=np.float32)
             np.power(np.clip(s_h / ref_h[..., :2], 0.3, 3.0), np.float32(p_), out=r3[..., :2])
             half = torch.mul(base_d, torch.from_numpy(r3).to(device, non_blocking=True))       # (B,20,H,W,3)
+            if eband is not None:
+                # EBAND: channels u, v of the half-width scaled (mult) or replaced by exp(yhat); channel 2 stays 0.
+                beta_dev, eb_mode, eb_clip = eband
+                fac = torch.exp(eband_yhat(c_dev, sig * std, xb[:len(yp)], beta_dev, eb_clip))
+                h2 = half[..., :2] * fac if eb_mode == "mult" else fac
+                half = torch.cat([h2, half[..., 2:]], -1)
             p3 = torch.zeros_like(half); p3[..., :2] = yp
             if centred:
                 c3 = torch.zeros_like(half); c3[..., :2] = c_dev

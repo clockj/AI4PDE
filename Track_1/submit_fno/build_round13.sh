@@ -132,6 +132,17 @@ sed -i "s/^BLEND_BETA = .*/BLEND_BETA = $BETA/" Track_1/submit_fno/submission.py
 [ -n "${RPDE_SHIP_WARM_TAILS:-}" ] && sed -i "s/^WARM_TAILS = .*/WARM_TAILS = $RPDE_SHIP_WARM_TAILS/" Track_1/submit_fno/submission.py
 [ -n "${RPDE_SHIP_DIRECT_PRED:-}" ] && sed -i "s/^D2_DIRECT_PRED = .*/D2_DIRECT_PRED = $RPDE_SHIP_DIRECT_PRED/" Track_1/submit_fno/_fno.py
 [ -n "${RPDE_SHIP_GPU_FP:-}" ] && sed -i "s/^GPU_FP = .*/GPU_FP = $RPDE_SHIP_GPU_FP/" Track_1/submit_fno/submission.py
+# RPDE_SHIP_EBAND='<python literal>' (09-27 T1 arm): the EBAND constant, e.g. from band_feats.py --const <predictor.npz>; replaced by
+# python (the literal carries quotes and commas), and read back to check it parses to (beta 2x6, mode, clip).
+if [ -n "${RPDE_SHIP_EBAND:-}" ]; then
+  "$PY" - Track_1/submit_fno/submission.py <<'PYEOF' || { echo "REFUSING: RPDE_SHIP_EBAND"; exit 1; }
+import ast, os, re, sys
+lit = os.environ["RPDE_SHIP_EBAND"]; v = ast.literal_eval(lit)
+assert len(v) == 3 and len(v[0]) == 2 and all(len(r) == 6 for r in v[0]) and v[1] in ("mult", "replace"), v
+p = sys.argv[1]; s = open(p).read(); s2 = re.sub(r"(?m)^EBAND = .*$", "EBAND = " + lit, s, count=1)
+assert s2 != s; open(p, "w").write(s2); print("EBAND baked:", lit)
+PYEOF
+fi
 grep -H "^D2_DIRECT_PRED = " Track_1/submit_fno/_fno.py
 grep -H "^BATCH_FP = \|^DIAG = " Track_1/submit_fno/submission.py; grep -H "^FALLBACK_FP = \|^GRAPH_TOL = \|^R1 = \|^DIAG = " Track_2/submit/submission.py
 grep -H "^ALPHA = " Track_1/submit_fno/submission.py Track_2/submit/submission.py

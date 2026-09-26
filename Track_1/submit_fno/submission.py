@@ -178,6 +178,12 @@ BATCH_FP = (0.0, 0.0)
 # Used only when the GPU-band path with D2_DIRECT_PRED runs; otherwise the host version applies as before.
 GPU_FP = False
 _GPU_FP_DONE = False
+# EBAND (09-27 T1 arm, #Leaders task #2): None = off. Else (beta, mode, clip): beta = ((6 floats for u), (6 for v)) over the
+# five band_feats.py features + intercept, mode "mult" (half = static half * exp(yhat); variant B) or "replace"
+# (half = exp(yhat)), clip = (lo, hi) on yhat or None. Runs only on the GPU-band path (centred on the alpha-0 field);
+# the prediction is untouched. Baked by build_round13.sh from RPDE_SHIP_EBAND.
+EBAND = None
+_EBAND_DEV = None
 # WARM_TAILS (Corin / Ilse 09-26): cold-start fix. predict() sees one real input, whose last chunk has N mod batch rows -- a shape
 # nothing at import has run (cuFFT plans, lazy CUDA module loads, cuDNN/AMP kernel choice), so its first-use cost lands INSIDE the
 # timed call. True: at import, run predict() once for every row count 1..batch, in float32 and float64 (not timed). Outputs of the
@@ -697,6 +703,8 @@ def _predict(input_array, metadata=None):
     use_gpu_band = (not use_small and GPU_BAND and graphed is None and band is not None and _ERR is None and not BLEND_BETA
                     and p and str(dev).startswith("cuda") and band.shape[1:] == (20, 32, 64, 3)
                     and (CENTRE_ALPHA == ALPHA or CENTRE_ALPHA == 0.0))
+    if EBAND is not None and not use_gpu_band:
+        raise RuntimeError("EBAND needs the GPU-band path (cuda, static sigma band, no graph / err head / blend)")
     if use_gpu_band:
         global _BAND_DEV
         if _BAND_DEV is None:
@@ -708,12 +716,18 @@ def _predict(input_array, metadata=None):
         sig = np.empty((len(xin), 1, 32, 64, 2), dtype=np.float32)
         lower = np.empty_like(pred)
         upper = np.empty_like(pred)
+        eb_ = None
+        if EBAND is not None:
+            global _EBAND_DEV
+            if _EBAND_DEV is None:
+                _EBAND_DEV = torch.tensor(EBAND[0], dtype=torch.float32, device=dev)
+            eb_ = (_EBAND_DEV, EBAND[1], EBAND[2])
         n_ = len(xin)
         eps_ = (BATCH_FP[0] if n_ < 14 else (BATCH_FP[1] if n_ < 100 else 0.0)) if GPU_FP else 0.0
         _fno._PRED_FP, _fno._PRED_FP_HITS = float(eps_), 0
         try:
             _fno.predict_fno(models, xin, dev, alpha=ALPHA, batch=batch, out=pred, sigma_out=sig, amp=_AMP_DT,
-                             band_gpu=(_BAND_DEV, ref, p, lower, upper, CENTRE_ALPHA != ALPHA))
+                             band_gpu=(_BAND_DEV, ref, p, lower, upper, CENTRE_ALPHA != ALPHA, eb_))
         finally:
             _fno._PRED_FP = 0.0
         if eps_:
