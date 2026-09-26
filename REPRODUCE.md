@@ -97,6 +97,24 @@ from `Track_1/unet/`.
 
 ---
 
+## 0. Environment (dry-run MAJOR #8, closed 2026-09-26)
+
+Two stacks are in play, and both are known to work:
+
+| use | stack | how |
+|---|---|---|
+| **evaluation containers** (what runs `submission.py`) | Track 1 `pytorch/pytorch:2.2.2-cuda12.1-cudnn8-runtime`; Track 2 `w3nhao/realpde-track2:v1` (PyTorch 2.2.2, CUDA 12.1, Python 3.10); board GPU seen in the 09-25 logs: **NVIDIA A800-SXM4-80GB** | not ours to choose; `environment.yml` pins the same versions (torch 2.2.2, numpy 1.26.4) for local parity |
+| **everything built and verified since 09-20** (training, `reproduce.sh`, `build_round13.sh`, all gates, §9 and §12 reproductions) | Python 3.10, **torch 2.7.1+cu126**, **numpy 2.2.6**, scipy, einops, pandas, matplotlib; **h5py 3.14.0** (wheel unpacked onto PYTHONPATH, `h5py_fix.sh` pattern); Pitzer V100S | Pitzer `/users/PAS1187/qwu/envs/mural_osc` |
+
+Rules that follow from running torch >= 2.6:
+- export **`TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1`**: our checkpoints carry numpy arrays and `_fno.load_any` (`torch.load` without
+  `weights_only`) otherwise fails at every load site under torch >= 2.6 (the default flipped to `weights_only=True`). Harmless on 2.2.2.
+- set `PY` explicitly (`PY=/path/to/python bash reproduce.sh ...`); `reproduce.sh` falls back to `python3` otherwise (§9.1).
+- the shipped `submission.py` files use only operations present in torch 2.2.2 / numpy 1.26 (CUDA graphs, autocast, basic tensor
+  ops, `np.mean(..., dtype=, keepdims=)`); every package uploaded since 09-21 has run on the board's 2.2.2 container.
+- training results are stack-dependent only at the seed-noise level (§9, §12: retrained weights differ ~0.5 % F-FNO / ~10 % ViT from
+  run to run even on one stack; the package-level score moved +0.0006 AoA 15-20 in §12).
+
 ## 1. Stage A — the checkpoints
 
 Every recipe below was read back from the shipped file with `torch.load(p, map_location="cpu")["config"]`, not
