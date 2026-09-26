@@ -9,6 +9,13 @@ is not yet true.
 
 ## FINAL_RECIPE_T1 = <TO BE DECIDED after the 09-25 / 09-26 boards>   (A | QD | QD_STATIC; never R1)
 ## FINAL_RECIPE_T2 = <TO BE DECIDED after the 09-25 / 09-26 boards>   (A | QD | QD_STATIC, each optionally + R1, §11)
+
+**Rule for the final recipe (Ilse / audit 2 N7, 2026-09-26):** FINAL_RECIPE = the members AND every baked inference constant AND the
+qwu/agent commit of the row that is best on the leaderboard at the 09-27 23:59Z snapshot, reproduced AS UPLOADED. That includes the
+measurement constants if that row carries them -- `DIAG`, T1 `BATCH_FP` / `WARM_TAILS` / `GPU_BAND` / `D2_DIRECT_PRED` / `SMALL_GRAPH`,
+T2 `R1` / `FALLBACK_FP` / `GRAPH_TOL` / `NUMPY_OUT`, `ALPHA` -- because the organisers must retrain the row that qualified. They move
+outputs only when predict() gets N < 100 windows per call (T1 fingerprint) or the T2 graph falls back (T2 fingerprint); the per-package
+README in `realpde-packages/<date>/` lists each row's constants, commit and build command (`build_round13.sh` with `RPDE_SHIP_*`).
 (The only two lines to change. Per track because the tracks may end on different candidates -- Jonas 09-24; structure: Ilse.)
 
 Three candidates, each written in full; everything below this block is history (older packages of record) and the stages both
