@@ -354,6 +354,16 @@ _KNOBS=(RPDE_FORCE=1 RPDE_BAND_FILL=1 RPDE_CENTRE_ALPHA=0 RPDE_INT8=1 RPDE_LINEA
 build_A() {
   echo "== build candidate A (r38: r34 members, static band refit at ALPHA 0.80) =="
   BUILD_ALPHA=0.80 build r38 "${_KNOBS[@]}" RPDE_A="$(_A_R38)" RPDE_M="$(_M_R38)" RPDE_TAG=r38
+  # RPDE_FINAL_ALPHA (09-26): the 09-26/27 rows ship ALPHA 0.60 / 0.90 with the band FITTED AT 0.80 and reused (band centre is alpha 0).
+  # To reproduce such a row: keep the 0.80 refit above, then rebuild at the final alpha reusing that band. The row's other baked
+  # constants come from the caller's environment (RPDE_SHIP_*; see the FINAL_RECIPE rule at the top and the row's package README).
+  if [ -n "${RPDE_FINAL_ALPHA:-}" ] && [ "${RPDE_FINAL_ALPHA}" != "0.80" ]; then
+    cp Track_2/submit/band8.npz "$OUT/band_r38_fit080.npz" || { echo "FAILED: keep the 0.80 band"; exit 1; }
+    echo "== rebuild A at ALPHA ${RPDE_FINAL_ALPHA}, band reused from the 0.80 fit =="
+    local k=(); for x in "${_KNOBS[@]}"; do [ "$x" = "RPDE_BAND_FILL=1" ] || k+=("$x"); done
+    BUILD_ALPHA="$RPDE_FINAL_ALPHA" build "r38_a${RPDE_FINAL_ALPHA/./}" "${k[@]}" RPDE_BAND="$OUT/band_r38_fit080.npz" \
+        RPDE_A="$(_A_R38)" RPDE_M="$(_M_R38)" RPDE_TAG="r38_a${RPDE_FINAL_ALPHA/./}"
+  fi
 }
 build_qd() {
   echo "== build candidate QD (QD members, half = k*H, k = ${K_USE:-${RPDE_QDK_KBASE:-1.1399}}) =="
