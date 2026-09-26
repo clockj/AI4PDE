@@ -160,6 +160,10 @@ FALLBACK_FP = 0.0
 # values bit-identical; the process boundary then carries one storage instead of three (t2_ipc: ~2.3 ms/step of transport).
 # False = three clones, exactly as before.
 STACKED_OUT = False
+# NUMPY_OUT (09-26, t2_ipc3): on the CPU return path hand back numpy arrays (zero-copy views of the fresh clones) instead of torch
+# tensors. The kit's local_eval takes `torch.as_tensor(...)` of what we return, so values/shape/dtype are unchanged; the process
+# boundary is cheaper for numpy under every transport emulated (+0.25..0.29 ms/step torch queue, +0.8..1.06 plain pickle). False = torch.
+NUMPY_OUT = False
 # SPS interval centre, decoupled from the prediction -- see Track_1 submission.py CENTRE_ALPHA.
 # Read from band.npz (`centre_alpha`) in _load_band; no key => ALPHA, the old bounds exactly.
 CENTRE_ALPHA = ALPHA
@@ -550,6 +554,8 @@ class FrozenEnsemble:
         out = self._fetch(srcs, x.is_cuda)
         if FALLBACK_FP and self.graph is None:
             out[0].add_(out[0].mean(1, keepdim=True), alpha=float(FALLBACK_FP))
+        if NUMPY_OUT and not x.is_cuda:
+            out = [o.numpy() for o in out]
         if DIAG and not getattr(self, "_diag_step", False):
             self._diag_step = True
             print(f"[rpde-t2] first ttt_step: input {tuple(x.shape)} {x.dtype} on {x.device}; "
@@ -683,7 +689,7 @@ def get_ttt_model(submission_dir: str, device: str):
             print(f"[rpde-t2] load: gpu {gpu!r} cpus {os.cpu_count()} affinity {aff} torch {torch.__version__} "
                   f"cuda {torch.version.cuda} amp {AMP_ACTIVE} par_streams {PAR_STREAMS} r1 {R1} alpha {ALPHA} "
                   f"graph {'CAPTURED' if m.graph is not None else 'NONE'} graph_worst {GRAPH_WORST} graph_tol {GRAPH_TOL} "
-                  f"graph_err {GRAPH_ERR} fallback_fp {FALLBACK_FP} stacked_out {STACKED_OUT} members {len(ckpts)}", flush=True)
+                  f"graph_err {GRAPH_ERR} fallback_fp {FALLBACK_FP} stacked_out {STACKED_OUT} numpy_out {NUMPY_OUT} members {len(ckpts)}", flush=True)
         except Exception as e:
             print(f"[rpde-t2] load report failed: {e!r}", flush=True)
     return m
