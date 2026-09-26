@@ -14,6 +14,12 @@ on the twin export (max rel <= 1e-5 on yhat). Definitions:
   loginstd log(std_t(x[..., :2]) + 1e-6)            population std over the 20 input frames, per pixel
   logfluc  log(|C0 - mean_t C0| + 1e-6)
 
+eband_smoke (09-26, run 20260926-091622): EBAND off == the 09-26 D package bit for bit; package x and sigma match the twin export
+(x identical, sigma ratio 0.9997). torch vs numpy agree to <= 1e-6 on four features but only 3.8e-3 on logfluc: |C0 - mean_t C0| is a
+difference of nearly equal numbers, so the two libraries' different reduction orders for mean_t show up after the log near the 1e-6
+floor, and the band then matches the numpy reference to ~1e-4 rel instead of 1e-5. If this arm is reopened: compute mean_t in float64
+on both sides (or gate at 1e-3) before trusting a 1e-5 gate.
+
 C0 is the alpha-0 field (the member mean before compose, physical), i.e. the band centre. All inputs float32.
 yhat = F @ beta[ch][:5] + beta[ch][5] per channel (u, v); half = k * exp(yhat); the interval is then
 [min(C0 - half, P), max(C0 + half, P)] exactly as the centred static band.
