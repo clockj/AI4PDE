@@ -155,6 +155,11 @@ DIAG = True
 # reads the time mean and is alpha-invariant, so the board's mvpe shows whether the graph ran. Applied to the returned
 # copy only (R1's state and the interval are untouched). 0.0 = off; with a graph it is never applied (bit-identical).
 FALLBACK_FP = 0.0
+# STACKED_OUT (Corin 09-26): on the CPU return path, pred / lower / upper are the dim-0 slices [0] / [1] / [2] of ONE freshly
+# allocated (3, 1, 20, H, W, 3) tensor instead of three separate clones. Each slice is contiguous with the same shape / dtype / device,
+# values bit-identical; the process boundary then carries one storage instead of three (t2_ipc: ~2.3 ms/step of transport).
+# False = three clones, exactly as before.
+STACKED_OUT = False
 # SPS interval centre, decoupled from the prediction -- see Track_1 submission.py CENTRE_ALPHA.
 # Read from band.npz (`centre_alpha`) in _load_band; no key => ALPHA, the old bounds exactly.
 CENTRE_ALPHA = ALPHA
@@ -579,6 +584,9 @@ class FrozenEnsemble:
         for i, s in enumerate(srcs):
             self.host[i].copy_(s, non_blocking=True)   # pinned: 0.031 ms vs 0.068 pageable
         torch.cuda.synchronize()
+        if STACKED_OUT and len(srcs) > 1:
+            out = torch.stack([self.host[i] for i in range(len(srcs))], 0)     # one new storage, caller-owned
+            return [out[i] for i in range(len(srcs))]
         return [self.host[i].clone() for i in range(len(srcs))]
 
 def _load_band(submission_dir: str):
@@ -675,7 +683,7 @@ def get_ttt_model(submission_dir: str, device: str):
             print(f"[rpde-t2] load: gpu {gpu!r} cpus {os.cpu_count()} affinity {aff} torch {torch.__version__} "
                   f"cuda {torch.version.cuda} amp {AMP_ACTIVE} par_streams {PAR_STREAMS} r1 {R1} alpha {ALPHA} "
                   f"graph {'CAPTURED' if m.graph is not None else 'NONE'} graph_worst {GRAPH_WORST} graph_tol {GRAPH_TOL} "
-                  f"graph_err {GRAPH_ERR} fallback_fp {FALLBACK_FP} members {len(ckpts)}", flush=True)
+                  f"graph_err {GRAPH_ERR} fallback_fp {FALLBACK_FP} stacked_out {STACKED_OUT} members {len(ckpts)}", flush=True)
         except Exception as e:
             print(f"[rpde-t2] load report failed: {e!r}", flush=True)
     return m

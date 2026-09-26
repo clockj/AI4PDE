@@ -125,6 +125,7 @@ sed -i "s/^BLEND_BETA = .*/BLEND_BETA = $BETA/" Track_1/submit_fno/submission.py
 [ -n "${RPDE_SHIP_FALLBACK_FP:-}" ] && sed -i "s/^FALLBACK_FP = .*/FALLBACK_FP = $RPDE_SHIP_FALLBACK_FP/" Track_2/submit/submission.py
 [ -n "${RPDE_SHIP_GRAPH_TOL:-}" ] && sed -i "s/^GRAPH_TOL = .*/GRAPH_TOL = $RPDE_SHIP_GRAPH_TOL/" Track_2/submit/submission.py
 [ -n "${RPDE_SHIP_R1:-}" ] && sed -i "s/^R1 = .*/R1 = $RPDE_SHIP_R1/" Track_2/submit/submission.py
+[ -n "${RPDE_SHIP_STACKED_OUT:-}" ] && sed -i "s/^STACKED_OUT = .*/STACKED_OUT = $RPDE_SHIP_STACKED_OUT/" Track_2/submit/submission.py
 [ -n "${RPDE_SHIP_WARM_TAILS:-}" ] && sed -i "s/^WARM_TAILS = .*/WARM_TAILS = $RPDE_SHIP_WARM_TAILS/" Track_1/submit_fno/submission.py
 [ -n "${RPDE_SHIP_DIRECT_PRED:-}" ] && sed -i "s/^D2_DIRECT_PRED = .*/D2_DIRECT_PRED = $RPDE_SHIP_DIRECT_PRED/" Track_1/submit_fno/_fno.py
 grep -H "^D2_DIRECT_PRED = " Track_1/submit_fno/_fno.py
