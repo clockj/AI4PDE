@@ -186,6 +186,10 @@ R1_N0 = 2.0
 R1_ASYM = False            # True (Jonas 09-26, r1_asym.py): separate causal k_lo / k_hi per pixel from a K x K table of past windows
                            # (lower bound only matters when the target is below the centre, upper when above; the width term splits
                            # into two factors), argmax over the K*K cells, each field box-smoothed and shrunk like R1. False = R1 as shipped.
+D1C_N0 = 0.0              # D1c "PC" (Jeff d1c_extrap 09-27; Jonas build_d1c.py; locked by Ilse 9d32d19d): > 0 = on with this N0.
+                           # Per trajectory, causal, per pixel and channel: b = sum over PAST revealed windows of mean_t(C - y) / (n + N0),
+                           # n = revealed windows, C = the pre-compose (alpha-0) ensemble mean of that window BEFORE any correction; this
+                           # window's P and interval centre both move by -b (R1 then scores the moved fields). Needs R1. 0.0 = off, bit-identical.
 R1_UNSCORED_TOL = 1e-6                                      # |yn - z_c| below this = an unscored (physical 0) element
 R1_FP32 = True             # True: width term + running sum in float32 (Ramesh 09-25: gains identical to 3 decimals, ~half the
                            # memory traffic and V100 fp32 rate); False: float64, bit-matching his numpy reference
@@ -375,7 +379,15 @@ class FrozenEnsemble:
             # R1 runs on its own CUDA stream, overlapping the member forwards (it only reads the PREVIOUS window's
             # go / gC / gH and the revealed target); joined back before go / gC / gH / gk are used or overwritten.
             self.r1_stream = torch.cuda.Stream() if cuda else None
-        self._streams = ([torch.cuda.Stream() for _ in models]
+        # D1c state: gC0 = the last window's uncorrected C (output space, written inside the graph); dsum / dn = the running
+        # sum of mean_t(C - y) over revealed windows and their count; gD = this window's shift, from past windows only.
+        self.d1c = bool(D1C_N0) and self.r1 is not None
+        if self.d1c:
+            self.gC0 = torch.zeros((1, T_OUT, H, W, 2), dtype=torch.float32, device=device)
+            self.dsum = torch.zeros((1, 1, H, W, 2), dtype=torch.float64, device=device)
+            self.dn = torch.zeros((), dtype=torch.float64, device=device)
+            self.gD = torch.zeros((1, 1, H, W, 2), dtype=torch.float32, device=device)
+        self._streams =([torch.cuda.Stream() for _ in models]
                          if cuda and PAR_STREAMS and len(models) > 1 else None)
         self.graph = None
         if cuda and use_graph:
@@ -421,7 +433,13 @@ class FrozenEnsemble:
                     self.r1.update_gated(self.go[..., :2], self.gC, self.gH, yp * self.Ad + self.Bd,
                                          (yp - self.r1_z).abs() >= R1_UNSCORED_TOL, self.gflag)
                     self.gk.copy_(self.r1.kfield())
-        pv = self.gx[..., :2].permute(0, 1, 4, 2, 3).reshape(1, CH, H, W).contiguous()
+        if self.d1c:
+            # Score the PREVIOUS window's uncorrected C against the target revealed this step (gated by gflag, no host branch).
+            e = (self.gC0 - (self.gyp[..., :2] * self.Ad + self.Bd)).mean(1, keepdim=True)
+            self.dsum.add_(e.double() * self.gflag)
+            self.dn.add_(self.gflag)
+            self.gD.copy_(-(self.dsum / (self.dn + D1C_N0)))
+        pv =self.gx[..., :2].permute(0, 1, 4, 2, 3).reshape(1, CH, H, W).contiguous()
         y = sig = er = None
         total = etot = 0
         # PAR_STREAMS: each fused group runs on its own side stream (forked from, and joined
@@ -470,7 +488,11 @@ class FrozenEnsemble:
             y = y + (HIST_BETA * self.ggate) * (self.ghm - y.mean(1, keepdim=True))
         if r1s is not None:
             torch.cuda.current_stream().wait_stream(r1s)     # R1 has finished reading go / gC / gH and writing gk
-        self.go[..., :2] = y * self.Ad + self.Bd
+        if self.d1c:
+            self.gC0.copy_(y0 * self.Ad + self.Bd)
+            self.go[..., :2] = y * self.Ad + self.Bd + self.gD
+        else:
+            self.go[..., :2] = y * self.Ad + self.Bd
         if self.half0 is None:
             return
         half = self.half0
@@ -501,6 +523,8 @@ class FrozenEnsemble:
         # Decoupled centre, in the same normalized output space as go: c = y0 + k*(y - y0).
         # Inside the graph this is 3-4 tiny batch-1 kernels. min/max keep go inside [gl, gh].
         c = y0 * self.Ad + self.Bd
+        if self.d1c:
+            c = c + self.gD                  # centre moves with P ("PC"): c = (C + D) + k * ((P + D) - (C + D))
         if CENTRE_ALPHA != 0.0:
             c = c + (CENTRE_ALPHA / ALPHA) * (self.go[..., :2] - c)
         if self.r1 is not None:
@@ -546,6 +570,8 @@ class FrozenEnsemble:
                 self.r1.reset(); self.gk.fill_(1.0); self.gflag.fill_(0.0)
                 if self.gk2 is not None:
                     self.gk2.fill_(1.0)
+            if self.d1c:
+                self.dsum.zero_(); self.dn.zero_(); self.gD.zero_()
         except Exception as e:
             global GRAPH_ERR
             GRAPH_ERR = repr(e)[:300]
@@ -568,6 +594,8 @@ class FrozenEnsemble:
                 self.gk2.fill_(1.0)
             self.gflag.fill_(0.0)
             self.r1_prev = False
+        if self.d1c:
+            self.dsum.zero_(); self.dn.zero_(); self.gD.zero_()
 
     @torch.no_grad()
     def ttt_step(self, input_norm, prev_target_norm=None) -> Tuple[Any, Dict[str, Any]]:
@@ -735,7 +763,7 @@ def get_ttt_model(submission_dir: str, device: str):
             aff = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None
             gpu = torch.cuda.get_device_name(0) if dev.startswith("cuda") else "cpu"
             print(f"[rpde-t2] load: gpu {gpu!r} cpus {os.cpu_count()} affinity {aff} torch {torch.__version__} "
-                  f"cuda {torch.version.cuda} amp {AMP_ACTIVE} par_streams {PAR_STREAMS} r1 {R1} r1_asym {R1_ASYM} alpha {ALPHA} "
+                  f"cuda {torch.version.cuda} amp {AMP_ACTIVE} par_streams {PAR_STREAMS} r1 {R1} r1_asym {R1_ASYM} d1c_n0 {D1C_N0} alpha {ALPHA} "
                   f"graph {'CAPTURED' if m.graph is not None else 'NONE'} graph_worst {GRAPH_WORST} graph_tol {GRAPH_TOL} "
                   f"graph_err {GRAPH_ERR} fallback_fp {FALLBACK_FP} stacked_out {STACKED_OUT} numpy_out {NUMPY_OUT} members {len(ckpts)}", flush=True)
         except Exception as e:

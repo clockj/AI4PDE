@@ -128,6 +128,7 @@ sed -i "s/^BLEND_BETA = .*/BLEND_BETA = $BETA/" Track_1/submit_fno/submission.py
 [ -n "${RPDE_SHIP_STACKED_OUT:-}" ] && sed -i "s/^STACKED_OUT = .*/STACKED_OUT = $RPDE_SHIP_STACKED_OUT/" Track_2/submit/submission.py
 [ -n "${RPDE_SHIP_R1_ASYM:-}" ] && sed -i "s/^R1_ASYM = .*/R1_ASYM = $RPDE_SHIP_R1_ASYM/" Track_2/submit/submission.py
 [ -n "${RPDE_SHIP_NUMPY_OUT:-}" ] && sed -i "s/^NUMPY_OUT = .*/NUMPY_OUT = $RPDE_SHIP_NUMPY_OUT/" Track_2/submit/submission.py
+[ -n "${RPDE_SHIP_D1C_N0:-}" ] && sed -i "s/^D1C_N0 = [^ ]*/D1C_N0 = $RPDE_SHIP_D1C_N0/" Track_2/submit/submission.py
 [ -n "${RPDE_SHIP_SMALL_GRAPH:-}" ] && sed -i "s/^SMALL_GRAPH = .*/SMALL_GRAPH = $RPDE_SHIP_SMALL_GRAPH/" Track_1/submit_fno/submission.py
 [ -n "${RPDE_SHIP_SMALL_N:-}" ] && sed -i "s/^SMALL_N = [0-9]*/SMALL_N = $RPDE_SHIP_SMALL_N/" Track_1/submit_fno/submission.py   # keeps the trailing comment
 [ -n "${RPDE_SHIP_SMALL_GRAPH_LAZY:-}" ] && sed -i "s/^SMALL_GRAPH_LAZY = .*/SMALL_GRAPH_LAZY = $RPDE_SHIP_SMALL_GRAPH_LAZY/" Track_1/submit_fno/submission.py
