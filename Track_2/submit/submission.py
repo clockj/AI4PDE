@@ -190,6 +190,13 @@ D1C_N0 = 0.0              # D1c "PC" (Jeff d1c_extrap 09-27; Jonas build_d1c.py;
                            # Per trajectory, causal, per pixel and channel: b = sum over PAST revealed windows of mean_t(C - y) / (n + N0),
                            # n = revealed windows, C = the pre-compose (alpha-0) ensemble mean of that window BEFORE any correction; this
                            # window's P and interval centre both move by -b (R1 then scores the moved fields). Needs R1. 0.0 = off, bit-identical.
+SIGEMA = False             # sigma_EMA (owner michael 09-27 13:35Z; Jonas step-1 def): ALPHA's sigma = sqrt(w * ema + (1 - w) * sigma_head^2),
+                           # ema = S / W over REVEALED target windows, S <- b*S + v, W <- b*W + 1 (b = SIGEMA_BETA; 1.0 = equal-weight),
+                           # v = per-pixel/channel population variance over the 20 frames (model space), w = n / (n + SIGEMA_N0), n = revealed
+                           # windows. Only ALPHA's sigma changes (the band keeps sigma_head). Needs R1 (its revealed-target plumbing). False = off.
+SIGEMA_BETA = 0.8
+SIGEMA_N0 = 3.0
+SIGEMA_DDOF = 0            # 0 = population variance over the 20 frames (as s_ in the compose); 1 = unbiased (x 20/19)
 R1_UNSCORED_TOL = 1e-6                                      # |yn - z_c| below this = an unscored (physical 0) element
 R1_FP32 = True             # True: width term + running sum in float32 (Ramesh 09-25: gains identical to 3 decimals, ~half the
                            # memory traffic and V100 fp32 rate); False: float64, bit-matching his numpy reference
@@ -387,6 +394,14 @@ class FrozenEnsemble:
             self.dsum = torch.zeros((1, 1, H, W, 2), dtype=torch.float64, device=device)
             self.dn = torch.zeros((), dtype=torch.float64, device=device)
             self.gD = torch.zeros((1, 1, H, W, 2), dtype=torch.float32, device=device)
+        # sigma_EMA state: vS / vW = forgetting sums of revealed-window variances and weights, vn = revealed windows, gEma = vS / vW.
+        self.sigema = bool(SIGEMA) and self.r1 is not None
+        if self.sigema:
+            self.vS = torch.zeros((1, 1, H, W, 2), dtype=torch.float64, device=device)
+            self.vW = torch.zeros((), dtype=torch.float64, device=device)
+            self.vn = torch.zeros((), dtype=torch.float64, device=device)
+            self.gEma = torch.zeros((1, 1, H, W, 2), dtype=torch.float32, device=device)
+            self.gWt = torch.zeros((), dtype=torch.float32, device=device)
         self._streams =([torch.cuda.Stream() for _ in models]
                          if cuda and PAR_STREAMS and len(models) > 1 else None)
         self.graph = None
@@ -439,6 +454,15 @@ class FrozenEnsemble:
             self.dsum.add_(e.double() * self.gflag)
             self.dn.add_(self.gflag)
             self.gD.copy_(-(self.dsum / (self.dn + D1C_N0)))
+        if self.sigema:
+            # The target revealed this step belongs to the PREVIOUS window: fold its per-pixel variance in (gated, no host branch).
+            v = self.gyp[..., :2].var(1, keepdim=True, unbiased=bool(SIGEMA_DDOF)).double()
+            fac = 1.0 + (SIGEMA_BETA - 1.0) * self.gflag
+            self.vS.mul_(fac).add_(v * self.gflag)
+            self.vW.mul_(fac).add_(self.gflag)
+            self.vn.add_(self.gflag)
+            self.gEma.copy_(self.vS / torch.clamp(self.vW, min=1e-12))
+            self.gWt.copy_(self.vn / (self.vn + SIGEMA_N0))
         pv =self.gx[..., :2].permute(0, 1, 4, 2, 3).reshape(1, CH, H, W).contiguous()
         y = sig = er = None
         total = etot = 0
@@ -481,7 +505,10 @@ class FrozenEnsemble:
         if sig is not None and ALPHA > 0:
             m_ = y.mean(1, keepdim=True)
             s_ = y.std(1, keepdim=True, unbiased=False)
-            y = m_ + (y - m_) * ((ALPHA * sig + (1 - ALPHA) * s_) / (s_ + 1e-6))
+            sa = sig
+            if self.sigema:                  # ALPHA's sigma only; the band below still reads sigma_head
+                sa = torch.where(self.gWt > 0, torch.sqrt(self.gWt * self.gEma + (1.0 - self.gWt) * sig * sig), sig)   # n = 0: sigma_head exactly
+            y = m_ + (y - m_) * ((ALPHA * sa + (1 - ALPHA) * s_) / (s_ + 1e-6))
         if HIST_BETA:
             # Unconditional tensor arithmetic: ggate is 0 for an in-range window, so this is
             # an identity there and no branch is needed inside the graph.
@@ -572,6 +599,8 @@ class FrozenEnsemble:
                     self.gk2.fill_(1.0)
             if self.d1c:
                 self.dsum.zero_(); self.dn.zero_(); self.gD.zero_()
+            if self.sigema:
+                self.vS.zero_(); self.vW.zero_(); self.vn.zero_(); self.gEma.zero_(); self.gWt.zero_()
         except Exception as e:
             global GRAPH_ERR
             GRAPH_ERR = repr(e)[:300]
@@ -596,6 +625,8 @@ class FrozenEnsemble:
             self.r1_prev = False
         if self.d1c:
             self.dsum.zero_(); self.dn.zero_(); self.gD.zero_()
+        if self.sigema:
+            self.vS.zero_(); self.vW.zero_(); self.vn.zero_(); self.gEma.zero_(); self.gWt.zero_()
 
     @torch.no_grad()
     def ttt_step(self, input_norm, prev_target_norm=None) -> Tuple[Any, Dict[str, Any]]:
@@ -763,7 +794,7 @@ def get_ttt_model(submission_dir: str, device: str):
             aff = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None
             gpu = torch.cuda.get_device_name(0) if dev.startswith("cuda") else "cpu"
             print(f"[rpde-t2] load: gpu {gpu!r} cpus {os.cpu_count()} affinity {aff} torch {torch.__version__} "
-                  f"cuda {torch.version.cuda} amp {AMP_ACTIVE} par_streams {PAR_STREAMS} r1 {R1} r1_asym {R1_ASYM} d1c_n0 {D1C_N0} alpha {ALPHA} "
+                  f"cuda {torch.version.cuda} amp {AMP_ACTIVE} par_streams {PAR_STREAMS} r1 {R1} r1_asym {R1_ASYM} d1c_n0 {D1C_N0} sigema {SIGEMA} b {SIGEMA_BETA} n0 {SIGEMA_N0} alpha {ALPHA} "
                   f"graph {'CAPTURED' if m.graph is not None else 'NONE'} graph_worst {GRAPH_WORST} graph_tol {GRAPH_TOL} "
                   f"graph_err {GRAPH_ERR} fallback_fp {FALLBACK_FP} stacked_out {STACKED_OUT} numpy_out {NUMPY_OUT} members {len(ckpts)}", flush=True)
         except Exception as e:
