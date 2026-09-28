@@ -106,6 +106,18 @@ def main():
             cap.append(model.gC.detach().float().cpu().numpy()[0].copy())
             return out
         model.ttt_step = _step
+    fwc = []
+    if active["fw"]:
+        # FAMW's weight of family B (the second fused group) used for THIS window, read right after the step (gW is set
+        # inside the step from past windows only). Mean over pixels, per channel. The extra synchronize adds to step time.
+        _orig_fw = model.ttt_step
+
+        def _step_fw(xn, prev):
+            out = _orig_fw(xn, prev)
+            torch.cuda.synchronize()
+            fwc.append(model.gW.detach().double().mean((0, 1, 2, 3)).cpu().numpy().tolist())
+            return out
+        model.ttt_step = _step_fw
     P, L, U, Y, T = stream_eval.run(model, stream, a.device, prev_space=a.prev_space)
     if a.dump:
         os.makedirs(a.dump, exist_ok=True)
@@ -152,7 +164,8 @@ def main():
                slurm_job=os.environ.get("SLURM_JOB_ID"), node=os.uname().nodename,
                windows=dict(traj=names, t=[int(s[1]) for s in stream], k=k,
                             **{key: np.asarray(v).tolist() for key, v in rec.items()},
-                            ms=(np.asarray(T) * 1e3).tolist(), hP=h(P), hL=h(L), hU=h(U)))
+                            ms=(np.asarray(T) * 1e3).tolist(), hP=h(P), hL=h(L), hU=h(U),
+                            **({"fw_w": fwc, "fw_w0": float(model.fw0)} if fwc else {})))
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     with open(a.out, "w") as f:
         json.dump(out, f)

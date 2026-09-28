@@ -82,7 +82,7 @@ Deltas are composite, against the mirror ensemble with the package of record's c
 | I5 | the stream constants (`D1C_N0`, `D1C_EB_N0`, `D1C_LEAD_N0`, `VC_N0`, `R1_N0`, `R1_BLK_N0`) chosen leave-one-regime-out | the constants picked on three regimes gain ≥ +0.03 on the fourth, in all four rotations, and in distribution ≥ −0.01 |
 | I6 | band base and SIGBLEND κ, q refitted on pooled held-out-condition errors, leave-one-regime-out | ΔC×100 ≥ +0.30 OOD mean with ≥ 3 of 4 regimes positive; in distribution `sps` ≥ −0.05. Stated in ΔC; local containment over-reads (§1.34), so the bar is twice the in-distribution one |
 
-**Added 2026-09-28 06:10 EDT, before any read of it:**
+**Added 2026-09-28 05:58 EDT (commit d701287), before any read of it:**
 
 | id | change | why it is new | ships if |
 |---|---|---|---|
@@ -103,7 +103,7 @@ refitted to each ensemble.
 | T3 | sim dose `--lam-sim` 1.0 (shipped 0.3) on the F-FNO members | the dose was never opened because sim at the held-out **cell** was a wash in distribution (−0.004); the regime effect it rests on (+1.12) was never dosed | `A20` ≥ +0.10 and the mean of `relo`, `rehi` ≥ +0.10; in distribution ≥ −0.03 |
 | T4 | Re-similarity augmentation: a real window resampled in time by a factor s and scaled in amplitude by s, s log-uniform in [0.8, 1.25] (every sample traces back to a released trajectory) | `--aug-scale` alone was null in distribution; it changes the amplitude without the time scale, so it never produced a physically consistent neighbour in Re | mean of `relo`, `rehi` ≥ +0.10; `A20`, `A10` ≥ −0.02; in distribution ≥ −0.03 |
 
-**Added 2026-09-28 11:20 EDT**, after T4's single-member screen on RE (+0.120 rein, +0.523 relo, +0.208 rehi, 4 of 4 seeds
+**Added 2026-09-28 11:03 EDT (commit 43322eb)**, after T4's single-member screen on RE (+0.120 rein, +0.523 relo, +0.208 rehi, 4 of 4 seeds
 each, against seed spreads of 0.02 – 0.08) and before any read of what follows. T4's own criterion is unchanged.
 
 | id | change | why | ships if |

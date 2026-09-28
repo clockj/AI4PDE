@@ -93,6 +93,18 @@ def layout(reg, lay):
         return ff(range(1, 7)) + vit(["vitp_s1", "vitc_s3"])
     if lay == "vitc2":           # arm T2: both ViTs co-trained with sim
         return ff(range(1, 5)) + vit(["vitc_s1", "vitc_s3"])
+    if lay == "ffno4":           # the four F-FNO + sim members alone, no ViT (one invocation)
+        return ff(range(1, 5))
+    if lay == "ffno6":           # the six F-FNO + sim members alone
+        return ff(range(1, 7))
+    if lay == "six_vitc2":       # six F-FNO + sim, ViT-C s1 + ViT-C s3
+        return ff(range(1, 7)) + vit(["vitc_s1", "vitc_s3"])
+    if lay in ("t3", "t4"):      # arm T3 (sim dose 1.0) / T4 (Re-similarity augmentation): the arm's four F-FNO members
+        root = os.path.join(os.path.dirname(CKPT), lay, "ckpt", reg)   # + the control's two ViTs
+        stem = "ffnosim_lam10" if lay == "t3" else "ffnosim_resim"
+        return [os.path.join(root, f"{r}_{stem}_s{k}.pth") for k in range(1, 5)] + vit(["vitp_s1", "vitc_s3"])
+    if lay == "twins_ffno":      # the twins of record minus their ViTs (in distribution, F-FNO only)
+        return [os.path.join(REPO_UNET, x + ".pth") for x in ["p2_ffno_l8_sim_s1", "p2_ffno_l8_sim_s2", "p2_ffno_l8_sim_s3"]]
     if lay == "standin":         # the sprint's stand-ins (screen/aoa), F-FNO family first, FNO w96 second
         if reg == "A20":
             n = ["aoa20_ffnosim_s1", "aoa20_ffnosim_s2", "aoa20_fno_s1"]
@@ -104,7 +116,7 @@ def layout(reg, lay):
     if lay == "twins":           # the five held-out twins of record (in distribution)
         return [os.path.join(REPO_UNET, x + ".pth") for x in
                 ["p2_ffno_l8_sim_s1", "p2_ffno_l8_sim_s2", "p2_ffno_l8_sim_s3", "arch_vit_d384", "arch_vit_cmb3sim"]]
-    raise SystemExit(f"unknown layout {lay!r} (mirror | six | vitc2 | standin | twins)")
+    raise SystemExit(f"unknown layout {lay!r} (mirror | six | vitc2 | ffno4 | ffno6 | six_vitc2 | t3 | t4 | standin | twins | twins_ffno)")
 
 
 def check_members(reg, paths):

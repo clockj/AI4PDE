@@ -136,6 +136,31 @@ checkpoint. **Signs before sizes: the decisions are taken on the ensemble reads 
   `wt_base` only). The checkpoints are complete; job 7572732 (`rp_dp_t4_read`) redoes the four reads from `wt_base`,
   whose `re_split.py` is identical.
 
+### T4, the single-member screen on RE (read by `rp_dp_t4_read` 7572732, seed-matched to the control)
+
+| set | T4 (`--aug-resim 0.25`), seeds 1 – 4 | delta to the control | rel error, T4 / control | sps, T4 / control |
+|---|---|---|---|---|
+| rein | 85.245 85.265 85.255 85.241 | **+0.120** (+0.136 +0.118 +0.120 +0.108; 4/4) | 0.0693 / 0.0706 | 50.57 / 50.30 |
+| relo | 86.115 86.110 86.124 86.097 | **+0.523** (+0.622 +0.450 +0.571 +0.451; 4/4) | 0.0781 / 0.0863 | 54.97 / 53.93 |
+| rehi | 80.660 80.649 80.613 80.595 | **+0.208** (+0.210 +0.261 +0.179 +0.181; 4/4) | 0.1100 / 0.1123 | 37.42 / 36.93 |
+
+The control's seed spread is 0.02 / 0.08 / 0.03, so every delta is five to seven spreads. The interior control moves
+too, which no training-side arm since sim co-training had done. **The screen is cleared; this is a single member with
+its own band, not the ensemble read the criterion asks for.**
+
+### Wave 3 — T4's continuation and extensions (submitted 2026-09-28 11:04 EDT; ids in `R/t4/jobs/submitted_t4x.tsv`)
+
+Registered in `PLAN.md` at 11:03 (commit 43322eb, one minute after the T4 read job ended at 11:01), before submission.
+Clock times in this file are read from `git log`, `sacct` and file stamps, not from memory. Generator `R/t4/jobs/gen_t4x.py`; every recipe
+was checked flag by flag against its control's job script, the only difference being `--aug-resim`. All from `R/wt_t4`.
+
+| arm | runs | ids | estimate (A100) |
+|---|---|---|---|
+| T4 on A20 and A10, F-FNO + sim, seeds 1 – 4 | 8 | 7572995 – 7573003 | 25 GPU-h |
+| T4 in-distribution twins (hold out `VAL_TRAJ`), seeds 1 – 3 | 3 | 7573007 – 7573009 | 11 |
+| T4v, ViT-C s3, s1 and ViT-P s1 with the augmentation, RE | 3 | 7573004 – 7573006 | 6 |
+| T4b, `--aug-resim 0.5`, RE seeds 1 – 4 (each behind one leader) | 4 | 7573010 – 7573013 | 10 |
+
 ## Instrument (gauge)
 
 Code in `ood/` (`README.md` has the commands), generated files in `R/ood/`, note `results/ood_instrument.md`. One run =
@@ -213,9 +238,50 @@ Post hoc on dumps of the real package path (they reproduce the stream records ex
   (`--fill-unscored`, dev-board price −0.0016). Z1's measured price on our data is zero. Its cost is a new branch in the
   one package that can be uploaded. Not built; the owner decides.
 
+### Chunk 4: the ensemble reads on the mirror ensembles (6.42 GPU-h; `results/ood_chunk4.md`)
+
+Real package path, band refitted to every ensemble, full stream stack unless "frozen"; composite, trajectories with a
+positive delta in brackets. Every build passed both gates and the causal check.
+
+**Gate G0 passes.** The shipped stream stack against asymmetric R1 alone, at the member count that ships: **A20 +0.692
+(16/16), A10 +0.539 (18/18)**; reported, not gated: relo +1.146 (9/9), rehi +0.292 (6/7), rein +0.079 (9/10). The
+out-of-distribution claim of the phase report stands, and the stand-ins had under-read it at A20 (+0.453).
+
+| arm | read against the control | verdict by its criterion |
+|---|---|---|
+| I1 `PREV_SPACE = "target"` | A20 +0.0020, A10 +0.0066, relo +0.0071, rehi +0.0040, rein +0.0086, in distribution +0.0064 (8/8); never worse on any trajectory | **pass** |
+| I2 `STATS_MASK` | see chunk 2 | fail |
+| I3 FAMW | A20 +0.020, A10 −0.003, relo +0.011, rehi −0.001; OOD mean +0.007; in distribution −0.001 | fail |
+| I4 early-window prior | not built. Hindsight bound A20 +0.039, A10 +0.032, relo +0.053, rehi +0.013 (mean +0.034); +0.10 … +0.16 on 14-window streams | open, low: the bound is the whole early deficit, an interval prior reaches part of it |
+| I5 stream constants, leave one regime out | left-out A20 +0.017, A10 +0.004, relo +0.035, rehi −0.020 (1/7); in distribution −0.007 … −0.027 | fail |
+| I6 band from held-out-condition errors | ΔC×100 A20 +0.151, A10 −0.068, relo −0.152, rehi −0.003 (mean −0.018); in-distribution sps −0.103 (0/8) | fail |
+| I7 zero propagation | plain +0.0001 … +0.0003; synthetic re-blanks +0.008 … +0.85 | fail as a score lever |
+| T1 six F-FNO members | A20 +0.033, A10 +0.024, relo +0.087, rehi +0.023; **OOD mean +0.042**; in distribution +0.004; +0.357 ms per step (local A100, interleaved) | fail, narrowly (bar +0.05) |
+| T2 both ViTs with sim | A20 −0.019, A10 +0.008, relo +0.054, rehi +0.019; OOD mean +0.015; in distribution +0.008 | fail |
+| T3 sim dose 1.0 | A20 +0.013 (9/16); relo −0.082 (0/9), rehi −0.050 (0/7); in distribution −0.005 | fail |
+| **T4 Re-similarity augmentation**, F-FNO members, RE | **relo +0.334 (9/9), rehi +0.046 (6/7), mean +0.190**; rein +0.025; in distribution +0.037 (6/6); frozen: relo +0.505, rehi +0.174 | **passes every term measured**; A20, A10 and the twins' in-distribution read are training (wave 3); one seed set |
+
+**The ViT question.** A single ViT is far behind out of distribution, but in the ensemble the stream stack repairs most
+of it. Layout minus mirror: F-FNO only (`ffno4`) A20 −0.176, A10 −0.061, relo +0.187, rehi −0.097, in distribution
+−0.110 (0/18); on the twins of record −0.140 (0/8), which is T2R15's −0.155 again. Without the stream (Track 1's case)
+dropping the ViTs is worth +1.12 at relo and about nothing elsewhere. `six_vitc2` is the best fixed layout (OOD mean
++0.050, every regime positive, in distribution +0.009) and costs the latency of two more members. FAMW does move its
+weight towards the F-FNO where the ViTs are weak (ViT weight 0.20 at relo, 0.26 at A20, prior 0.333), too slowly to pay.
+**No fixed composition beats the mirror everywhere; the composition stays.**
+
+**Blanked regions are a property of the angle** (the airfoil's shadow): 6 – 7 pixels are static-zero in all 82
+recordings, the union is 232 (u) / 311 (v). A held-out AoA-20 recording carries 5 – 10 static-zero pixels that no
+training recording has, and the members predict 0.0005 m/s there (0.0003 on the shared ones, flow scale 0.08). **The
+members generalise natural blanking; the synthetic masks of I2 / I7 overstate the exposure.**
+
+Two I6 jobs died because their script was edited while they ran (bash reads a script as it executes); re-run, and
+every instrument job now runs from a snapshot of the code.
+
 ## Decisions
 
 * **2026-09-28:** `STATS_MASK` stays off (arm I2 closed by its own criterion; see above).
+* **2026-09-28:** arms I3, I5, I6, T1, T2, T3 closed by their criteria on the mirror ensembles. I1 passes.
+* **2026-09-28:** the member composition (4 F-FNO + ViT-P + ViT-C) stays.
 * **2026-09-28:** arm I7 closed as a score lever (+0.0002 against +0.03). Open as insurance, for the owner.
 
 * **2026-09-28, owner:** Ascend first whenever it is idle (same price, faster); Pitzer is the overflow. `sbatch --test-only`
