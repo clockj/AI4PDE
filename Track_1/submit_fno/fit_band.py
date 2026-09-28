@@ -53,6 +53,14 @@ import sys
 
 import numpy as np
 
+# The sigma-ratio clip. It is a SHIPPED convention exactly as load-bearing as centre_alpha, but
+# unlike centre_alpha the band did not record it, so it could not be recovered from the artifact --
+# @Fen found this on 2026-09-23. It is also hardcoded a third time in submission.py:575, which this
+# file cannot see. Naming it here removes the in-file duplication; writing it into the .npz below
+# makes future bands self-describing, so the convention audit that works for centre_alpha starts
+# working for clip too. submission.py deliberately NOT touched in the same change (inference path).
+CLIP_LO, CLIP_HI = 0.3, 3.0
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 TRACK1 = os.path.dirname(HERE)
 sys.path.insert(0, TRACK1)
@@ -98,6 +106,15 @@ def main() -> None:
                          "view of val_unseen: fitting there scores 43.78 against 43.24 for the "
                          "whole split at inflate 1.5. Pass 0 5 10 15 20 to fit on everything.")
     ap.add_argument("--alpha", type=float, default=0.75)
+    ap.add_argument("--centre-alpha", type=float, default=None,
+                    help="centre the INTERVAL on the compose at this alpha instead of on the "
+                         "prediction (Bram, 2026-09-21, #battleground-0921:ac7fc4f3). The point "
+                         "prediction stays at --alpha, so rel/tke/mvpe and a_i are unchanged; "
+                         "`base` is solved on |y(centre_alpha) - target|. The package must then "
+                         "emit lower = min(c - h, pred), upper = max(c + h, pred) with "
+                         "c = y(centre_alpha), which keeps lower <= pred <= upper. Held-out: "
+                         "centre 0 vs 0.60 = +0.59 sps (val_unseen AoA 15-20, 1.15x), 8/8 "
+                         "trajectories positive, pre-registered. None = shipped behaviour.")
     ap.add_argument("--inflate", type=float, default=1.39,
                     help="scale the local error field by this before solving, to match the "
                          "error magnitude the model will actually FACE on the board (see the "
@@ -145,6 +162,23 @@ def main() -> None:
                          "fitting windows, and the blend weight is clip(n_ok / this, 0, 1).")
     ap.add_argument("--fill-smooth", type=int, default=5,
                     help="--fill-unscored: the (T, H, W) box the fill is averaged over.")
+    ap.add_argument("--err-mode", choices=["none", "drv", "direct"], default="none",
+                    help="2026-09-23, --err-head members (pinball / QD / KL arms). 'drv': the heads' "
+                         "per-frame |error| H scales the band as clip(H/err_ref)^--err-q on top of "
+                         "the sigma term, and base is solved on |E| deflated by that factor too. "
+                         "'direct': half = k*H with ONE global k chosen on the fit split (base unused "
+                         "at inference). err_ref / H come from --ckpt (the shipped heads), like sigma_ref.")
+    ap.add_argument("--err-k", type=float, default=None,
+                    help="--err-mode direct only: use this k instead of searching for it. Needed when the --ckpt heads "
+                         "are ALL-DATA members, which trained on the fit split, so their H there is in-sample and a k "
+                         "searched on it does not transfer (Devi 09-24). Pass the k measured on held-out twins (e.g. "
+                         "Fen's nested k* on the unseen AoA 15-20 cell) as a stated cross-cell constant.")
+    ap.add_argument("--err-q", type=float, default=0.0,
+                    help="exponent on clip(H/err_ref) for --err-mode drv")
+    ap.add_argument("--err-floor", type=float, default=0.0,
+                    help="--err-mode direct only (Corin 09-24): half = max(k*H, err_floor*base). The static band never goes "
+                         "below base*clip_lo^p; the direct QD band has no such floor. Pass e.g. 0.3**0.45 = 0.5817 to give it the "
+                         "static band's floor. 0 = no floor (the 09-24 QD package).")
     ap.add_argument("--out", default=os.path.join(HERE, "band.npz"))
     args = ap.parse_args()
 
@@ -157,9 +191,17 @@ def main() -> None:
     ds = np.load(os.path.join(TRACK1, "val_seen.npz"))
     du = np.load(os.path.join(TRACK1, "val_unseen.npz"))
 
-    def infer(models, X, sigma_out=None):
-        uv = _fno.predict_fno(models, X, dev, alpha=args.alpha, sigma_out=sigma_out)
+    def infer(models, X, sigma_out=None, alpha=None):
+        uv = _fno.predict_fno(models, X, dev, alpha=args.alpha if alpha is None else alpha,
+                              sigma_out=sigma_out)
         return np.concatenate([uv, np.zeros_like(uv[..., :1])], -1).astype(np.float32)
+
+    def err_of(models, X):
+        e = np.zeros((len(X), 20, 32, 64, 2), dtype=np.float32)
+        _fno.predict_fno(models, X, dev, alpha=args.alpha, err_out=e)
+        if not np.any(e):
+            raise SystemExit("--err-mode set but no --ckpt member carries an err head (H is all zero)")
+        return e
 
     def sigma_of(models, X):
         s = np.empty((len(X), 1, 32, 64, 2), dtype=np.float32)
@@ -177,16 +219,44 @@ def main() -> None:
     # from --err-ckpt, because that is about how big the errors honestly are.
     sig_fit = sigma_of(m, fit_d["x"])[keep]
     sigma_ref = np.maximum(sig_fit.mean(0, keepdims=True), 1e-8).astype(np.float32)
-    ratio_f = np.clip(sig_fit / sigma_ref, 0.3, 3.0)
+    ratio_f = np.clip(sig_fit / sigma_ref, CLIP_LO, CLIP_HI)
 
     # Solve on the fitting split's error field -- an offline quantity that uses no test target
     # and no per-window information -- with |error| scaled to board magnitude. Deflating by
     # ratio**p first is what makes `base` the right partner for a per-window band: the
     # containment test |E| <= base * r**p is exactly |E| / r**p <= base.
     As, as_, scored_s, ns = prep(Pf, Yf)
+    if args.centre_alpha is not None:
+        # a_i and the scored mask stay those of the PREDICTION; only |E| moves to the centre.
+        Cf = infer(m_err, fit_d["x"], alpha=args.centre_alpha)[keep]
+        As = np.abs(Cf[..., :2] - Yf[..., :2]).astype(np.float32)
+        print(f"--centre-alpha {args.centre_alpha}: base solved on |y({args.centre_alpha}) - y|; "
+              f"median |E| {np.median(As):.5f} vs {np.median(prep(Pf, Yf)[0]):.5f} at alpha "
+              f"{args.alpha}")
     Adef = np.float32(args.inflate) * As
+    err_ref = ratio_e = None
+    if args.err_mode != "none":
+        H_fit = err_of(m, fit_d["x"])[keep]
+        err_ref = np.maximum(H_fit.mean(0, keepdims=True), 1e-8).astype(np.float32)
+        ratio_e = np.clip(H_fit / err_ref, CLIP_LO, CLIP_HI)
+    if args.err_mode == "direct":
+        # One global k: half = k*H. Scored on the same inflated |E| the base fit uses.
+        ks = np.exp(np.linspace(np.log(0.2), np.log(8.0), 61)).astype(np.float32)
+        vals = [sps_score(Adef, as_, scored_s, ns, (k * H_fit).astype(np.float32)) for k in ks]
+        k_search = float(ks[int(np.argmax(vals))])
+        edge = k_search in (float(ks[0]), float(ks[-1]))
+        print(f"--err-mode direct: searched k* on the fit split = {k_search:.4f}  fit sps {max(vals):.3f}"
+              + ("   ** k* AT GRID EDGE -- widen the grid **" if edge else ""))
+        if args.err_k is not None:
+            err_k = float(args.err_k)
+            print(f"--err-k {err_k:.4f} GIVEN (cross-cell constant) -- overrides the searched {k_search:.4f}; "
+                  f"fit sps at the given k {sps_score(Adef, as_, scored_s, ns, (err_k * H_fit).astype(np.float32)):.3f}")
+        else:
+            err_k = k_search
     if args.band_p:
         Adef = (Adef / ratio_f[..., :2] ** args.band_p).astype(np.float32)
+    if args.err_mode == "drv" and args.err_q:
+        Adef = (Adef / ratio_e ** args.err_q).astype(np.float32)
     uv_band = optimal_band(Adef, as_, scored_s)
     if args.band_smooth > 1:
         k = args.band_smooth
@@ -249,7 +319,16 @@ def main() -> None:
     # The scorer only reads the measured channels, but the ingestion program requires bounds
     # the same shape as the prediction, so the unscored pressure channel gets a zero column.
     band = np.concatenate([uv_band, np.zeros_like(uv_band[..., :1])], -1).astype(np.float32)
-    np.savez(args.out, base=band, sigma_ref=sigma_ref, p=np.float32(args.band_p))
+    extra = {} if args.centre_alpha is None else {"centre_alpha": np.float32(args.centre_alpha)}
+    if args.err_mode != "none":
+        extra.update(err_mode=np.array(args.err_mode), err_q=np.float32(args.err_q),
+                     err_ref=err_ref)
+        if args.err_mode == "direct":
+            extra.update(err_k=np.float32(err_k))
+            if args.err_floor:
+                extra.update(err_floor=np.float32(args.err_floor))
+    np.savez(args.out, base=band, sigma_ref=sigma_ref, p=np.float32(args.band_p),
+             clip_lo=np.float32(CLIP_LO), clip_hi=np.float32(CLIP_HI), **extra)
 
     U = prep(Pu, Yu)
     hi = np.isin(np.array([int(str(i).split(":")[0].split("_")[1]) for i in du["ids"]]),
@@ -258,9 +337,21 @@ def main() -> None:
     dmh, tkh, mvh = sps9.sample_metrics(Pu[hi], Yu[hi])
 
     # The per-window half-widths the submission will actually use, on each reporting split.
-    ratio_u = np.clip(sigma_of(m, du["x"]) / sigma_ref, 0.3, 3.0)
+    ratio_u = np.clip(sigma_of(m, du["x"]) / sigma_ref, CLIP_LO, CLIP_HI)
     h_fit = (uv_band * ratio_f[..., :2] ** args.band_p).astype(np.float32)
     h_all = (uv_band * ratio_u[..., :2] ** args.band_p).astype(np.float32)
+    if args.err_mode != "none":
+        # Report the band the package will actually ship, head term included.
+        H_u = err_of(m, du["x"])
+        if args.err_mode == "direct":
+            h_fit, h_all = (err_k * H_fit).astype(np.float32), (err_k * H_u).astype(np.float32)
+            if args.err_floor:
+                fl = (np.float32(args.err_floor) * uv_band).astype(np.float32)
+                print(f"--err-floor {args.err_floor}: floor binds on {float((h_all < fl).mean()):.3%} of val_unseen elements")
+                h_fit, h_all = np.maximum(h_fit, fl), np.maximum(h_all, fl)
+        elif args.err_q:
+            h_fit = (h_fit * ratio_e ** args.err_q).astype(np.float32)
+            h_all = (h_all * np.clip(H_u / err_ref, CLIP_LO, CLIP_HI) ** args.err_q).astype(np.float32)
     h_hi = h_all[hi]
 
     def at_board(f):
@@ -276,7 +367,7 @@ def main() -> None:
           f"({int(keep.sum())}/{len(keep)} windows)   inflate {args.inflate:.2f}x")
     print(f"band        base {band.shape}  half-width min {uv_band.min():.5f} "
           f"median {np.median(uv_band):.5f} max {uv_band.max():.5f}   sigma-scaling p="
-          f"{args.band_p}")
+          f"{args.band_p}   err-mode {args.err_mode} q={args.err_q}")
     print(f"sps  val_{args.fit_on} (fitted)   {sps_score(As, as_, scored_s, ns, h_fit):.2f}"
           f"   [p=0 band: {sps_score(As, as_, scored_s, ns, uv_band):.2f}]")
     contaminated = args.err_ckpt is not None or args.fit_on == "unseen"
@@ -287,6 +378,9 @@ def main() -> None:
           + f"{args.fit_aoa}) stretched: "
           + "  ".join(f"{f:.2f}x {sps_score(*at_board(f), h_hi):5.2f}"
                       for f in (1.0, 1.05, 1.15, 1.3)))
+    if args.centre_alpha is not None:
+        print("NOTE: the sps lines above score a band CENTRED on the prediction; with "
+              "--centre-alpha they understate the shipped (re-centred) band. Score the package.")
     print(f"wrote {args.out}")
 
 

@@ -459,7 +459,7 @@ def section_progress(B, w):
     print("\n=== 2. Progress, with `time_score` held at the median ===\n")
     print("  Board `time_score` swings 2.8 points across the rounds and is only partly ours to")
     print("  control, so the raw ranking conflates model quality with eval-machine luck.")
-    T = [r for r in B if r.get("actual") and r["track"] == 1]
+    T = [r for r in B if r.get("actual") and "time" in r["actual"] and r["track"] == 1]
     ref = float(np.median([r["actual"]["time"] for r in T]))
     print(f"  reference time_score {ref:.3f}\n")
     print(f"  {'round':<6s} {'date':<11s} {'final':>9s} {'@const t':>9s} {'rel-L2':>9s} "
@@ -1706,7 +1706,7 @@ def _phases_section(B):
 
 
 def html(B, Rn, w, path, S=(), state="missing"):
-    T = [r for r in B if r.get("actual") and r["track"] == 1]
+    T = [r for r in B if r.get("actual") and "time" in r["actual"] and r["track"] == 1]
     ref = float(np.median([r["actual"]["time"] for r in T]))
     norm = [r["actual"]["final"] + (ref - r["actual"]["time"]) * w[3] for r in T]
     resid = [r["actual"]["final"] - r["pred"]["final"] for r in B
@@ -1849,8 +1849,10 @@ def html(B, Rn, w, path, S=(), state="missing"):
                 c = "g" if abs(dd) < 0.15 else ("b" if abs(dd) > 0.4 else "w")
                 cells.append(f'<td><span class="d">{p[n]:.2f}</span> '
                              f'<span class="{c}">{a[n]:.3f}</span></td>')
-            else:
+            elif n in a:
                 cells.append(f"<td>{a[n]:.3f}</td>")
+            else:
+                cells.append("<td>&mdash;</td>")
         o.append(f'<tr><td class="l"><b>{r["round"]}</b></td>' + "".join(cells) + "</tr>")
     o.append('</tbody></table></div><p class="stamp" style="margin:10px 0 0">'
              + t("predicted &middot; actual",

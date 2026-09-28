@@ -66,10 +66,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, "submit_fno"))
 
+import band_io  # noqa: E402
+import opoint  # noqa: E402
 import sps9  # noqa: E402
-from sps9 import prep, sps_score, sc  # noqa: E402
+from sps9 import sc  # noqa: E402
 
-F_TAIL = 1.360                       # calib_board11.py, inverted from round 10
+F_TAIL = opoint.F_TAIL               # 1.360, calib_board11.py, inverted from round 10
 # Board/proxy error ratios, on the AoA 15-20 held-out proxy.  These were anchored on round 10
 # ALONE until 2026-08-31; `proxy_calib.py` now reconstructs the proxy for R10, R11 and R12 and
 # measures them, so they are a mean of three rather than a reading of one:
@@ -321,8 +323,18 @@ ANCHORS = {
                 sps=42.263813, final=81.418569),
     "t2r17": dict(rel_l2=94.885309, tke=78.806628, mvpe=94.131921, time=91.313614,
                   sps=42.241165, final=81.333776),
+    # ROUND 37, 2026-09-27 -- THE TRACK-1 PACKAGE OF RECORD (board_rounds.py R37, `track1_k27fin_a080.zip`), added
+    # 2026-09-28 so the defaults below (opoint: ALPHA 0.80, JOINT_GAIN, centre 0, the SIGBLEND band) have an anchor
+    # AT their own operating point: R35's members with JOINT_GAIN and the SIGBLEND band. Its twins are the five
+    # `p2_ffno_l8_sim_s1..s3` + `arch_vit_d384` + `arch_vit_cmb3sim`. Track 2's T2R24 adds streaming adaptation
+    # (R1 / D1C / VC) that no local instrument replays, so it is deliberately NOT an anchor here.
+    "r37": dict(rel_l2=94.776302, tke=79.589142, mvpe=94.261277, time=92.080105,
+                sps=43.155698, final=81.671149),
     "r10": R10,
 }
+# Anchors whose package composed with JOINT_GAIN (used when neither --anchor-joint-gain flag is given); every
+# earlier one is per-channel.
+ANCHOR_JOINT_GAIN = {"r37"}
 
 
 def errors_of(subs):
@@ -394,8 +406,24 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt", nargs="+", required=True, help="shipped all-data members (sigma)")
     ap.add_argument("--err-ckpt", nargs="+", required=True, help="held-out counterparts")
-    ap.add_argument("--band", default=os.path.join(HERE, "submit_fno", "band.npz"))
-    ap.add_argument("--alpha", type=float, default=0.75)
+    # 2026-09-28: the defaults are the packages of record (opoint). The band default used to be
+    # submit_fno/band.npz, an untracked by-product of the last build; the alpha default was 0.75.
+    ap.add_argument("--band", default=opoint.path(opoint.FINAL_BAND),
+                    help="the candidate's band npz, read through band_io.load_band (SIGBLEND needs its "
+                         "sidecar json, found automatically or via --sidecar). Default: "
+                         f"{opoint.FINAL_BAND}, the band of the packages of record")
+    ap.add_argument("--sidecar", default=None,
+                    help="the SIGBLEND sidecar json of --band (default: <band stem>.json beside it, "
+                         "then opoint.SIDECARS)")
+    ap.add_argument("--alpha", type=float, default=opoint.ALPHA,
+                    help=f"compose alpha (default {opoint.ALPHA}, opoint.ALPHA)")
+    ap.add_argument("--joint-gain", action=argparse.BooleanOptionalAction, default=None,
+                    help="compose the candidate with _fno.JOINT_GAIN. Neither flag (default) = "
+                         f"opoint.JOINT_GAIN ({opoint.JOINT_GAIN}) when --band is centred on y0 "
+                         "(centre_alpha 0), else off: the package refuses JOINT_GAIN with any other centre")
+    ap.add_argument("--f-tail", type=float, default=F_TAIL,
+                    help=f"board per-element tail stretch sps is scored at (default {F_TAIL}, "
+                         "opoint.F_TAIL); the target is moved about the band's own centre")
     ap.add_argument("--invocations", type=int, required=True)
     ap.add_argument("--local-ms", type=float, required=True,
                     help="validate_strict's ms/window, measured on an IDLE machine")
@@ -409,8 +437,12 @@ def main():
                     help="the ANCHOR package's held-out twins")
     ap.add_argument("--anchor-ckpt", nargs="+", default=None,
                     help="the ANCHOR package's shipped all-data members (sigma for its band)")
-    ap.add_argument("--anchor-band", default=None)
-    ap.add_argument("--anchor-alpha", type=float, default=None)
+    ap.add_argument("--anchor-band", default=None, help="default: --band")
+    ap.add_argument("--anchor-sidecar", default=None, help="SIGBLEND sidecar of --anchor-band")
+    ap.add_argument("--anchor-alpha", type=float, default=None, help="default: --alpha")
+    ap.add_argument("--anchor-joint-gain", action=argparse.BooleanOptionalAction, default=None,
+                    help="JOINT_GAIN for the ANCHOR package's compose. Neither flag = on only for the anchors "
+                         f"that shipped it ({sorted(ANCHOR_JOINT_GAIN)}); every earlier round was per-channel")
     ap.add_argument("--anchor-local-ms", type=float, default=None,
                     help="the ANCHOR package's 4060-equivalent local ms. Given, board latency "
                          "is predicted as the anchor's MEASURED board ms plus the model's "
@@ -430,44 +462,50 @@ def main():
     hu = np.isin([int(str(i).split(":")[0].split("_")[1]) for i in du["ids"]], args.aoa)
     X, Y = du["x"][hu], du["y"][hu]
 
-    def infer(models):
-        sig = np.empty((len(X), 1, 32, 64, 2), dtype=np.float32)
-        uv = _fno.predict_fno(models, X, dev, alpha=args.alpha, sigma_out=sig)
-        return np.concatenate([uv, np.zeros_like(uv[..., :1])], -1).astype(np.float32), sig
-
-    def infer_at(models, alpha):
+    def infer_at(models, alpha, joint_gain):
+        """(P with a zero pressure channel, sigma (N,1,H,W,2), y0 = the pre-compose mean), physical."""
+        # _fno.JOINT_GAIN is module state; set it per call because candidate and anchor may differ.
+        _fno.JOINT_GAIN = bool(joint_gain)
         sig_ = np.empty((len(X), 1, 32, 64, 2), dtype=np.float32)
-        uv = _fno.predict_fno(models, X, dev, alpha=alpha, sigma_out=sig_)
-        return np.concatenate([uv, np.zeros_like(uv[..., :1])], -1).astype(np.float32), sig_
+        c0 = np.zeros((len(X), 20, 32, 64, 3), dtype=np.float32)
+        uv = _fno.predict_fno(models, X, dev, alpha=alpha, sigma_out=sig_, centre_out=c0)
+        _fno.JOINT_GAIN = False
+        return (np.concatenate([uv, np.zeros_like(uv[..., :1])], -1).astype(np.float32), sig_,
+                c0[..., :2])
 
-    def sps_of(P_, sig_, band_path, metrics):
-        """This package's own band, scored on its own held-out error field at the board tail."""
-        z_ = np.load(band_path)
-        base_, ref_, p_ = z_["base"][..., :2], z_["sigma_ref"][..., :2], float(z_["p"])
-        half_ = (base_ * np.clip(sig_ / ref_, 0.3, 3.0) ** np.float32(p_)).astype(np.float32)
-        A_, _, scored_, n_ = prep(P_, Y)
+    def infer(models):
+        return infer_at(models, args.alpha, args.joint_gain)
+
+    def sps_of(P_, y0_, sig_, band_, alpha_, jg_, metrics):
+        """This package's own band, scored on its own held-out error field at the board tail.
+
+        2026-09-28: the interval is the package's (band_io): centred where the band says
+        (`centre_alpha` 0 = the twins' alpha-0 field, widened to contain P; no key = P -/+ half),
+        SIGBLEND's sigma-power factor applied, and the board tail applied as a stretch of the
+        target about that centre -- for a pred-centred band exactly the old F_TAIL * |P - Y|."""
+        lo_, up_ = band_io.interval(band_, y0_, P_, sig_, alpha=alpha_, joint_gain=jg_)
+        Yf_ = band_io.stretch_target(band_, Y, y0_, P_, args.f_tail, alpha=alpha_, joint_gain=jg_)
         a_ = float(sps9.weights_from_metrics(np.float64(metrics["rel"]),
                                              np.float64(metrics["tke"]),
                                              np.float64(metrics["mvpe"])))
-        return float(sps_score(np.float32(F_TAIL) * A_, np.full(len(A_), a_), scored_, n_,
-                               half_))
+        return sps9.sps_interval(a_, Yf_, lo_, up_, Y[..., :2] != 0.0)[0]
 
-    P, _ = infer(m_err)                  # error field: held-out, honest
-    _, sig = infer(m)                    # sigma: the shipped models', as submission.py uses
+    band = band_io.load_band(args.band, args.sidecar)
+    args.joint_gain = band_io.joint_gain_for(band, args.joint_gain)
+    print(f"band {band.describe()}  |  alpha {args.alpha}  joint_gain {args.joint_gain}  "
+          f"f_tail {args.f_tail}")
+
+    P, _, y0 = infer(m_err)              # error field and interval centre: held-out, honest
+    _, sig, _ = infer(m)                 # sigma: the shipped models', as submission.py uses
 
     prox = dict(rel=float(np.mean(sc.rel_l2_per_sample(P, Y, 2))),
                 tke=float(np.mean(sc.tke_rel_l2_per_sample(P, Y, 2))),
                 mvpe=float(sc.mvpe_rel_l2(P, Y)))
     pred = {k: prox[k] * RATIO[k] for k in prox}
 
-    z = np.load(args.band)
-    base, ref, p = z["base"][..., :2], z["sigma_ref"][..., :2], float(z["p"])
-    half = (base * np.clip(sig / ref, 0.3, 3.0) ** np.float32(p)).astype(np.float32)
-
-    A, _, scored, n = prep(P, Y)
     a0 = float(sps9.weights_from_metrics(np.float64(pred["rel"]), np.float64(pred["tke"]),
                                          np.float64(pred["mvpe"])))
-    sps = sps_score(np.float32(F_TAIL) * A, np.full(len(A), a0), scored, n, half)
+    sps = sps_of(P, y0, sig, band, args.alpha, args.joint_gain, pred)
 
     # Which board's invocation coefficient applies. Track 2 is CHEAPER per invocation (0.866
     # vs 1.151, round 23) but pays a fixed per-step overhead on top, which the anchor's own
@@ -485,7 +523,12 @@ def main():
         anc_board = errors_of(anc)
         a_err = [_fno.load_any(c, dev) for c in args.anchor_err_ckpt]
         a_alpha = args.anchor_alpha if args.anchor_alpha is not None else args.alpha
-        Pa, _ = infer_at(a_err, a_alpha)
+        a_band = (band_io.load_band(args.anchor_band, args.anchor_sidecar) if args.anchor_band
+                  else band)
+        a_jg = (args.anchor in ANCHOR_JOINT_GAIN if args.anchor_joint_gain is None
+                else band_io.joint_gain_for(a_band, args.anchor_joint_gain))
+        print(f"anchor band {a_band.describe()}  |  alpha {a_alpha}  joint_gain {a_jg}")
+        Pa, _, a_y0 = infer_at(a_err, a_alpha, a_jg)
         a_prox = dict(rel=float(np.mean(sc.rel_l2_per_sample(Pa, Y, 2))),
                       tke=float(np.mean(sc.tke_rel_l2_per_sample(Pa, Y, 2))),
                       mvpe=float(sc.mvpe_rel_l2(Pa, Y)))
@@ -494,15 +537,15 @@ def main():
         # difference is the package change and the level comes from the board.
         a_ck = args.anchor_ckpt or args.anchor_err_ckpt
         a_mod = [_fno.load_any(c, dev) for c in a_ck]
-        _, a_sig = infer_at(a_mod, a_alpha)
+        _, a_sig, _ = infer_at(a_mod, a_alpha, a_jg)
         # The anchor's SPS must be scored at the anchor's own BOARD metrics, not its proxy
         # metrics. sps carries a per-sample factor a_i = 0.5g(rel)+0.3g(tke)+0.2g(mvpe) with
         # g(m) = 0.5/(0.5+m), so scoring one side at proxy error and the other at board error
         # multiplies the two by different constants (0.730 against 0.701 here) and invents a
         # -1.2 point difference between a package and ITSELF. The identity control below is
         # what caught it, and is why this mode runs one.
-        a_sps = sps_of(Pa, a_sig, args.anchor_band or args.band, anc_board)
-        c_sps = sps_of(P, sig, args.band, pred)
+        a_sps = sps_of(Pa, a_y0, a_sig, a_band, a_alpha, a_jg, anc_board)
+        c_sps = sps_of(P, y0, sig, band, args.alpha, args.joint_gain, pred)
         sps = anc["sps"] + (c_sps - a_sps)
         # TIME, delta-consistent for the same reason `final` is. The seven-round latency fit
         # has rms 0.690 ms and residuals ORDERED BY DATE -- the eval machine drifts -- so its

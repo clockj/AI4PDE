@@ -5,8 +5,9 @@ Codabench: https://www.codabench.org/competitions/17385/ · Official kit:
 
 Same 20-in/20-out forecasting problem as Track 1, same five subscores, same hidden real
 targets — but streamed one window at a time in trajectory order at batch 1, in the evaluator's
-normalized space, with the *previous* window's ground truth revealed each step. The contract,
-the scoring rule and the current package are in `../CLAUDE.md`.
+normalized space, with the *previous* window's ground truth revealed each step. The contract and
+the rules are in `../CLAUDE.md`, the state in `../STATUS.md`, the specification of the package in
+`../REPRODUCE.md` §13.
 
 ```python
 # submission.py at the zip root
@@ -14,56 +15,82 @@ def get_ttt_model(submission_dir, device):
     # -> object with reset_ttt_state() and ttt_step(input_norm, prev_target_norm) -> (pred, info)
 ```
 
-## The one fact that determines everything here
+## What the stream reveals
 
 **Windows tile at stride 20 with `T_in = T_out = 20`, so window k−1's revealed target IS
-window k's input, bit for bit.**
+window k's input, bit for bit.** Anything computable from `prev_target_norm` alone is therefore
+already computable from `input_norm`. Exactly two things are new:
 
-Therefore **anything computable from `prev_target_norm` alone is already computable from
-`input_norm` — and Track 1 could compute it too.** Exactly two things are genuinely new:
-
-1. the supervised **pair** `(x_{k-1}, y_{k-1})`: in-distribution training data from the very
-   trajectory being forecast;
+1. the supervised **pair** `(x_{k-1}, y_{k-1})`: training data from the very trajectory being
+   forecast;
 2. the **realized error** of predictions already made.
 
-Everything an adaptation scheme can do lives in one of those two. Both were measured before
-anything was built, and both are closed. (This also disposes of an early idea, EMA-adapting the
-variance head toward the revealed window's per-pixel std: that std *is* the current input
-window's std, a zero-parameter anchor at rel-L2 0.501 against the σ head's 0.329.)
+The first was measured in every form we could think of and does not pay (gradient test-time
+training, closed-form readout refit, below). **The second is what the package of record uses**:
+within one trajectory the flow condition does not change, so part of the error repeats, per pixel.
 
-## What is closed, with the file that closed it
+## The stream stack (shipped 2026-09-27, board 82.055553)
+
+Three corrections, all per trajectory, per pixel and channel, strictly causal, training nothing.
+With every knob off the package is bit-identical to the frozen one.
+
+| correction | reads, from the revealed windows | changes, in the current window | knobs |
+|---|---|---|---|
+| **R1**, interval width | the scorer's own interval term for a 9 × 9 grid of lower / upper multipliers | the lower and the upper half-width, per lead block | `R1`, `R1_ASYM`, `R1_TSM 3`, `R1_BLK 4`, `R1_BLK_N0 20` |
+| **D1c**, mean bias | `mean_t(y₀ − y)`, its scatter between windows, its per-frame profile | the prediction and the interval centre, by the same shift | `D1C_N0 30`, `D1C_EB`, `D1C_EB_N0 1`, `D1C_LEAD_N0 5` |
+| **VARCAL**, fluctuation amplitude | the target's temporal variance against the composed prediction's | the compose gain | `VC_N0 30`, `VC_CLIP (0.25, 4)` |
+
+Every correction is shrunk toward "no correction" by `n/(n + N0)`, n the number of revealed
+windows, so the first window of a trajectory is exactly the frozen package. The band is the
+SIGBLEND band (`SIGPOW`), the compose uses `JOINT_GAIN`, as on Track 1.
+
+| read (twins, score without `time`, against asymmetric R1 alone) | gain | trajectories positive |
+|---|---|---|
+| in distribution, all 8 held-out trajectories | +0.085 | 8 / 8 |
+| in distribution, AoA 15–20 | +0.025 | 3 / 3 |
+| a held-out AoA 20 (extrapolation) | +0.446 | 16 / 16 |
+| a held-out AoA 10 (interpolation) | +0.553 | 18 / 18 |
+| **the board**, against the package of 09-25 (symmetric R1 only) | **+0.390** | rel +0.100, tke +1.150, mvpe +0.263, sps +0.826 |
+
+Designs, criteria and job scripts: `../experiments/sprint_20260927/`.
+
+### Rules of the stream stack
+
+* **Causal.** State is updated from a target only after the runner has revealed it, and the current
+  window reads only what was accumulated before. `stream_eval.py --causal-check` replaces every
+  window after a cut with noise and requires every earlier step to stay bit-identical.
+* **Per trajectory.** `reset_ttt_state` clears every accumulator.
+* **Never on Track 1.** A Track-1 batch holds future windows; the same statistics there read the
+  answers.
+* **The revealed target is normalised with the TARGET statistics** by the official runner
+  (`official/t2_v6/.../local_eval.py`), the input with the input statistics. They differ in the fifth
+  decimal, enough to break an exact-zero test. `PREV_SPACE` selects which one the package assumes;
+  `stream_eval.py --prev-space` and `validate_t2.py --prev-space` select which one the harness feeds.
+* **Masked elements.** About 9 % of the targets are exactly 0 and are not scored. Which pixels are
+  masked depends on the recording, so a statistic that includes them learns the mask of this recording.
+
+## What stays closed, with the file that closed it
 
 | family | result | file |
 |---|---|---|
-| **Residual EMA / output bias correction** | lag-1 residual correlation **+0.051** (full field), +0.074 (time-mean). ORACLE per-trajectory additive correction: rel-L2 0.0800 → 0.0786, **1.75 %**. Every causal variant loses (−0.02 to −5.1 wfinal). | `closed/ttt_offline.py` |
-| **Online SPS band calibration** | at the board's 1.39× error stretch the shipped band is **already exactly optimal** (best global rescale c = 1.00, +0.000 sps); 1.0× leaves 0.667, 1.2× 0.114, 1.7× 0.276. Causal estimators recover none of it (−0.9 to −10). | `closed/ttt_band.py` |
-| **Gradient test-time training** | works, and does not pay. Best of 40 arms (all params, Adam 1e-5, rel-L2 loss, last pair): rel-L2 **−1.6 %** single member / −0.7 % on a 5-member ensemble, TKE and MVPE also down. Worth ≈ +0.02 `final`; costs ~9.7 ms/step of backward ⇒ **−0.5 `final`**. No lr, parameter subset, buffer or loss changes the sign. | `closed/ttt_grad.py` |
-| **Closed-form readout refit** (09-14) | an exact ridge solve of `head_field`'s and `head_logstd`'s last 1×1 conv, per trajectory, from every revealed window, with no backward pass. Best arm (ρ = 1000, the strongest prior): rel −0.18 % / tke +0.64 % / mvpe +0.06 % of error removed on one held-out twin, −0.01 / +0.48 / +0.14 on three; the largest rel cut (+1.02 %) costs −3.6 % tke. The trained readout is already near the per-trajectory optimum, and the update costs 1.07 ms per member at batch 1 ⇒ ≈ **−0.06 / −0.19 `final`**. | `closed/readout_refit_check.py` |
-| **Trajectory history** | legitimate here (the kit holds one model object and resets it at trajectory boundaries, so earlier windows are past measurements), and worth nothing: the model already carries what 200 frames of history add, and every blend loses. Shipped off as `HIST_BETA = 0.0`. | `../Track_1/closed/dmd_probe.py`, `../Track_1/closed/hist_blend.py` |
-
-**The band is robust to error mis-specification**, which matters for the Decision phase:
-stretching the per-element errors anywhere from 1.0× to 1.7×, the shipped band never gives up
-more than **0.667 sps (≈ 0.14 `final`)** against the best rescaling chosen in hindsight. A
-harder or easier test set does not break it.
-
-**Conclusion: Track 2 is Track 1's model, streamed.** Ship the forecaster frozen. Track 2 is a
-second prize pool for the same work, not a new algorithmic lever.
+| **Gradient test-time training** | works, and does not pay. Best of 40 arms: rel-L2 −1.6 % on a single member, −0.7 % on a 5-member ensemble, for ~0.5 of latency | `closed/ttt_grad.py` |
+| **Closed-form readout refit** (09-14) | an exact ridge solve of the heads' last 1×1 conv per trajectory: ≤ ~1 % of any error for 1.07 ms per member | `closed/readout_refit_check.py` |
+| **Trajectory history as an input** | legitimate here, and worth nothing: the model already carries what a longer context would add | `closed/ttt_offline.py` |
+| **A GLOBAL residual correction or band rescale** (09-01) | lag-1 residual correlation +0.051; the best global band rescale is 1.00. **The per-pixel, per-trajectory forms above are different estimators and ship** | `closed/ttt_offline.py`, `closed/ttt_band.py` |
+| **Family weights online (FAMW)** | −0.004 on AoA 15–20, +0.15 at a held-out AoA 20, +0.12 ms per step: off in the package, open for the private set | `../experiments/sprint_20260927/f_sprint/notes/design_c.md` |
 
 ## The package
 
-* **Built together with Track 1** by `../Track_1/submit_fno/build_round13.sh`, which runs
-  `build_t2.py` and `validate_t2.py` with the same members, band and baked constants and stages
-  `../../sub_candidates/track2_<tag>.zip`. The package of record and its board scores are in
-  `../CLAUDE.md`, *Current state*.
-* **`submit/submission.py`** runs the frozen ensemble in the evaluator's normalized space. The
-  input needs no affine (`mean_in`/`std_in` equal `_fno.MEAN`/`_fno.STD`); the output goes
-  through `mean_tgt`/`std_tgt`. It returns SPS bounds every step, and tensors the caller can keep.
-  In `get_ttt_model`, which is untimed, it checks `AMP` against fp32 on a probe, then captures the
-  whole device-side step in a CUDA graph, verified bit-exact against eager and dropped on any
-  failure.
-* **`submit/` in the working tree is a development copy.** Its `fno*.pth` are symlinks to the
-  round-13 width-24 members, and `band8.npz` is whatever the last build wrote. It is not the
-  package of record.
+* **Built together with Track 1** by `../Track_1/submit_fno/build_final.sh`, which drives
+  `build_round13.sh`, `build_t2.py` and the gates with the same members, band and baked constants.
+* **`submit/submission.py`** runs the ensemble in the evaluator's normalized space. The input needs
+  no affine (`mean_in`/`std_in` equal `_fno.MEAN`/`_fno.STD`); the output goes through
+  `mean_tgt`/`std_tgt`. It returns SPS bounds every step, in memory the caller owns. In
+  `get_ttt_model`, which is untimed, it checks `AMP` against fp32 on a probe, then captures the
+  whole device-side step, corrections included, in a CUDA graph, verified bit-exact against eager
+  and dropped on any failure.
+* **The constants in the working tree are defaults** (ALPHA 0.60, every stream knob off). The shipped
+  values are baked by the build.
 
 ## Latency — the one thing worth engineering here
 
@@ -113,17 +140,15 @@ batch.
 
 ## Honest local numbers
 
-`stream_eval.py` streams real held-out trajectories through a submission and scores them with
-the official `scoring.py`. Only held-out twins give honest numbers, because the all-data members
-trained on `val_unseen`.
-
-Round 13, `submit_ho5` (five held-out width-24 members, α 0.90, the 8 `val_unseen`
-trajectories): rel-L2 0.0814 · TKE 0.4740 · MVPE 0.0694 · coverage 0.913 · sps 50.41.
+`stream_eval.py` streams real held-out trajectories through an extracted package and scores them with
+the official `scoring.py`. Only a package built from the held-out twins gives honest numbers, because
+the all-data members trained on `val_unseen`.
 
 ```bash
-python stream_eval.py --submission submit_ho5 --split unseen              # honest
-python stream_eval.py --submission submit_ho5 --split unseen --aoa 15 20  # board-like subset
-python validate_t2.py --zip <archive>                                     # the gate
+python stream_eval.py --submission <extracted twin package> --split unseen              # honest
+python stream_eval.py --submission <extracted twin package> --split unseen --aoa 15 20  # board-like subset
+python stream_eval.py --submission <extracted package> --causal-check                   # causality
+python validate_t2.py --adaptive --zip <archive>                                        # the gate
 ```
 
 ## Layout
@@ -131,15 +156,15 @@ python validate_t2.py --zip <archive>                                     # the 
 | file | what |
 |---|---|
 | `t2_common.py` | the evaluator's normalizer constants and a real-data stream builder in platform order |
-| `submit/submission.py` | `get_ttt_model` / `reset_ttt_state` / `ttt_step`: frozen ensemble, AMP check, CUDA graph, SPS band |
+| `submit/submission.py` | `get_ttt_model` / `reset_ttt_state` / `ttt_step`: the ensemble, AMP check, CUDA graph, SPS band, the stream stack |
 | `submit/_fno.py` | a **symlink** to `Track_1/submit_fno/_fno.py`, so the two tracks cannot silently ship different models. `build_t2.py` resolves it before staging. |
-| `submit_ho/`, `submit_ho5/` | the same code over round-13 HELD-OUT twin checkpoints (8 and 5 members) |
+| `r1_ref/` | float64 reference implementations of symmetric R1 (numpy and torch); the shipped estimator adds the asymmetric table, TSM and BLK |
 | `build_t2.py` | assembles the archive (`--ckpt`, `--band`, `--fp16` / `--int8`, `--linear`) |
-| `validate_t2.py` | the gate: archive shape and size, import isolation, blocked packages, per-step contract, no aliasing, statelessness, whole-run bound consistency, timing |
-| `stream_eval.py` | real trajectories through the streaming protocol, official scoring |
+| `validate_t2.py` | the gate: archive shape and size, import isolation, blocked packages, per-step contract, no aliasing, whole-run bound consistency, timing; statelessness for a frozen package, `--adaptive` for one that adapts |
+| `stream_eval.py` | real trajectories through the streaming protocol, official scoring; `--causal-check` |
 | `verify_space.py` | proves the normalized-space path reproduces Track 1's `predict()` (4e-6 physical) |
 | `t2_lat17.py`, `step_breakdown.py` | the live latency instruments: ms/step for a member set under one fast-path variant, and where a graphed batch-1 step goes |
-| `closed/` | the four adaptation families and the three pre-graph latency probes (`t2_latency.py`, `t2_profile.py`, `t2_graph_scan.py`), each with its verdict in `closed/README.md` |
+| `closed/` | the closed adaptation families and the three pre-graph latency probes (`t2_latency.py`, `t2_profile.py`, `t2_graph_scan.py`), each with its verdict in `closed/README.md` |
 | `t1_vs_t2_score.py` | the two submitted archives side by side on the same windows |
 
 ## Two traps that cost real time here

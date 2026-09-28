@@ -21,3 +21,12 @@ for the bare-name imports (`t2_common`, `sps9`, `final_v9`). All seven compile, 
 | `t2_latency.py` | what a step costs per member set at batch 1, eagerly | 3.18 ms for a single member, +2.4 ms per extra invocation, +0.09 ms per member inside a fused group — the measurement that motivated fusion |
 | `t2_profile.py` | where the 3.2 ms eager floor goes | almost all of it is kernel-launch overhead; a CUDA graph removes it. Superseded by `../step_breakdown.py`, which profiles the **graphed** step that actually ships |
 | `t2_graph_scan.py` | does graph capture make extra INVOCATIONS free at batch 1? | no — a graph removes launches, not FLOPs. The graph shipped; the question is closed (and on Track 1 the graph cost +0.565 board ms, R27) |
+
+## 2026-09-27: what the last week changed about two of these verdicts
+
+`ttt_offline.py` and `ttt_band.py` priced **global** estimators on the package of 09-01: one additive correction per
+trajectory, one band rescale for the whole field. Both verdicts stand for those estimators. Their **per-pixel,
+per-trajectory** successors are different estimators and ship in the package of record: R1 (online calibration of the
+lower and upper half-width, board containment +0.0070 on 09-25), D1c (removal of the per-pixel time-mean bias) and
+VARCAL (calibration of the fluctuation amplitude). See [`../README.md`](../README.md), *The stream stack*.
+`ttt_grad.py` and `readout_refit_check.py` are unchanged: adapting the weights does not pay.

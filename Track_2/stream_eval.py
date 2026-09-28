@@ -32,7 +32,7 @@ import numpy as np
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
-KIT = "/users/PAS1187/qwu/RealPDE/official/t1_v9/realpde_t1_starting_kit_v9"
+KIT = os.environ.get("RPDE_KIT", "/users/PAS1187/qwu/RealPDE/official/t1_v9/realpde_t1_starting_kit_v9")   # REPRODUCE §9.1
 
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(ROOT / "Track_1"))
@@ -55,15 +55,20 @@ def import_submission(d: Path):
     return mod
 
 
-def run(model, stream, device, warm=0):
-    """Drive the platform's loop.  Returns (pred_raw, lower_raw, upper_raw, target, times)."""
+def run(model, stream, device, warm=0, prev_space="target"):
+    """Drive the platform's loop.  Returns (pred_raw, lower_raw, upper_raw, target, times).
+
+    ``prev_space`` is how the REVEALED target is normalized: "target" (default since 2026-09-28) is what the official
+    runner does (``t2_common.normalize_tgt``); "input" is this harness before 09-28 (``normalize_in``), kept so an old
+    local read can be reproduced exactly.
+    """
     import torch
 
     preds, lows, ups, tgts, times = [], [], [], [], []
     bounds_active = None
     for name, tid, x_raw, y_raw, is_first in stream:
         xn = torch.from_numpy(t2.normalize_in(x_raw)[None])
-        yn = torch.from_numpy(t2.normalize_in(y_raw)[None])   # only used as prev_target
+        yn = torch.from_numpy(t2.normalize_prev(y_raw, prev_space)[None])   # only used as prev_target
         reset_t = 0.0
         if is_first:
             t0 = perf_counter()
@@ -97,6 +102,43 @@ def run(model, stream, device, warm=0):
     return P, L, U, Y, np.asarray(times)
 
 
+def causal_check(model, stream, device, seed=0, prev_space="target"):
+    """CAUSALITY ASSERTION for adaptive (ttt) packages, 2026-09-25 (Ilse / Cindy, R1).
+
+    In each trajectory pick a cut step c (its middle window). Re-run the stream with every window AFTER c replaced by
+    noise -- both its input and its target, so the truth the platform would reveal at steps > c is garbage -- and
+    require the outputs (pred / lower / upper) at every step <= c to be BIT-IDENTICAL to the clean run. A package that
+    reads anything from the future (a trajectory-pooled statistic, a look-ahead buffer) fails this. Returns
+    (n_steps_compared, max_abs_diff); raises SystemExit on any difference.
+    """
+    rng = np.random.default_rng(seed)
+    names = [s[0] for s in stream]
+    cut = {}
+    for nm in dict.fromkeys(names):
+        idx = [i for i, n in enumerate(names) if n == nm]
+        cut[nm] = idx[len(idx) // 2]
+    noisy = []
+    for i, (nm, tid, x, y, first) in enumerate(stream):
+        if i > cut[nm]:
+            x = rng.standard_normal(x.shape).astype(np.float32) * x.std() + x.mean()
+        if i >= cut[nm]:        # window c's own target is revealed only at step c+1: noise it too
+            y = rng.standard_normal(y.shape).astype(np.float32) * y.std() + y.mean()
+        noisy.append((nm, tid, x, y, first))
+    A = run(model, stream, device, prev_space=prev_space)
+    B = run(model, noisy, device, prev_space=prev_space)
+    keep = np.array([i <= cut[n] for i, n in enumerate(names)])
+    worst = 0.0
+    for k, (a, b) in enumerate(zip(A[:3], B[:3])):
+        if a is None:
+            continue
+        d = np.abs(a[keep] - b[keep])
+        worst = max(worst, float(d.max()))
+        if not np.array_equal(a[keep], b[keep]):
+            raise SystemExit(f"CAUSALITY FAIL: {['pred', 'lower', 'upper'][k]} at steps <= cut changed when only "
+                             f"FUTURE windows were replaced by noise (max |diff| {d.max():.3e})")
+    return int(keep.sum()), worst
+
+
 def score(P, L, U, Y, t_step):
     c = 2
     r = float(np.mean(sc.rel_l2_per_sample(P, Y, c)))
@@ -119,6 +161,12 @@ def main():
     ap.add_argument("--repeat", type=int, default=1, help="re-run for a stable timing median")
     ap.add_argument("--device", default=None)
     ap.add_argument("--save", default=None, help="npz of predictions, for band fitting")
+    ap.add_argument("--causal-check", action="store_true",
+                    help="assert that noising every window after each trajectory's middle leaves the earlier outputs "
+                         "bit-identical (required for any adaptive T2 package; REPRODUCE §9.1)")
+    ap.add_argument("--prev-space", choices=["target", "input"], default="target",
+                    help="normalization of the revealed previous target: 'target' = the official runner (kit t2_v6 "
+                         "local_eval, mean_tgt/std_tgt; default since 2026-09-28), 'input' = this harness before 09-28")
     a = ap.parse_args()
 
     import torch
@@ -126,14 +174,18 @@ def main():
     names = a.traj or {"unseen": t2.UNSEEN, "seen": t2.SEEN, "all": t2.all_names()}[a.split]
     stream = t2.build_stream(names)
     print(f"[stream_eval] {len(stream)} steps over {len(set(s[0] for s in stream))} "
-          f"trajectories, device={dev}")
+          f"trajectories, device={dev}, revealed target normalized with {a.prev_space.upper()} statistics")
 
     mod = import_submission(Path(a.submission).resolve())
     model = mod.get_ttt_model(str(Path(a.submission).resolve()), dev)
+    if a.causal_check:
+        n, worst = causal_check(model, stream, dev, prev_space=a.prev_space)
+        print(f"[stream_eval] CAUSALITY OK: {n} steps up to each trajectory's cut are bit-identical with every later "
+              f"window replaced by noise (max |diff| {worst:.1e})")
 
     best = None
     for rep in range(a.repeat):
-        P, L, U, Y, T = run(model, stream, dev)
+        P, L, U, Y, T = run(model, stream, dev, prev_space=a.prev_space)
         gc.collect()
         med = float(np.mean(T))
         if best is None or med < best[0]:

@@ -7,7 +7,94 @@ parameter regimes; the resulting private-test scores decide the top 3."* A third
 the released data to the uploaded archive with nothing of ours but this repository. §6 lists every place that
 is not yet true.
 
-**ONE method of record on both tracks, as of 2026-09-20** — the same six members, the same band, the
+## FINAL_RECIPE_T1 = FINAL   — `track1_k27fin_a080.zip`, board 81.671149 (R37, 2026-09-27)
+## FINAL_RECIPE_T2 = FINAL   — `T2_MRGP2_track2_MRGP2.zip`, board 82.055553 (T2R24, 2026-09-27)
+
+```bash
+RPDE_REPRODUCE_GO=1 RPDE_REPRO_OUT=<checkpoint dir> bash reproduce.sh final     # from the released data, ~37 A100-hours
+bash Track_1/submit_fno/build_final.sh <outdir>                                  # from existing checkpoints, minutes
+```
+
+**One method, two entry points.** Both tracks ship recipe A's six members (§1.2, §1.4), fitted against recipe A's five
+held-out twins (§1.3, §1.5), at ALPHA 0.80 with the interval centred on the alpha-0 field. On top of recipe A the final
+packages carry the SIGBLEND band, JOINT_GAIN and the host-side latency constants on both tracks, and on Track 2 the causal
+stream stack. **§13 specifies all of it**; `Track_1/submit_fno/build_final.sh` lists every baked constant, and nothing in
+the final packages is trained beyond recipe A. Both rows are the best of their track at the 09-27 23:59Z snapshot, which
+is what the rule below asked for.
+
+| verified | how | result |
+|---|---|---|
+| the build is bit-reproducible | `build_final.sh` from a clean worktree of commit `fdac00b`, compared member by member with the uploaded archives (job 7569179; first run 7569053) | all 9 files of each archive byte-identical |
+| the current tree returns the same numbers | `Track_1/verify/final_identity.py`, uploaded against rebuilt, tolerance 0 (jobs 7569409, 7569482) | Track 1 at N = 14, 56, 99, 336 and Track 2 over a full stream with revealed targets: every array identical; `band.npz` and the six members byte-identical. The code files differ: guards against non-finite values, dead knobs removed (§13.5) |
+| the members retrain | recipe A end to end at 400 epochs (§12) | package score +0.0006 against a gate of 0.005 |
+| the SIGBLEND constants re-derive | fresh twin dump → `make_k0_band.py` (job 7569179) | q within 0.0008, `base′` within 0.4 %, the leave-one-trajectory-out table reproduced to the printed digit |
+| `reproduce.sh final` runs end to end from existing checkpoints | with the committed band, and with `RPDE_REPRO_FITBAND=1` (job 7569482) | both `BUILD_FINAL OK`; the refitted static band is bit-equal to the committed one |
+
+**What a reproduction must not expect:** identical weights (§7), or identical archive bytes (zip timestamps). Acceptance
+is by score (§7, §12).
+
+---
+
+**The rule the final recipe was chosen by (Ilse / audit 2 N7, 2026-09-26), kept as written:** FINAL_RECIPE = the members AND every baked inference constant AND the
+qwu/agent commit of the row that is best on the leaderboard at the 09-27 23:59Z snapshot, reproduced AS UPLOADED. That includes the
+measurement constants if that row carries them -- `DIAG`, T1 `BATCH_FP` / `WARM_TAILS` / `GPU_BAND` / `D2_DIRECT_PRED` / `SMALL_GRAPH`,
+T2 `R1` / `R1_ASYM` / `FALLBACK_FP` / `GRAPH_TOL` / `NUMPY_OUT`, `ALPHA` -- because the organisers must retrain the row that qualified. They move
+outputs only when predict() gets N < 100 windows per call (T1 fingerprint) or the T2 graph falls back (T2 fingerprint); the per-package
+README in `realpde-packages/<date>/` lists each row's constants, commit and build command (`build_round13.sh` with `RPDE_SHIP_*`).
+Command for such a row: `RPDE_FINAL_ALPHA=<row alpha> RPDE_SHIP_<NAME>=<value>... bash reproduce.sh --recipe A` -- the band is fit at
+0.80 as always, then the row is rebuilt at its alpha reusing that band, with the RPDE_SHIP_* constants baked in. GPU smoke 09-26
+(repro_smoke_final, 1 epoch, qwu/agent c969b21, ALPHA 0.90 + the 09-27 T1/T2 constants): both builds 2/2 SUBMITTABLE, every constant
+present in the unpacked 0.90 packages, band arrays of the 0.90 packages == the 0.80 fit's (T1 and T2).
+(The only two lines to change. Per track because the tracks may end on different candidates -- Jonas 09-24; structure: Ilse.)
+
+**The three candidates of 09-24, kept as written. None of them is the final recipe; A's members and twins are.**
+Three candidates, each written in full; everything below this block is history (older packages of record) and the stages both
+candidates share (§1–§3). Both use ALPHA 0.80, centre-0 band, the same two ViT members, the same twins for the band fit, and
+the same precision knobs. They differ in the four F-FNO members, the band, and (QD_STATIC) the twins the static band is fit on.
+
+| candidate | F-FNO members (`$A`) | band | shipped 09-24/25 as |
+|---|---|---|---|
+| **A** (r38) | `ffno_all_w40l8_sim_s1..s4` (§1.4) | static sigma band, refit at ALPHA 0.80 (§3) | `track1_r38_samecode.zip` / `track2_r38_alpha080_ds.zip` |
+| **QD** | `ffno_all_w40l8_sim_qderr_s1..s4` (§10.1) | `half = k*H`, `err_mode=direct`, `err_k = 1.1399` (§10.3) | `track{1,2}_qd_direct.zip` |
+| **QD_STATIC** | `ffno_all_w40l8_sim_qderr_s1..s4` (§10.1) | static sigma band, fit on the QD twins `qd_twin_s1..s3` (§10.2) + the two ViT twins | `spare_0926/track{1,2}_qd_static.zip` (09-26 T2) |
+
+**T2's A on the board is `track2_r38_alpha080_ds.zip`, built with the 09-23 code.** The A command below builds
+`track2_r38_samecode.zip` instead: its submission.py differs (the ds file carries a dead `CAUSAL_ALPHA = None` block and no `_ERR`) and
+its band.npz md5 differs (two extra clip keys). On 336 val_unseen windows, streamed step by step, prediction / lower / upper are
+**bit-identical** (CPU, tol 0; Jonas 09-24, `work/t2_ident/` in his workspace). A reproduction targets samecode. Limit: the check ran on
+CPU, where fp16 AMP is inactive; the CUDA comparison needs Pitzer (same arithmetic path, expected to match, not measured).
+
+Build (run from the repo root, after the members, twins and `Track_1/val_{seen,unseen}.npz` exist; exactly the job that built the
+09-24 archives, `qd_build` run 20260924-062010):
+```bash
+U=Track_1/unet
+V="$U/arch_vit_all_s1.pth $U/arch_vit_all_cmb3sim_s3.pth"                                   # §1.2
+M="$U/p2_ffno_l8_sim_s1.pth $U/p2_ffno_l8_sim_s2.pth $U/p2_ffno_l8_sim_s3.pth $U/arch_vit_d384.pth $U/arch_vit_cmb3sim.pth"  # §1.3, §1.5
+A_R38="$U/ffno_all_w40l8_sim_s1.pth $U/ffno_all_w40l8_sim_s2.pth $U/ffno_all_w40l8_sim_s3.pth $U/ffno_all_w40l8_sim_s4.pth $V"
+A_QD="$U/ffno_all_w40l8_sim_qderr_s1.pth $U/ffno_all_w40l8_sim_qderr_s2.pth $U/ffno_all_w40l8_sim_qderr_s3.pth $U/ffno_all_w40l8_sim_qderr_s4.pth $V"
+KNOBS='RPDE_FORCE=1 RPDE_BAND_FILL=1 RPDE_CENTRE_ALPHA=0 RPDE_INT8=1 RPDE_LINEAR=tensor RPDE_SHIP_AMP="fp16" RPDE_SPEC_PATH=bmm RPDE_HOST_WRITE=torch RPDE_FFNO_PATH=dense'
+# candidate A:
+env $KNOBS RPDE_A="$A_R38" RPDE_M="$M" RPDE_TAG=r38 bash Track_1/submit_fno/build_round13.sh 0.80
+# candidate QD (the band MUST be refit -- RPDE_BAND unset; build_round13.sh refuses RPDE_BAND together with RPDE_ERR_*):
+env $KNOBS RPDE_A="$A_QD" RPDE_M="$M" RPDE_ERR_MODE=direct RPDE_ERR_K=1.1399 RPDE_TAG=qd_direct bash Track_1/submit_fno/build_round13.sh 0.80
+# candidate QD_STATIC (qd_v2 run 20260924-155527): QD members, static band refit on the QD twins
+M_QD="$U/qd_twin_s1.pth $U/qd_twin_s2.pth $U/qd_twin_s3.pth $U/arch_vit_d384.pth $U/arch_vit_cmb3sim.pth"
+env $KNOBS RPDE_A="$A_QD" RPDE_M="$M_QD" RPDE_TAG=qd_static bash Track_1/submit_fno/build_round13.sh 0.80
+```
+Track 2 latency numbers assume `PAR_STREAMS = True` in `Track_2/submit/submission.py` (the default; the fused groups run on separate
+CUDA streams, predictions bit-identical to the serial loop). Do not switch it off when reproducing the time score (Jonas 09-24).
+**End to end from the release data** (twins, members, band, k, build, gates; the knobs of §8.1 apply):
+`RPDE_REPRODUCE_GO=1 bash reproduce.sh --recipe A|QD|QD_STATIC`. QD also trains the r34 members and twins, because the §10.3 k
+derivation needs them; it re-derives k as a check (prints k* per twin) and builds with K_USE from `h_ratio_check.py`. Wiring
+tested 09-24 with a stub interpreter (every stage, all three recipes, correct flags and paths); no GPU run of these recipes yet.
+Each must print `SUBMITTABLE` twice (T1 `validate_strict.py`, T2 `validate_t2.py`). Before building on a machine other than Pitzer,
+read §9.1 (items 4 and 5: `RPDE_KIT`, `RPDE_SIMCACHE`). Known open gaps are listed in the 09-24 dry-run audit
+(the §10.3 k derivation is repo-only since 09-24, Bram).
+
+---
+
+**Superseded on 2026-09-27 by FINAL (top of this file and §13). As of 2026-09-20 there was ONE method of record on both
+tracks** — the same six members, the same band, the
 same baked constants; the two archives differ only in the entry point (`predict` vs `ttt_step`) and in
 `HOST_WRITE`, which Track 2 does not use:
 
@@ -21,7 +108,9 @@ Built and gated 2026-09-20 (job `rp_pkg_r34`, 7412354) and **scored the same day
 **one** change, the sim co-training of the four F-FNO members and their three twins: the AoA-holdout
 screen prices that at **+0.281 at a held-out AoA 10 and +1.12 at a held-out AoA 20** (two seeds), which
 is the private set's regime, against **+0.02** on the dev board (`Track_1/plan/plan_20260917.md` §11.3,
-§11.4). Superseded, and kept here because they are what the board actually scored:
+§11.4). Superseded, and kept here because they are what the board actually scored. **The archives named in the two tables
+were deleted on 2026-09-27** when `../sub_candidates/` was reduced to the final packages; their sizes and hashes are in
+`../sub_candidates/MANIFEST.md`, and each rebuilds from its members and its band in `Track_1/bands/`:
 
 | | superseded package | archive |
 |---|---|---|
@@ -40,6 +129,24 @@ came out. Throughout:
 from `Track_1/unet/`.
 
 ---
+
+## 0. Environment (dry-run MAJOR #8, closed 2026-09-26)
+
+Two stacks are in play, and both are known to work:
+
+| use | stack | how |
+|---|---|---|
+| **evaluation containers** (what runs `submission.py`) | Track 1 `pytorch/pytorch:2.2.2-cuda12.1-cudnn8-runtime`; Track 2 `w3nhao/realpde-track2:v1` (PyTorch 2.2.2, CUDA 12.1, Python 3.10); board GPU seen in the 09-25 logs: **NVIDIA A800-SXM4-80GB** | not ours to choose; `environment.yml` pins the same versions (torch 2.2.2, numpy 1.26.4) for local parity |
+| **everything built and verified since 09-20** (training, `reproduce.sh`, `build_round13.sh`, all gates, §9 and §12 reproductions) | Python 3.10, **torch 2.7.1+cu126**, **numpy 2.2.6**, scipy, einops, pandas, matplotlib; **h5py 3.14.0** (wheel unpacked onto PYTHONPATH, `h5py_fix.sh` pattern); Pitzer V100S | Pitzer `/users/PAS1187/qwu/envs/mural_osc` |
+
+Rules that follow from running torch >= 2.6:
+- export **`TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1`**: our checkpoints carry numpy arrays and `_fno.load_any` (`torch.load` without
+  `weights_only`) otherwise fails at every load site under torch >= 2.6 (the default flipped to `weights_only=True`). Harmless on 2.2.2.
+- set `PY` explicitly (`PY=/path/to/python bash reproduce.sh ...`); `reproduce.sh` falls back to `python3` otherwise (§9.1).
+- the shipped `submission.py` files use only operations present in torch 2.2.2 / numpy 1.26 (CUDA graphs, autocast, basic tensor
+  ops, `np.mean(..., dtype=, keepdims=)`); every package uploaded since 09-21 has run on the board's 2.2.2 container.
+- training results are stack-dependent only at the seed-noise level (§9, §12: retrained weights differ ~0.5 % F-FNO / ~10 % ViT from
+  run to run even on one stack; the package-level score moved +0.0006 AoA 15-20 in §12).
 
 ## 1. Stage A — the checkpoints
 
@@ -198,8 +305,15 @@ CPU.
 
 ```bash
 $PY Track_1/submit_fno/fit_band.py --ckpt $A --err-ckpt $M --alpha 0.60 --band-p 0.45 \
-    --fill-unscored --out Track_2/submit/band8.npz
+    --fill-unscored --centre-alpha 0 --out Track_2/submit/band8.npz
 ```
+
+**r35 (2026-09-21) adds `--centre-alpha 0`:** the SPS interval is centred on the pre-compose member mean
+y(α=0) instead of on the prediction (`lower=min(c−h, pred)`, `upper=max(c+h, pred)`), and `base` is solved on
+|y(0) − y|. The value is stored in the band (`centre_alpha`), and both `submission.py` files read it at load,
+so the centre cannot disagree with the band; a band without the key reproduces r34 exactly. The point
+prediction is unchanged (pkg_identity 0.000e+00 vs R30 / T2R17). Evidence: held-out Δsps +0.61, 8/8
+trajectories, pre-registered (#battleground-0921:ac7fc4f3).
 
 defaults `--fit-on seen --fit-aoa 15 20 --inflate 1.39 --band-smooth 3`. `$A` is the shipping (all-data) set,
 `$M` the twins: `sigma_ref` comes from `$A` (it normalizes the σ the shipped models emit) and the error field
@@ -216,16 +330,32 @@ T2R13); it is in the method as insurance for the private set, whose blanking we 
 
 **A refit is not bit-reproducible** — it re-runs the models over the fitting split, and
 `Track_1/bands/MANIFEST.md` is explicit that the band is the one part of a package that cannot be rebuilt from
-the checkpoints. A reproduction must **reuse the committed band** (`bands/r34_p2ffnoL8sim_fill.npz` for
-R30 / T2R17; `bands/r24_xfam6.npz` for R25; `bands/t2r13_p2ffnoL8x4.npz` for R28 / T2R13), or it is
+the checkpoints. A reproduction must **reuse the committed band** (`bands/r35_centre0_fill.npz` for r35;
+`bands/r34_p2ffnoL8sim_fill.npz` for R30 / T2R17; `bands/r24_xfam6.npz` for R25; `bands/t2r13_p2ffnoL8x4.npz` for R28 / T2R13), or it is
 reproducing a different package.
 
 ---
 
 ## 4. Stage D — the build
 
-**Both tracks, R30 / T2R17** (job `rp_pkg_r34.sbatch`, 7412354) — one invocation of the script builds and
-gates both archives from one member set, with `U=Track_1/unet`:
+**Both tracks, r35 — the method of record** (`reproduce.sh` → `build_r35`; built by run
+20260921-180408, gates 2/2, pkg_identity prediction 0.000e+00 vs R30 / T2R17): r34's members and flags plus
+`RPDE_CENTRE_ALPHA=0` and the r35 band:
+
+```bash
+RPDE_A="$A" RPDE_M="$M" RPDE_CENTRE_ALPHA=0 RPDE_BAND=Track_1/bands/r35_centre0_fill.npz \
+  RPDE_INT8=1 RPDE_LINEAR=tensor RPDE_SHIP_AMP='"fp16"' RPDE_SPEC_PATH=bmm \
+  RPDE_HOST_WRITE=torch RPDE_FFNO_PATH=dense RPDE_TAG="r35_centre0_fill" \
+  bash Track_1/submit_fno/build_round13.sh 0.60
+```
+
+(`$A`, `$M` as below.) The r35 logic lives in the repository (`_fno.predict_fno(centre_out=…)`, the bounds
+block in both `submission.py`, `fit_band.py --centre-alpha`); the baked constants in a shipped zip (`AMP =
+"fp16"`, `FFNO_PATH = "dense"`, …) are NOT committed — `build_round13.sh` injects them at build time (§6.6),
+so the repository's defaults differing from a shipped archive is expected.
+
+**Superseded — both tracks, R30 / T2R17** (job `rp_pkg_r34.sbatch`, 7412354; `reproduce.sh r34`) — one
+invocation of the script builds and gates both archives from one member set, with `U=Track_1/unet`:
 
 ```bash
 A="$U/ffno_all_w40l8_sim_s1.pth $U/ffno_all_w40l8_sim_s2.pth $U/ffno_all_w40l8_sim_s3.pth \
@@ -470,8 +600,10 @@ scripts in `/fs/scratch/.../realpde/jobs/pz_repro_*.sbatch`.
 
 Still unverified, in the order it would matter if a shortlist arrives:
 
-1. **The other ten training stages at 400 epochs** (~32 GPU-h). One was checked; the two ViT recipes are
-   the ones with schema drift behind them (§1.3), so they are the ones worth checking next.
+1. ~~**The other ten training stages at 400 epochs** (~32 GPU-h).~~ **CLOSED 2026-09-22 (Ilse), §9.**
+   All eleven stages were re-trained at 400 epochs on a *different* stack and compared to the shipped
+   checkpoints: recipes identical key by key, scores inside the seed spread, and the package rebuilt from
+   the eleven retrained weights passes both gates with the same score as the shipped one.
 2. **`time` on the evaluation GPU.** Every latency number in this file's §8 is a Pitzer V100S. The board
    is A100-class, the private set an A800, and `validate_strict`'s ms/window is not a board prediction
    even on the right card — the gate exists for the contracts, not the clock.
@@ -479,5 +611,349 @@ Still unverified, in the order it would matter if a shortlist arrives:
    four ViTs is a score match at best.
 4. **`../sub_candidates` is still not redirectable** without editing `build_round13.sh`; the worktree of
    §8.2 is a workaround, not a fix.
-5. **The derived caches** `Track_1/val_{seen,unseen}.npz` and the two sim maps were reused, not rebuilt,
-   so §6.8's "nothing asserts a rebuilt cache matches the one a checkpoint saw" is untouched.
+5. **The derived caches** `Track_1/val_{seen,unseen}.npz` and the two sim maps were reused, not rebuilt.
+   **Partly closed 2026-09-22 (§9):** every job of that campaign rebuilt `val_{seen,unseen}.npz` from the
+   released HDF5 and got the same sha256 each time (`a518c91d…` / `1a7e85af…`), and the sim map rebuilt
+   under the shipped twin's own cache key `_x476193e300`. What is still unasserted is that a rebuilt sim
+   map equals the one a shipped checkpoint actually saw — that file lives on the author's scratch.
+
+
+---
+
+## 9. Reproduced end to end on a foreign machine (2026-09-22, Ilse)
+
+Eleven Pitzer V100S jobs, ~40 GPU-h, on a stack the repo does **not** pin: torch 2.7.1 / numpy 2.2.6
+(`environment.yml` pins torch 2.2.2 / numpy<2). Every stage of §1 was re-trained at 400 epochs from the
+released data and compared with the shipped checkpoint in the same process, then the whole package was
+rebuilt from the retrained weights alone.
+
+**Result: the method reproduces.**
+
+| what | result |
+|---|---|
+| recipes (`config`, key by key, retrain vs shipped) | identical for all 11; only `epochs`/`out`/`git` and the inert `ckpt_every`/`resume` differ |
+| single-model score, 7 F-FNO stages | ≤ 0.0002 `wfinal` |
+| single-model score, 4 ViT stages | −0.051 … +0.007 (ViT seed spread is 0.095) |
+| all 11 signed deltas | mean −0.0068, sd 0.0173, se 0.0052 — no systematic shift |
+| **package from the 11 retrained weights** | **both gates SUBMITTABLE**; ensemble 84.3051 vs shipped 84.3029, twins 82.3596 vs 82.3600 |
+
+Run ids: `20260921-1712..1720xx-*-ilse-repro-<stage>`, `20260921-0624/0625-*-ilse-repro-vit-*`,
+end-to-end `20260922-111450-*-ilse-repro-phase3-build`.
+
+### 9.1 Three things that break on any machine but the author's — fix these before handing over
+
+1. **`reproduce.sh` defaults `PY` to the author's conda env** (`/users/PAS1187/qwu/.conda/envs/realpde/bin/python`,
+   line 40). Anywhere else it dies at `PREFLIGHT FAILED: train2.py` before doing anything. Pass `PY=…` explicitly,
+   or make the default fall back to `python3`.
+2. **`Track_2/submit*/{_fno.py,submission.py}` are symlinks into `Track_1/submit_fno/`.** `build_round13.sh`
+   bakes constants into Track 1's `_fno.py` and then checks Track 2's copy against it. Any transport that
+   dereferences symlinks — `tar -h`, `zip`, a payload size limit, some file-copy UIs — turns them into real
+   files, and then **Track 1 builds while Track 2 refuses** with `submit/_fno.py is not Track 1's _fno.py;
+   the tracks would diverge`. Ship the tree with symlinks intact, or recreate them before building.
+3. **`validate_strict.py` needs `Track_1/val_unseen.npz` at GATE time**, not only for scoring. Build the
+   validation sets *before* `reproduce.sh` with `(cd Track_1 && $PY make_val.py --data "$RPDE/train_real/train_real")`
+   (it writes `val_{seen,unseen}.npz` into the current directory), or the Track 1 gate fails with
+   `FileNotFoundError` on a package that is otherwise fine.
+4. **The v9 scoring kit is found through `RPDE_KIT`** (added 2026-09-24; `Track_1/sps9.py`, `Track_1/submit_fno/validate_strict.py`,
+   `Track_2/validate_t2.py`). Set it to the directory that holds the kit's `scoring.py`
+   (`realpde_t1_starting_kit_v9/realpde_t1_starting_kit_v9` from the release). Unset, each file keeps its old Pitzer default
+   (two different sub-paths of the same mount). Without it, `fit_band.py` and both gates die at import on any other machine.
+5. **The sim-map cache is found through `RPDE_SIMCACHE`** (`Track_1/unet/simreal.py`; default a Pitzer scratch path). Every `--sim`
+   stage writes the cache there. `reproduce.sh` now falls back to `$OUT/simcache` when the default is not writable (2026-09-24);
+   when calling `train2.py` directly, export `RPDE_SIMCACHE=<writable dir>` yourself.
+
+6. **Adaptive Track 2 packages must pass the causality assertion** (added 2026-09-25):
+   `python Track_2/stream_eval.py --submission <dir> --split unseen --causal-check`. In each trajectory it replaces every window
+   after the middle one (input and revealed truth) with noise and requires every earlier pred / lower / upper to be bit-identical.
+   The static packages pass trivially; any online-calibrated band (R1) must pass it before it ships. Checked 09-25 on CPU: the
+   09-25 T2 package passes (max |diff| 0.0), and a wrapper that peeks one window ahead is caught.
+
+None of the five affects the shipped archives; all five stop a from-scratch reproduction on a fresh machine,
+which is exactly what the organizers will attempt.
+
+**On the Pitzer cluster specifically** (measured 2026-09-23, IcanFly run `20260923-062751`, plus my own
+check of the same paths). Item 1 above says "pass `PY=…`" without saying *which*, so a reader still has to
+fail once to learn it. The three facts that remove that round trip:
+
+```
+PY=/users/PAS1187/qwu/envs/mural_osc/bin/python      # the working stack; the .conda path in item 1 is ABSENT here
+RPDE=/users/PAS1187/qwu/RealPDE                      # 34G: train_real 7.0G, train_sim 9.3G
+OUT / any writable target must live under /work      # inside a job, /fs/scratch/PAS1187/qwu,
+                                                     # RealPDE/incoming and /users/PAS1187/qwu are READ-ONLY
+```
+The third is the expensive one and is the only failure here that costs more than seconds: a script pointing
+`RPDE_REPRO_OUT` at `/fs/scratch` trains successfully and then fails at write time. (Second independent
+confirmation of that mount boundary — Ilse first met it as "the checkpoint was deleted".) The interpreter
+fault, by contrast, is caught by the `train2.py --help` preflight at second 0 and now prints the `PY=` line
+above in its failure message (`b5d2219`).
+
+## 10. The QD error-head package (09-24) — members, and where `k` comes from
+
+Status when written (06:2xZ 09-24): the QD arm passed its pre-registered criteria a–e (Devi, `qd_FINAL_verdict.txt`); this section
+records what the organisers must retrain. The package itself is built by the **QD** command of the `FINAL_RECIPE` block at the
+top of this file. Unlike §3, the QD band is **refit, never reused**: `half = k*H` needs the retrained heads, and `k` is the stated
+constant of §10.3. (`build_round13.sh` refuses `RPDE_BAND` together with `RPDE_ERR_*`, which it used to ignore silently.)
+
+### 10.1 The four all-data F-FNO members (replace `ffno_all_w40l8_sim_s1..s4`)
+§1.4's command **flag for flag**, plus the QD head:
+```bash
+for s in 1 2 3 4; do
+  $PY train2.py --data "$REAL" --arch ffno --width 40 --n-layers 8 --modes-y 16 --modes-x 32 --dropout 0.3 --var-head \
+      --loss mse --lam-f 0.0 --lam-cov 2.0 --cov-c 0.25 --lam-grad 1.0 --lam-tgrad 0.3 --lam-v 0.15 --lam-t 0.15 --alpha-train 0.0 \
+      --stride 5 --batch 32 --lr 2e-4 --epochs 400 --wd 1e-5 \
+      --sim "$SIM" --lam-sim 0.3 --sim-loss full --sim-map scalar --sim-stride 5 --seed $s --all-data \
+      --err-head --err-loss qd --qd-temp 0.1 --lam-e 0.15 --ckpt-every 20 --resume \
+      --out ffno_all_w40l8_sim_qderr_s$s.pth
+done
+```
+`--err-loss qd` is Devi's qd_r loss verbatim (`train2.py`, the `qd` branch): h = exp(logerr) is the half-width,
+l = −mean(sigmoid((h−|e|)/(0.1·h.detach())) · exp(−2·h·mul/σ_g)). `--ckpt-every/--resume` change nothing about the weights
+(resume file only). The blob records `err_head=True`, `err_loss='qd'`, `qd_temp=0.1`. ~288 min each on a V100.
+
+### 10.2 The QD twins (6 seeds) — for choosing k in §10.3 (text: Devi, 2026-09-24)
+The twin recipe is §1.5, the F-FNO held-out twin, flag for flag. It does not use `--all-data`, so `--exclude` defaults to
+`model.VAL_TRAJ`, and it adds `--sim-exclude-held`. On top of that it adds the QD error head. Run from `Track_1/unet/`:
+
+```bash
+for s in 1 2 3 4 5 6; do
+  $PY train2.py --data "$REAL" --arch ffno --width 40 --n-layers 8 --modes-y 16 --modes-x 32 \
+      --dropout 0.3 --var-head \
+      --loss mse --lam-f 0.0 --lam-cov 2.0 --cov-c 0.25 --lam-grad 1.0 --lam-tgrad 0.3 \
+      --lam-v 0.15 --lam-t 0.15 --alpha-train 0.0 \
+      --stride 5 --batch 32 --lr 2e-4 --epochs 400 --wd 1e-5 --seed $s \
+      --sim "$SIM" --lam-sim 0.3 --sim-loss full --sim-map scalar --sim-stride 5 --sim-exclude-held \
+      --err-head --err-loss qd --qd-temp 0.1 \
+      --out qd_twin_s$s.pth
+done
+```
+
+- Output names are `qd_twin_s1.pth` … `qd_twin_s6.pth`, which is what the §10.3 loop reads. The original runs wrote
+  `qd_arm_s$s.pth`; only the file name differs.
+- **Code.** The QD branch of the repo's `train2.py` (`l_err = -mean(sigmoid((h-|e|)/(T*h.detach())) *
+  exp(-2*h*mul/0.0563870259))`, h = exp(clamp(logerr, -8, 2))) is byte-identical to the one the 09-23 runs used
+  (sha256 `95b1aeae…`, informational only; that file is not in the tree). The repo's file differs from it only by the added
+  `mse`/`nll` branches, the argparse `choices` and help text, and formatting. None of these touch the `qd` path.
+- **Cost.** 6 × about 4.3 h on one GPU (the 09-23 runs, 400 epochs), about 26 GPU-h in all, or about 5 h of wall clock if run in parallel.
+- **Check.** §10.3 must give k = 1.1399 (grid point; neighbours 1.0446 / 1.2438) on every fold. A retrained set of twins that lands one
+  grid step away still passes, per the §10.3 rule.
+- The paired pinball controls of the 09-23 runs (`pinball_control_s$s.pth`) are **not** needed to reproduce the method. They
+  served only the pre-registered readout.
+
+### 10.3 `k` — the one number the package cannot learn from its own members
+The shipped band is `half = k · H` (`band.npz`: `err_mode='direct'`, `err_k`). `k` is **not** fitted on the all-data members —
+they trained on every trajectory, so their H is in-sample (a band fitted on memorised errors scored 36.94 sps in round 6).
+It is chosen on the held-out twins, nested. The derivation below uses only the repository, the release data and checkpoints
+(text: Bram, verified on Pitzer 09-24; closes dry-run gaps #9/#10):
+
+**Scope (Devi, 09-24).** This section reproduces *k from the six twins*: make_val → fit_band → export → k* → H ratio.
+It does NOT reproduce the twins themselves. Their training is §10.2's recipe (about 26 GPU-h), which is only checked when
+the whole pipeline is retrained for the finals. The 09-24 check (job qdk_repro) ran this section on the 09-23 twins
+(Devi's qd_r_s1..6, byte-identical); "k reproduced end to end" means this section only.
+
+Everything below runs from a clean checkout plus the release data and checkpoints. No file comes from anyone's workspace.
+Run from the repo root. `$CKD` is the directory holding the r34 members and twins (`ffno_all_w40l8_sim_s1..4`, the two
+all-data ViTs, `p2_ffno_l8_sim_s1..3`, `arch_vit_d384`, `arch_vit_cmb3sim`). `qd_twin_s1..6.pth` come from §10.2.
+
+```bash
+# 0. validation windows (writes Track_1/val_{seen,unseen}.npz)
+(cd Track_1 && $PY make_val.py --data "$REAL")
+
+# 1. the control band, fitted in-repo with the r38 recipe (same members, ALPHA 0.80, centre decoupled)
+U=Track_1/unet
+$PY Track_1/submit_fno/fit_band.py \
+    --ckpt $U/ffno_all_w40l8_sim_s{1,2,3,4}.pth $U/arch_vit_all_s1.pth $U/arch_vit_all_cmb3sim_s3.pth \
+    --err-ckpt $U/p2_ffno_l8_sim_s{1,2,3}.pth $U/arch_vit_d384.pth $U/arch_vit_cmb3sim.pth \
+    --alpha 0.80 --band-p 0.45 --fill-unscored --centre-alpha 0 --out qdk_ctl_band.npz
+
+# 2. the twin export the derivation reads
+$PY Track_1/qd_k/export.py --ckpt-root $CKD --data "$REAL" --out qdk_export --tmp /tmp/qdk_exp_tmp
+
+# 3. k on the six QD twins, nested leave-one-trajectory-out over the unseen AoA >= 15 trajectories
+export RPDE_QDK_EXPORT=qdk_export
+for s in 1 2 3 4 5 6; do
+  $PY Track_1/qd_k/head_direct.py qd_twin_s$s.pth Track_1/unet --real-only --family direct --direct-kmax 20 \
+      --pred-k 1.25 --band qdk_ctl_band.npz --csv qd_direct_band.csv
+done
+```
+
+**Check:** every run prints `k* per fold [1.14, 1.14, 1.14]` (grid point 1.1399; neighbours 1.0446 / 1.2438; grid step
+(2.5/0.4)^(1/21) = 1.0912). `k*` depends on the twins and the export only. The control band sets the reported gain,
+not the choice: `--base recipe` (control refit from the export, no band file) gives the same k* (checked 09-24).
+
+**Shipped k = K_USE from the like-for-like H check** (§10.1 members vs these twins, both in-sample on val_seen):
+```bash
+(cd Track_1 && $PY qd_k/h_ratio_check.py --members unet/ffno_all_w40l8_sim_qderr_s{1,2,3,4}.pth \
+     --twins ../qd_twin_s{1,2,3,4,5,6}.pth --val val_seen.npz --k-base 1.1399)
+```
+Rule: 0.95 ≤ r ≤ 1.05 → k = 1.1399. r < 0.95 → 1.1399 × 1.0912 = 1.2438. r > 1.05 → 1.1399, noted in the README.
+|r − 1| > 0.10 → exit 2, review. The 09-24 build gave r = 0.9884 → K_USE = 1.1399. Pass K_USE as `RPDE_ERR_K`.
+
+**Checked 09-24 (job qdk_repro, run 20260924-165948, repo snapshot = this branch, release checkpoints + the six twins):**
+- step 1's in-repo band: `base` and `sigma_ref` **bit-identical** to the shipped r38 band (md5 02f473e9). The file md5 differs
+  (ad833a4a) only because today's `fit_band.py` also writes the `clip_lo`/`clip_hi` keys.
+- step 3: k* = 1.1399 in all 3 folds for all 6 twins, with both the in-repo band and `--base recipe` (12/12). Direct-band gain
+  +0.107 to +0.116 final per twin.
+- H check: all-data 0.005961, twins 0.006031, **ratio 0.9884 → K_USE = 1.1399**, the 09-24 build's value.
+
+Convention baked into the defaults: ALPHA 0.80, control band = the r38 recipe band (step 1 above; base/sigma_ref bit-identical to md5 02f473e9), stretch 1.39, p 0.45; reporting cell = the unseen
+AoA ≥ 15 trajectories 11400_20, 21600_15, 8850_20, k picked by nested leave-one-trajectory-out (the control band's own k is also
+picked nested per fold). **Units:** H = exp(logerr) is in NORMALISED units; the half-width is h = k·H·STD per channel,
+STD = [0.0968057, 0.0159607]. **k is a grid value**: 22-point log grid 0.4–2.5 plus 1.0, extended upward at the same ratio (×1.0912);
+the neighbours of 1.1399 are 1.0446 and 1.2438 (a continuous search gives ~1.091 — the source of Bram's +0.098 vs Fen's +0.116).
+Vendored script = sha256 367bd95f… (Fen-reviewed) with only the path lines changed.
+Result 09-24: **k\* = 1.1399 in all 18 seed×fold cells and in all 48 leave-one-trajectory-out runs** (8 unseen VAL_TRAJ).
+The shipped k is K_USE from `h_ratio_check.py` above (rule and 09-24 value there).
+`Track_1/qd_k/` vendors the scripts verbatim (Fen's `head_direct.py`, Bram's `centre_band.py`, Devi's `sweep_guards.py`, the twin
+`export.py` / `load_export.py`); only hard-coded workspace paths were replaced by `RPDE_QDK_*` env vars / the script's own directory.
+
+### 10.4 Reproducibility caveat — Reynolds extrapolation, and the finals `k`
+`k` is calibrated against the dev-board stretch (1.39, `calib_band13`). Whether it holds out of range was CHECKED on 09-24:
+two QD twins trained without `re_split.excluded()`'s 26 trajectories (`Track_1/qd_k/run_qdre_train.sh`, `SEED=1,2`), read with
+`run_qdre_readout.sh` -> `re_gate.py`. At the shipped k = 1.1399 QD beats a recipe band on all 26 held-out trajectories (rehi one-sided
+lower bound +0.185 final; +0.032 even against a control given its in-sample best k). Quote the DIRECTION, not the size: the official
+control is ~2.5 grid steps too narrow on rehi.
+
+**Finals `k` — rule fixed before the readout (#Leaders 09-24 12:19Z), testing kept apart from setting:**
+1. *Test* (`Track_1/qd_k/finals_k.py qdre_tables_1.npz qdre_tables_2.npz`): pick k on rehi Re 25425, evaluate against 1.1399 on
+   Re 26700, and the reverse; both widenings must be > 0. Their mean is the rehi gain.
+2. *Set*: only if (1) passes, pick k once on the whole rehi group; the rein and relo costs at that k must each be smaller than half
+   the rehi gain. Then that k is the finals `err_k`; otherwise the finals use the board k.
+3. Weighted composites (6:1:1, 5:2:1 rehi:rein:relo) are printed for information only; they never decide.
+Result 09-24: (1) passes narrowly (+0.016 and +0.0003), (2) fails on relo (-0.073 vs bar -0.004) => **finals `err_k` = 1.1399**,
+the same as the board. Not measured: AoA values outside the training set (every AoA of the 8 empty real-grid cells is in training;
+new (AoA, Re) combinations are covered by the 8 unseen VAL_TRAJ, 48/48 positive).
+
+## 11. Track 2 only: R1, causal per-pixel online band calibration (09-25)
+
+Approved for Track 2 only (the Codabench T2 page names "calibration" as a legal adaptation inside `ttt_step`; at step t the
+platform reveals the target of step t-1 and nothing later). NEVER port it to Track 1: its batch holds future windows.
+- **What it is.** For each (y, x, c), running sums over the trajectory's PAST windows of the scorer's element term for K=9
+  candidate multipliers k = 0.5*2**(j/4); the current window takes the per-pixel argmax, a 3x3 replicate-padded box mean, and
+  a shrink toward 1 by n/(n+2), applied to the half-width as a continuous multiplier. First window of a trajectory: k = 1.
+- **The method is the shipped code**: `Track_2/submit/submission.py` with `R1 = True`, `R1_KS`, `R1_SNAP = False`, `R1_FP32 = True`
+  (fp32 sums). `Track_2/r1_ref/` holds Ramesh's float64 numpy / torch references as checking tools; see its README for the
+  expected fp32-vs-fp64 difference (~1e-5 of pixels; an fp64 build, `R1_FP32 = False`, matches the numpy reference bit for bit).
+- **Required checks for an R1 package** (all run by the `r1_build*` jobs): `validate_t2.py --adaptive`; `stream_eval.py --causal-check`
+  (§9.1 item 6); with `prev_target_norm = None` on every step the package equals the same package with `R1 = False` bit for bit.
+- **Nothing to train**: R1 has no weights and no fitted constants beyond `R1_KS` / `R1_N0`; the package is any T2 package with
+  `R1 = True` set in its baked `submission.py`.
+
+
+---
+
+## 12. `reproduce.sh --recipe A` end to end at 400 epochs on the current code (2026-09-25, Emre; accepted by Ilse)
+
+The organisers' step, run as they would: a clean `git archive` of qwu/agent **7be7d58** (c868b3a + the ViT stage split of §8's
+`RPDE_REPRO_STAGE`), no checkpoint in the tree, the eleven training stages as eleven parallel Pitzer V100S jobs
+(`RPDE_REPRO_STAGE` = `twins_vit_p|twins_vit_c|twins_ffno|members_vit_p|members_vit_c|members_ffno`, `RPDE_REPRO_SEEDS` one seed each,
+`RPDE_REPRO_OUT` a scratch dir), then one build job reading the eleven retrained checkpoints (every stage must print SKIP).
+Run ids `20260925-0902..0924xx-*-emre-reproA_<stage>`, build `20260925-144524-*-emre-reproA_build`; evidence `~/realpde-packages/repro_20260925/`.
+
+| acceptance (written before the run) | result |
+|---|---|
+| ① both gates | 2/2 SUBMITTABLE |
+| ② AoA 15-20 wfinal, retrained 6 members vs shipped (Ilse's `repro_score.py`) — pass <= 0.005 | **+0.0006** (full +0.0040); 09-22 anchor −0.0019 / +0.0022 |
+| ③ refit band vs shipped r38 band | base rel-L2 2.6 %, sigma_ref 0.24 %; p, clip, centre_alpha identical |
+| ④ provenance | 11 retrained sha256 = training-job logs = owner-staged SHA256SUMS; none equals a shipped checkpoint; 11 stages SKIPped |
+
+Per member (AoA 15-20, retrained vs shipped): F-FNO within ±0.0002; `arch_vit_all_s1` +0.0011; `arch_vit_all_cmb3sim_s3` −0.019,
+absorbed by the six-member average. **Nondeterminism (supersedes the "bit-identical at epoch 399" reading):** same seed, same code,
+same card does NOT give the same weights — F-FNO end ~0.5 % apart (relative L2), ViT ~10 %, against the 09-21 retrain; the printed
+epoch-399 loss can still agree to 5 digits. Judge a reproduction on ② and ③, not on log lines. Code review (Corin 09-25) found the
+default training path unchanged by the err-head commits since 09-22 (no extra module, no extra RNG draw when `--err-head` is off).
+Wall time: all-data F-FNO ~4:41, twin F-FNO ~4:41, ViT `cmb3sim` 4:47 (twin) / 5:21 (all-data), ViT no-sim 2:28-2:45 on a V100S (training time from the logs; set limits >= 330 min for
+the sim runs). Example of why log lines are not evidence (Devi): `me_vitc`'s printed epoch-399 loss differs from 09-21 by 2e-5 while its
+single-model AoA 15-20 wfinal differs by −0.019.
+
+
+## 13. FINAL (2026-09-27): what the packages of record add to recipe A
+
+Nothing in this section is trained. Members: §1.2 and §1.4. Twins: §1.3 and §1.5. Everything below is fitted on the twins
+or is inference code, and `Track_1/submit_fno/build_final.sh` bakes it.
+
+### 13.1 The band
+
+1. **Static band** (recipe A's, §3): `fit_band.py --ckpt <6 members> --err-ckpt <5 twins> --alpha 0.80 --band-p 0.45
+   --centre-alpha 0 --fill-unscored`, inflate 1.39 by default → `Track_1/bands/r38_a080_c0_fill.npz` (md5 `0cb37d82`).
+2. **Twin dump**: `python Track_1/sigblend/dump_twins.py <dump.npz>` runs the five twins at alpha 0 on the eight
+   `val_unseen` trajectories and stores each member's field and σ.
+3. **SIGBLEND**: `cd Track_1/sigblend && B_DUMP=<dump.npz> K0_BAND=<static band> K0_INFL=1.29 K0_NB=16 PYTHONPATH=..
+   python make_k0_band.py <outdir>`. Per channel and lead frame it bins the elements by log σ (16 quantile bins), solves
+   the optimal half-width of each bin exactly on the twins' errors stretched by 1.29, and fits
+   `log h* = log κ_{t,c} + q_c · log σ` with one slope per channel and one intercept per frame. It writes
+
+   ```
+   base′ = base^(1−λ) · κ^λ        p′ = (1−λ) · 0.45        λ = 0.5        q = (0.4847, 0.4907)
+   half  = base′ · clip(σ/σ_ref, 0.3, 3)^p′ · (σ + 1e-8)^(λ q_c)
+   ```
+
+   as `band_k0_sigblend_lam0.5.npz` (committed as `Track_1/bands/k27_sigblend_lam0.5.npz`, md5 `e8309d9f`) and a json with
+   the two literals the packages bake: `EBAND` (Track 1) and `T2_sigpow` (Track 2), both equal to λ·q.
+
+`reproduce.sh final` reuses the committed npz and json. `RPDE_REPRO_FITBAND=1` runs steps 1–3 on the twins the run trained.
+**The constants are fitted on all eight validation trajectories.** Their evidence is the leave-one-trajectory-out table
+`make_k0_band.py` prints: ΔC×100 +0.48 on all eight (7 of 8 positive) and +0.03 on AoA 15–20 (2 of 3) at stretch 1.29.
+
+### 13.2 Constants of both tracks
+
+| constant | value | what it does |
+|---|---|---|
+| `ALPHA` | 0.80 | compose: the fluctuation's temporal std is moved toward `α·σ + (1−α)·s` |
+| `JOINT_GAIN` | True | one compose gain per pixel for `u` and `v`, the channels weighted by their physical variance |
+| `CENTRE_ALPHA` (in `band.npz`) | 0 | the interval is centred on the alpha-0 field y₀: `lower = min(y₀ − h, P)`, `upper = max(y₀ + h, P)` |
+| `AMP` | `"fp16"` | autocast, verified against fp32 at load; falls back on a difference above 2e-2 or a non-finite value |
+| `FFNO_PATH` | `"dense"` | the F-FNO's 1-D transforms as matrix products on a precomputed basis |
+| packing | int8, `--linear tensor` | `build_zip.py` / `build_t2.py` |
+| Track 1 `EBAND` | `((λq_u,0,0,0,0,0),(λq_v,0,0,0,0,0)), "mult", None` | the σ-power factor of the band, on the GPU-band path |
+| Track 1 `DIRECT_PRED`, `WARM_TAILS`, `PIN_OUT`, `BATCH_CAP` | True, True, 128, 56 | host-side latency; outputs unchanged |
+| Track 1 `SMALL_GRAPH` | False | `EBAND` needs the GPU-band path at every batch size |
+| Track 2 `SIGPOW` | `(λq_u, λq_v)` | the same σ-power factor |
+| Track 2 `NUMPY_OUT`, `ARENA_STEPS` | True, 1024 | host-side latency; outputs unchanged |
+
+### 13.3 The Track-2 stream stack
+
+State is per trajectory, cleared by `reset_ttt_state`, updated only from targets the runner has revealed, and the whole
+step runs inside the CUDA graph. With every knob off the package is bit-identical to recipe A's Track-2 package.
+
+| knob | value | definition |
+|---|---|---|
+| `R1`, `R1_ASYM` | True, True | per pixel and channel, a running table over a 9 × 9 grid of multipliers (0.5 … 2, geometric) for the lower and the upper half-width, accumulating the scorer's own interval term on revealed windows; this window uses the arg-max pair, 3 × 3 box-smoothed, shrunk to 1 by n/(n+2) (`R1_N0`) |
+| `R1_TSM` | 3 | the table is 3 × 3 box-smoothed before the arg-max |
+| `R1_BLK`, `R1_BLK_N0` | 4, 20.0 | a second table per block of 4 lead frames; the multiplier moves to the block's own by n/(n+20), clipped to [0.5, 2] |
+| `D1C_N0` | 30.0 | the running mean over revealed windows of `mean_t(y₀ − y)`, per pixel and channel, is subtracted from the prediction and from the interval centre, shrunk by n/(n+30) |
+| `D1C_EB`, `D1C_EB_N0` | True, 1.0 | the shrink becomes `max(n/(n+30), n/(n+1) · τ²/(τ² + se²))` from the second window: τ² the mean square of the bias field, se² the mean over pixels of its window-to-window variance divided by n, per channel |
+| `D1C_LEAD_N0` | 5.0 | the shift is multiplied per lead frame by `clip(1 + (a(t) − 1) · n/(n+5), 0, 3)`, `a(t)` the projection of the per-frame mean error onto the bias field |
+| `VC_N0`, `VC_CLIP` | 30.0, (0.25, 4) | the ratio of the revealed targets' temporal variance to the composed prediction's, both summed over revealed windows and 3 × 3 box-smoothed, clipped, shrunk to 1 by n/(n+30); its square root multiplies the compose gain |
+| `FW_N0` (FAMW), `HIST_BETA` | 0.0, 0.0 | off |
+
+Held-out reads of the stack against asymmetric R1 alone, twins, score without `time`: +0.085 on all eight trajectories
+(8 of 8), +0.025 on AoA 15–20 (3 of 3), +0.446 at a held-out AoA 20 (16 of 16), +0.553 at a held-out AoA 10 (18 of 18).
+Notes, criteria and job scripts: `experiments/sprint_20260927/`.
+
+### 13.4 Gates
+
+`build_final.sh` exits 0 only if Track 1 passes `validate_strict.py`, Track 2 passes `validate_t2.py --adaptive`, and
+`stream_eval.py --causal-check` finds every step before a cut bit-identical when all later windows are replaced by noise
+(176 steps, maximum difference 0).
+
+### 13.5 The uploaded packages and the current tree
+
+**To rebuild the uploads byte for byte, check out `fdac00b`.** The tree after it returns the same numbers on finite
+inputs and differs in three ways, none of which changes the method:
+
+* **Guards.** Non-finite values in an input or in a revealed target no longer propagate: the affected window's
+  prediction is zeroed and its bounds collapse onto it; on Track 2 a non-finite revealed target is treated as withheld.
+* **Two knobs, both off**, so the default build is the uploaded behaviour: `PREV_SPACE` (`"target"` makes the package
+  read the revealed target in the normalisation the official runner uses) and `STATS_MASK` (the online statistics skip
+  unscored elements). Their measured reads are in `experiments/audit_20260927/refactor_pkg.md`.
+* **Fewer knobs.** Code paths that no package of record and no recipe of `reproduce.sh` uses were removed;
+  `build_round13.sh` refuses their variables.
+
+`STATUS.md` lists what is open before a Decision-phase upload.
+
+### 13.6 Files this document cites that are not in the repository
+
+`h5py_fix.sh` (§0), `qd_FINAL_verdict.txt` (§10) and `repro_score.py` (§12) were written on the agent team's server
+(09-21 … 09-27) and were not brought over. None of them is needed to reproduce FINAL: the environment is
+`environment.yml`, the QD candidate is not the final recipe, and the acceptance read of §12 is reproduced by building
+the package from the retrained twins and scoring it with `Track_1/ens_v9.py --aoa 15 20`.

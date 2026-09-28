@@ -77,5 +77,28 @@ def normalize_in(x_raw: np.ndarray) -> np.ndarray:
     return ((x_raw - MEAN_IN) / STD_IN).astype(np.float32)
 
 
+def normalize_tgt(y_raw: np.ndarray) -> np.ndarray:
+    """The REVEALED target the way the official runner hands it to ``ttt_step`` (2026-09-28, audit M1).
+
+    Kit t2_v6 ``local_eval.py``: ``inp_norm, tgt_norm = normalizer.preprocess(inp, tgt)`` normalizes the target with
+    ``mean_tgt``/``std_tgt``, and the NEXT step's ``prev_target`` is that ``tgt_norm``.  Every local harness used
+    ``normalize_in`` for it until 09-28, so a package assuming input statistics looked right locally.  Computed the
+    kit's way, in FLOAT32 (its stats are float32 tensors; ``MEAN_TGT``/``STD_TGT`` above are their exact float64
+    images), so the result is the kit's bit for bit (checked 2026-09-28 on 200 000 random elements against the kit's
+    own torch expression).  A float64 evaluation would differ in 12 % of elements by up to 2 ulp.
+    """
+    y = np.asarray(y_raw, dtype=np.float32)
+    return (y - MEAN_TGT.astype(np.float32)) / STD_TGT.astype(np.float32)
+
+
+def normalize_prev(y_raw: np.ndarray, space: str) -> np.ndarray:
+    """``normalize_tgt`` for space "target" (the official runner), ``normalize_in`` for "input" (the legacy harness)."""
+    if space == "target":
+        return normalize_tgt(y_raw)
+    if space == "input":
+        return normalize_in(y_raw)
+    raise ValueError(f"prev space must be 'target' or 'input', not {space!r}")
+
+
 def denorm_pred(pred_norm: np.ndarray) -> np.ndarray:
     return (pred_norm * STD_TGT + MEAN_TGT).astype(np.float32)

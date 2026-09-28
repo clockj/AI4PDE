@@ -60,13 +60,14 @@ import sys
 import numpy as np
 
 import final_v9
+import opoint
 import sps9
 from sps9 import optimal_band, prep, sc, sps_score
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "submit_fno"))
 
-F_ELEM = 1.39                       # per-element error tail, inverted from the board's SPS
+F_ELEM = opoint.INFLATE             # 1.39, per-element error tail, inverted from the board's SPS
 # ROUND 13 IS THE ANCHOR, and it is a much better one than round 12 was: that round shipped
 # ALPHA **0.60** precisely to measure this axis, so the per-metric inflation factors are now
 # defined at an alpha the board actually ran, on the 8-member/1-invocation shape the next
@@ -81,10 +82,20 @@ BOARD = dict(rel=0.112383, tke=0.564638, mvpe=0.136448)   # R13, 2026-08-31 (ALP
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt", nargs="+", required=True)
+    # 2026-09-28: the sweep now includes the operating point, opoint.ALPHA. --anchor stays 0.60 and
+    # --joint-gain stays OFF by default, deliberately: they describe the R13 board row BOARD is
+    # (a per-channel compose at 0.60), and the inflation factors are only defined at that row.
+    # To anchor on R37 pass --board <its errors> --anchor 0.80 --joint-gain.
     ap.add_argument("--alphas", type=float, nargs="+",
-                    default=[0.30, 0.45, 0.6, 0.75, 0.9])
+                    default=sorted({0.30, 0.45, 0.6, 0.75, opoint.ALPHA, 0.9}),
+                    help="compose alphas to sweep (default 0.30 0.45 0.60 0.75 0.80 0.90; "
+                         "0.80 = opoint.ALPHA)")
     ap.add_argument("--aoa", type=int, nargs="+", default=[15, 20])
-    ap.add_argument("--f", type=float, default=F_ELEM)
+    ap.add_argument("--f", type=float, default=F_ELEM,
+                    help=f"per-element board tail (default {F_ELEM}, opoint.INFLATE)")
+    ap.add_argument("--joint-gain", action=argparse.BooleanOptionalAction, default=False,
+                    help="compose with _fno.JOINT_GAIN (default OFF: the R13 anchor row was per-channel; "
+                         f"the packages of record use it, opoint.JOINT_GAIN = {opoint.JOINT_GAIN})")
     ap.add_argument("--time-score", type=float, default=93.1154,
                     help="board time_score for the `final` column; constant down the sweep")
     ap.add_argument("--anchor", type=float, default=0.60,
@@ -109,6 +120,7 @@ def main() -> None:
     from eval_v9 import infer
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
+    _fno.JOINT_GAIN = bool(args.joint_gain)
     m = [_fno.load_any(c if os.path.isabs(c) else os.path.join(HERE, c), dev)
          for c in args.ckpt]
     ds = np.load(os.path.join(HERE, "val_seen.npz"))

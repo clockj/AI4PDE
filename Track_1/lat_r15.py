@@ -32,6 +32,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, "submit_fno"))
 
+import opoint  # noqa: E402
+
 # Measured conversions.  A100 -> the RTX 4060 every historical local ms was measured on
 # (round 12: 1.082 A100 against 2.002 recorded 4060 for the identical package), then the
 # seven-round board-latency fit (round 13, rms 0.690 ms), then the local slope of the
@@ -81,20 +83,29 @@ def main() -> None:
                     help="comma-separated checkpoint lists; a `NAME=` prefix labels the row. "
                          "A `*K` suffix on a path repeats that member K times, which is legal "
                          "for TIMING (cost does not depend on the weights) and nothing else.")
-    ap.add_argument("--band", default=os.path.join(HERE, "..", "Track_2", "submit", "band8.npz"))
-    ap.add_argument("--alpha", type=float, default=0.60)
+    # 2026-09-28: defaults from opoint (were Track_2/submit/band8.npz, an untracked build by-product,
+    # and alpha 0.60). The timed section is the pre-09-21 host band path (pred -/+ base*ratio^p); for
+    # the SIGBLEND band it omits the sigma-power factor, one extra (N,1,H,W,2) exp on the GPU.
+    ap.add_argument("--band", default=opoint.path(opoint.FINAL_BAND),
+                    help=f"band npz, read through band_io.load_band (default {opoint.FINAL_BAND})")
+    ap.add_argument("--alpha", type=float, default=opoint.ALPHA,
+                    help=f"compose alpha (default {opoint.ALPHA}, opoint.ALPHA)")
+    ap.add_argument("--joint-gain", action=argparse.BooleanOptionalAction, default=None,
+                    help="compose with _fno.JOINT_GAIN (same cost either way). Neither flag (default) = "
+                         f"opoint.JOINT_GAIN ({opoint.JOINT_GAIN}) when --band is centred on y0, else off")
     ap.add_argument("--rep", type=int, default=5)
     ap.add_argument("--batch", type=int, default=0, help="0 = measure it, as submission.py does")
     args = ap.parse_args()
 
     import _fno
     dev = "cuda" if torch.cuda.is_available() else "cpu"
-    z = np.load(args.band)
-    band, ref, p = (z["base"].astype(np.float32), z["sigma_ref"].astype(np.float32),
-                   float(z["p"]))
+    import band_io
+    bd = band_io.load_band(args.band)
+    band, ref, p = bd.base, bd.sigma_ref, bd.p
+    _fno.JOINT_GAIN = band_io.joint_gain_for(bd, args.joint_gain)
     x = np.load(os.path.join(HERE, "val_unseen.npz"))["x"].astype(np.float32)
     print(f"device={dev} windows={len(x)} band={os.path.basename(args.band)} "
-          f"alpha={args.alpha} p={p}", flush=True)
+          f"alpha={args.alpha} p={p} joint_gain={_fno.JOINT_GAIN} ({bd.kind})", flush=True)
     print(f"{'set':<26} {'memb':>4} {'inv':>3} {'params':>9} {'bs':>4} "
           f"{'A100 ms':>8} {'4060 ms':>8} {'board ms':>8} {'d_final':>8}")
 

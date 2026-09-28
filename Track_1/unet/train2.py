@@ -201,6 +201,24 @@ def main() -> None:
     ap.add_argument("--lr", type=float, default=2e-4)
     ap.add_argument("--out", required=True)
     ap.add_argument("--var-head", action="store_true", help="WP2: add the log-std head")
+    ap.add_argument("--err-head", action="store_true",
+                    help="add a SECOND auxiliary head (F-FNO only) predicting the model's own "
+                         "per-element absolute error WITH the frame axis: logerr is (B, 20*C, "
+                         "H, W), the field's own shape, and is regressed onto log|pred - y| "
+                         "with pred DETACHED. It is not --var-head: the log-std head regresses "
+                         "onto std_t(y), the target window's per-pixel TEMPORAL std -- one "
+                         "amplitude envelope shared by all 20 forecast frames, and a statistic "
+                         "of the DATA that never sees what this model got wrong. Weight "
+                         "--lam-e. BY DEFAULT IT SHARES THE TRUNK'S GRADIENT, which is the "
+                         "measured choice, not the convenient one: ROUNDS.md:377-380 puts a "
+                         "DETACHED variance head at corr 0.679 -- worse than copying the input "
+                         "window's std (0.756) -- against 0.907 when the gradient is shared. "
+                         "So the field DOES move between an --err-head run and its control, "
+                         "and the control has to be trained rather than inferred. --err-detach "
+                         "restores the detached variant if you want a bitwise-identical field "
+                         "and accept a head that probably cannot learn. "
+                         "Adds head_logerr.* to the checkpoint, so a loader must rebuild it "
+                         "with err_head=True (the blob records it).")
     ap.add_argument("--var-mlp", action="store_true",
                     help="give the log-std head the same 128-wide MLP the field head has. "
                          "Without it the variance readout is a single 1x1 conv -- a linear "
@@ -286,6 +304,39 @@ def main() -> None:
                          "locally and ~1.3 on the hidden set).")
     ap.add_argument("--lam-v", type=float, default=1.0, help="weight on the log-std loss")
     ap.add_argument("--lam-t", type=float, default=0.5, help="weight on the TKE loss")
+    ap.add_argument("--err-detach", action="store_true",
+                    help="Cut the error head off the trunk (gradient stops at head_logerr). "
+                         "DEFAULT OFF, and off is the measured choice: ROUNDS.md:377-380 has a "
+                         "detached variance head at corr 0.679, WORSE than copying the input "
+                         "window std (0.756), against 0.907 shared. Only use this when you "
+                         "need ARM and CONTROL to emit a bitwise identical field and you "
+                         "accept a head that probably cannot learn.")
+    ap.add_argument("--lam-e", type=float, default=0.15,
+                    help="weight on the --err-head loss (the `err` column). 0.15 is --lam-t's "
+                         "shipped value: the error head is a second auxiliary readout of the "
+                         "same trunk and starts at the same price, so the arm is a head being "
+                         "ADDED rather than the field objective being re-weighted.")
+    ap.add_argument("--err-loss", choices=["pinball", "mse", "nll", "qd"], default="pinball",
+                    help="2026-09-23: functional of the --err-head loss; the three forks of the night merged "
+                         "under ONE name (Corin's request), each branch copied from its author verbatim. "
+                         "'pinball' (DEFAULT, Lior's pinball_r: rho_tau on log|pred-y|, --pinball-tau) keeps "
+                         "every recorded pinball command reproducing unchanged. 'mse' = Bram's errhead_mse: "
+                         "mean((clamp(logerr) - log(|e| + 1e-4))^2), the conditional geometric mean. 'nll' = "
+                         "Corin's errhead_nll: log h + (|e|+1e-4)^2 / (2 h^2), the conditional RMS. 'qd' = "
+                         "Devi's qd_r (Jonas's spec): h = exp(logerr) IS the half-width, "
+                         "l = -mean(sigmoid((h-|e|)/(T*h.detach())) * exp(-2*h*mul/SIGMA_G)), T = --qd-temp. "
+                         "NOTE the Bram and Corin forks defaulted to 'mse': their commands must pass "
+                         "--err-loss mse / nll explicitly against this tree. Recorded in the blob as err_loss.")
+    ap.add_argument("--qd-temp", type=float, default=0.1,
+                    help="qd_r (Devi): temperature T of the smoothed inside-indicator, relative to h.")
+    ap.add_argument("--pinball-tau", type=float, default=0.9,
+                    help="Lior / pinball_r (2026-09-23): the --err-head loss becomes the PINBALL "
+                         "loss at this quantile instead of MSE. The head then estimates the "
+                         "tau-quantile of log|pred-y| rather than its conditional MEAN, i.e. it "
+                         "is a per-element upper bound rather than a central amplitude. tau=0.5 "
+                         "is MAE (a clean one-change-off from MSE); the shipped default here is "
+                         "0.9. EVERYTHING ELSE IS HELD FIXED (err_head, lam_e, err_detach) so the "
+                         "only difference from Bram's arm is the functional, not the recipe.")
     ap.add_argument("--w-mean", type=float, default=1.0,
                     help="weight on the TIME-MEAN half of the field loss. Time-mean and "
                          "fluctuation are orthogonal under the time inner product, so the field "
@@ -923,6 +974,10 @@ def main() -> None:
     from models_alt import (build, divergence, radial_index, radial_spectrum,
                             time_derivative, velocity_gradient, vorticity)
     rad_idx, rad_nb = radial_index(H, W, dev)
+    if args.err_head and (args.subpix > 0.0 or args.oracle_cond):
+        # Both take a different forward signature, and their branches below unpack two
+        # outputs, so logerr would silently be None and --lam-e would price nothing.
+        raise SystemExit("--err-head is not combinable with --subpix / --oracle-cond")
     model = build(args.arch, args.width, args.var_head,
                   (HIST_CH if args.hist else 0) + n_ctx * C,
                   args.modes_y, args.modes_x, args.n_layers, args.p,
@@ -937,7 +992,7 @@ def main() -> None:
                   fgn_dim=args.fgn_dim, p_head=args.sim_p_head,
                   sub_head=args.subpix > 0.0,
                   cond_dim=(2 if args.oracle_cond else 0),
-                  drop_path=args.drop_path).to(dev)
+                  drop_path=args.drop_path, err_head=args.err_head, err_detach=args.err_detach).to(dev)
     print(f"params: {sum(p.numel() for p in model.parameters())/1e6:.2f}M", flush=True)
 
     if args.init:
@@ -1082,7 +1137,7 @@ def main() -> None:
         # steps over a differently-weighted pool rather than one pass over every window.
         perm = (torch.randperm(len(idx_t)) if w_samp is None else
                 torch.multinomial(w_samp, len(idx_t), replacement=True))
-        acc = np.zeros(16)
+        acc = np.zeros(17)          # 16 loss terms + `err` (--err-head), appended last
         n = 0
         for i in range(0, len(idx_t), args.batch):
             pos = perm[i:i + args.batch]
@@ -1174,6 +1229,7 @@ def main() -> None:
                 # Hoisted out of the model call so the FGN sample passes below feed the network the
                 # identical tensor rather than rebuilding it K times.
                 inp = torch.cat(parts, 1) if len(parts) > 1 else parts[0]
+                logerr = None
                 if args.subpix > 0.0:
                     # One forward, not two: the auxiliary head reads the same trunk
                     # features head_field does, so asking for it here costs a 1x1 conv
@@ -1186,8 +1242,13 @@ def main() -> None:
                                         cond=cond_tab[sel[:, 0].to(dev)])
                     sub = None
                 else:
-                    raw, logstd = model(inp, detach_var=args.detach_var)
-                    sub = None
+                    # Indexed, not unpacked: --err-head makes FFNO2d return a THIRD output
+                    # and every other family (and every ffno without the flag) still returns
+                    # two. Unpacking by arity here would make the flag a parser error rather
+                    # than a feature, and asserting two would forbid it.
+                    out = model(inp, detach_var=args.detach_var)
+                    raw, logstd, sub = out[0], out[1], None
+                    logerr = out[2] if len(out) > 2 else None
                 raw = from_ch(raw)
 
                 if args.var_head:
@@ -1324,6 +1385,44 @@ def main() -> None:
                     ke_pred = 0.5 * ((sigma * mul) ** 2).squeeze(1).sum(-1)
                     l_tke = rel_l2(ke_pred, tke(y, mul)).mean()
                     loss = loss + args.lam_v * l_var + args.lam_t * l_tke
+
+                l_err = torch.zeros((), device=dev)
+                if logerr is not None:
+                    # --err-head. The head emits (B, T_OUT*C, H, W) in head_field's own layout,
+                    # so `from_ch` -- the same call `raw` goes through above -- puts it in the
+                    # (B, T_OUT, H, W, C) frame-major form `pred` and `y` live in, per frame
+                    # and per channel. Target: the model's OWN error, |pred - y|, DETACHED, so
+                    # this term never moves the field head -- it cannot be minimized by making
+                    # the forecast worse-but-more-predictable, only by predicting it better.
+                    # Same clamp and same +1e-4 the log-std loss uses, in the same normalized
+                    # units, so `err` and `var` are readable against each other.
+                    # pinball_r (2026-09-23): MSE -> PINBALL at tau. Same head, same target,
+                    # same clamp and same +1e-4 as Bram's MSE version; the only change is that
+                    # the residual is priced asymmetrically, so the head converges to the
+                    # tau-quantile of log|pred-y| instead of its conditional mean.
+                    #   rho_tau(r) = r * (tau - 1[r < 0])   =>  tau=0.5 is 0.5*|r| (MAE)
+                    err_t = (pred.detach() - y).abs()
+                    _el = getattr(args, "err_loss", "pinball")
+                    if _el == "mse":
+                        # Bram errhead_mse, verbatim.
+                        l_err = torch.mean((from_ch(logerr.clamp(-8.0, 2.0))
+                                            - (err_t + 1e-4).log()) ** 2)
+                    elif _el == "nll":
+                        # Corin errhead_nll, verbatim: Gaussian NLL of the error at scale h = exp(logh).
+                        _lh = from_ch(logerr.clamp(-8.0, 2.0))
+                        l_err = torch.mean(_lh + 0.5 * (err_t + 1e-4) ** 2 * torch.exp(-2.0 * _lh))
+                    elif _el == "qd":
+                        # Devi qd_r, verbatim: exp(logerr) IS the half-width h (normalized units); `mul`
+                        # maps to physical, so 2*h*mul is the width the scorer prices.
+                        _h = from_ch(logerr.clamp(-8.0, 2.0)).exp()
+                        _in = torch.sigmoid((_h - err_t) / (float(args.qd_temp) * _h.detach()))
+                        _pen = torch.exp(-2.0 * _h * mul / 0.0563870259)
+                        l_err = -(_in * _pen).mean()
+                    else:
+                        _r = (err_t + 1e-4).log() - from_ch(logerr.clamp(-8.0, 2.0))
+                        _t = float(getattr(args, "pinball_tau", 0.9))
+                        l_err = torch.mean(torch.maximum(_t * _r, (_t - 1.0) * _r))
+                    loss = loss + args.lam_e * l_err
 
                 l_crps = l_svar = torch.zeros((), device=dev)
                 if args.fgn > 0:
@@ -1464,7 +1563,7 @@ def main() -> None:
                 # backward is even launched.
                 return loss, [loss, l_field, l_var, l_tke, l_probe, l_div,
                               l_spec, l_crps, l_svar, l_sim, l_tail, l_aux, l_psim,
-                              l_cov, l_sub, kd_gap]
+                              l_cov, l_sub, kd_gap, l_err]
 
             loss, terms = compute_loss()
             opt.zero_grad(set_to_none=True)
@@ -1510,7 +1609,7 @@ def main() -> None:
                   f"div {a[5]:.5f}  spec {a[6]:.5f}  crps {a[7]:.5f}  "
                   f"svar {a[8]:.5f}  sim {a[9]:.5f}  tail {a[10]:.5f}  "
                   f"aux {a[11]:.5f}  psim {a[12]:.5f}  cov {a[13]:.5f}  "
-                  f"sub {a[14]:.5f}  kd {a[15]:.5f}  "
+                  f"sub {a[14]:.5f}  kd {a[15]:.5f}  err {a[16]:.5f}  "
                   f"({elapsed0 + time.time() - t0:.0f}s)", flush=True)
 
         if RESUME and args.ckpt_every and (ep + 1) % args.ckpt_every == 0:
@@ -1550,6 +1649,21 @@ def main() -> None:
               f"plain FNO2d for _fno.load_any", flush=True)
     torch.save({"model_state_dict": sd_out, "mode": "twohead",
                 "width": args.width, "var_head": args.var_head, "var_mlp": args.var_mlp, "lift_mlp": args.lift_mlp, "point_mlp": args.point_mlp,
+                # --err-head, at the TOP level next to var_head because it is structural: the
+                # blob carries head_logerr.* tensors and any loader that rebuilds the module
+                # must pass err_head=True or its strict load fails. `lam_e` is in `config`
+                # with the rest of vars(args); it is repeated here so a reader that only looks
+                # at the top level can tell an --err-head checkpoint's weight without opening
+                # the config dict. False/0.15 on every checkpoint written without the flag.
+                "err_head": args.err_head, "lam_e": args.lam_e, "err_detach": args.err_detach,
+                # pinball_r: which functional the err head was trained under. Recorded at the
+                # top level next to err_head for the same reason lam_e is: a reader must be able
+                # to tell an MSE head from a pinball head without opening the config dict.
+                "pinball_tau": (getattr(args, "pinball_tau", None)
+                                if args.err_head and getattr(args, "err_loss", "pinball") == "pinball" else None),
+                "err_loss": (getattr(args, "err_loss", "pinball") if args.err_head else None),
+                "qd_temp": (float(args.qd_temp) if args.err_head
+                            and getattr(args, "err_loss", "pinball") == "qd" else None),
                 "var_hidden": args.var_hidden, "var_deep": args.var_deep,
                 "var_in_std": args.var_in_std, "var_pred_std": args.var_pred_std,
                 "fgn_dim": args.fgn_dim, "hist": args.hist,

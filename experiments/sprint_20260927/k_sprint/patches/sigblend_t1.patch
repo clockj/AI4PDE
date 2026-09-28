@@ -1,0 +1,648 @@
+From 1201ce4ff4dab821596314059d57feee2745a266 Mon Sep 17 00:00:00 2001
+From: William Wu <williamqwu@gmail.com>
+Date: Sun, 27 Sep 2026 17:22:26 -0400
+Subject: [PATCH 1/3] E0a: EBAND logsig-only fast path (bit-identical; general
+ path unchanged for any other EBAND) + SIGBLEND verifier and K0a drivers
+
+---
+ Track_1/submit_fno/_fno.py  | 19 ++++++++++-
+ Track_1/verify/k0a_dump.py  | 22 +++++++++++++
+ Track_1/verify/k0a_edge.py  | 64 +++++++++++++++++++++++++++++++++++++
+ Track_1/verify/k0a_lat.py   | 36 +++++++++++++++++++++
+ Track_1/verify/k0a_score.py | 55 +++++++++++++++++++++++++++++++
+ Track_1/verify/sigblend.py  | 43 +++++++++++++++++++++++++
+ 6 files changed, 238 insertions(+), 1 deletion(-)
+ create mode 100644 Track_1/verify/k0a_dump.py
+ create mode 100644 Track_1/verify/k0a_edge.py
+ create mode 100644 Track_1/verify/k0a_lat.py
+ create mode 100644 Track_1/verify/k0a_score.py
+ create mode 100644 Track_1/verify/sigblend.py
+
+diff --git a/Track_1/submit_fno/_fno.py b/Track_1/submit_fno/_fno.py
+index 39cae8b..d187521 100644
+--- a/Track_1/submit_fno/_fno.py
++++ b/Track_1/submit_fno/_fno.py
+@@ -2404,6 +2404,17 @@ def eband_features(c0, sig, x):
+                         torch.log(torch.abs(c0 - c0.mean(dim=1, keepdim=True)) + 1e-6)], dim=-1)
+ 
+ 
++_EB_LOGSIG_ONLY = {}
++
++
++def _eband_logsig_only(beta_dev):
++    """True iff EBAND coefficients 1..4 are all exactly zero (checked once per constant tensor; one host sync)."""
++    k = id(beta_dev)
++    if k not in _EB_LOGSIG_ONLY:
++        _EB_LOGSIG_ONLY[k] = bool((beta_dev[:, 1:5] == 0).all().item())
++    return _EB_LOGSIG_ONLY[k]
++
++
+ def eband_yhat(c0, sig, x, beta_dev, clip=None):
+     """beta_dev (2, 6) float32 on the device -> yhat (B,20,H,W,2), optionally clamped."""
+     y = (eband_features(c0, sig, x) * beta_dev[:, :5]).sum(-1) + beta_dev[:, 5]
+@@ -2575,7 +2586,13 @@ def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
+             if eband is not None:
+                 # EBAND: channels u, v of the half-width scaled (mult) or replaced by exp(yhat); channel 2 stays 0.
+                 beta_dev, eb_mode, eb_clip = eband
+-                fac = torch.exp(eband_yhat(c_dev, sig * std, xb[:len(yp)], beta_dev, eb_clip))
++                if eb_clip is None and _eband_logsig_only(beta_dev):
++                    # SIGBLEND fast path (E0a 09-27): features 1..4 carry zero weight, so yhat = b0*log(sigma+1e-8) + b5 on the
++                    # (B,1,H,W,2) sigma field, broadcast over t below -- bit-identical to the general path (adding the four
++                    # 0*finite terms and the zero intercept is exact) without building the (B,20,H,W,2,5) feature stack.
++                    fac = torch.exp(torch.log((sig * std).float() + 1e-8) * beta_dev[:, 0] + beta_dev[:, 5])
++                else:
++                    fac = torch.exp(eband_yhat(c_dev, sig * std, xb[:len(yp)], beta_dev, eb_clip))
+                 h2 = half[..., :2] * fac if eb_mode == "mult" else fac
+                 half = torch.cat([h2, half[..., 2:]], -1)
+             p3 = torch.zeros_like(half); p3[..., :2] = yp
+diff --git a/Track_1/verify/k0a_dump.py b/Track_1/verify/k0a_dump.py
+new file mode 100644
+index 0000000..ee1c289
+--- /dev/null
++++ b/Track_1/verify/k0a_dump.py
+@@ -0,0 +1,22 @@
++"""E0a: run an EXTRACTED Track-1 package's predict() on val_unseen (all 336 windows, one call) through the real code path,
++and also dump the package's own sigma head and alpha-0 centre (same models, same predict_fno, same batch/amp) so the band
++formula can be verified.  usage: k0a_dump.py <pkgdir> <out.npz>"""
++import importlib.util, os, sys, time
++import numpy as np
++pkg, out = sys.argv[1], sys.argv[2]
++d = np.load("/users/PAS1187/qwu/workspace/realpde/main/Track_1/val_unseen.npz")
++X, ids = d["x"], d["ids"]
++spec = importlib.util.spec_from_file_location("submission", os.path.join(pkg, "submission.py"))
++sub = importlib.util.module_from_spec(spec); spec.loader.exec_module(sub)
++print("EBAND", sub.EBAND, "SMALL_GRAPH", sub.SMALL_GRAPH, "GPU_BAND", sub.GPU_BAND, "ALPHA", sub.ALPHA,
++      "CENTRE_ALPHA", sub.CENTRE_ALPHA, "p", sub._state[4], flush=True)
++sub.predict(X[:32])
++t0 = time.perf_counter(); o = sub.predict(X); print(f"predict N=336 {1e3*(time.perf_counter()-t0)/336:.3f} ms/window (not latency evidence)")
++P, lo, hi = o["prediction"], o["lower"], o["upper"]
++models, dev, band, ref, p, batch = sub._state[:6]
++pred2 = np.zeros_like(P); sig = np.empty((len(X), 1, 32, 64, 2), np.float32); c0 = np.zeros_like(P)
++sub._fno.predict_fno(models, np.ascontiguousarray(X, dtype=np.float32), dev, alpha=sub.ALPHA, batch=batch, out=pred2,
++                     sigma_out=sig, amp=sub._AMP_DT, centre_out=c0)
++print("pred re-run vs predict(): max|d| %.3e" % np.abs(pred2 - P).max())
++np.savez(out, P=P, lo=lo, hi=hi, sig=sig, c0=c0[..., :2], ids=ids, p3max=np.array([np.abs(a[..., 2]).max() for a in (P, lo, hi)]))
++print("wrote", out, flush=True)
+diff --git a/Track_1/verify/k0a_edge.py b/Track_1/verify/k0a_edge.py
+new file mode 100644
+index 0000000..6bd5bf4
+--- /dev/null
++++ b/Track_1/verify/k0a_edge.py
+@@ -0,0 +1,64 @@
++"""E0a edge cases for an EXTRACTED Track-1 package (EBAND on, SMALL_GRAPH off).
++usage: k0a_edge.py <pkgdir> seq            # one process: N in NS, f32 then f64, repeated calls, permutation
++       k0a_edge.py <pkgdir> one <N> <dt>   # fresh process, a single call"""
++import importlib.util, os, sys
++import numpy as np
++pkg, mode = sys.argv[1], sys.argv[2]
++d = np.load("/users/PAS1187/qwu/workspace/realpde/main/Track_1/val_unseen.npz")
++X, Y = d["x"], d["y"]
++spec = importlib.util.spec_from_file_location("sc", "/users/PAS1187/qwu/RealPDE/realpde_t1_starting_kit_v9/realpde_t1_starting_kit_v9/scoring.py")
++sc = importlib.util.module_from_spec(spec); spec.loader.exec_module(sc)
++spec = importlib.util.spec_from_file_location("submission", os.path.join(pkg, "submission.py"))
++sub = importlib.util.module_from_spec(spec); spec.loader.exec_module(sub)
++NS = (1, 2, 13, 14, 56, 99, 100, 336)
++bad = []
++
++
++def check(o, n, tag):
++    ok = isinstance(o, dict) and set(o) == {"prediction", "lower", "upper"}
++    P, lo, hi = o["prediction"], o["lower"], o["upper"]
++    ok &= all(a.shape == (n, 20, 32, 64, 3) and a.dtype == np.float32 and np.isfinite(a).all() for a in (P, lo, hi))
++    ok &= bool((lo <= P).all() and (P <= hi).all())
++    ok &= all(float(np.abs(a[..., 2]).max()) == 0.0 for a in (P, lo, hi))
++    print(f"  {tag:<28s} N={n:<4d} {'PASS' if ok else 'FAIL'}", flush=True)
++    if not ok:
++        bad.append(tag)
++    return P, lo, hi
++
++
++def rel(a, b):
++    return float(np.abs(a[..., :2] - b[..., :2]).max()), float(np.abs(a[..., :2] - b[..., :2]).mean() / np.sqrt((b[..., :2] ** 2).mean()))
++
++
++if mode == "one":
++    n, dt = int(sys.argv[3]), sys.argv[4]
++    try:
++        check(sub.predict(X[:n].astype(dt)), n, f"fresh-process {dt}")
++    except Exception as e:
++        print(f"  fresh-process {dt} N={n} CRASH {e!r}"); bad.append("crash")
++    print("RESULT", "PASS" if not bad else "FAIL"); sys.exit(1 if bad else 0)
++
++print("EBAND", sub.EBAND, "SMALL_GRAPH", sub.SMALL_GRAPH, flush=True)
++ref = check(sub.predict(X), 336, "full f32 (reference)")
++for dt in ("float32", "float64"):
++    for rep in (1, 2):
++        for n in NS:
++            s = slice(336 - n, 336) if n % 2 else slice(0, n)
++            try:
++                P, lo, hi = check(sub.predict(X[s].astype(dt)), n, f"{dt} call{rep}")
++            except Exception as e:
++                print(f"  {dt} call{rep} N={n} CRASH {e!r}", flush=True); bad.append(f"crash {dt} {n}"); continue
++            if rep == 1:
++                print("      vs full-batch same windows: pred max|d| %.2e (mean %.1e rms)  lower %.2e  upper %.2e" %
++                      (*rel(P, ref[0][s]), rel(lo, ref[1][s])[0], rel(hi, ref[2][s])[0]), flush=True)
++perm = np.random.default_rng(0).permutation(336)
++o = sub.predict(X[perm]); P, lo, hi = check(o, 336, "permuted")
++iv = np.argsort(perm)
++Pr, lr, hr = P[iv], lo[iv], hi[iv]
++print("  permutation: pred max|d| %.2e (mean %.1e rms)  lower %.2e upper %.2e" % (*rel(Pr, ref[0]), rel(lr, ref[1])[0], rel(hr, ref[2])[0]))
++for nm, f in (("rel", lambda P: np.mean(sc.rel_l2_per_sample(P, Y, 2))), ("tke", lambda P: np.mean(sc.tke_rel_l2_per_sample(P, Y, 2))),
++              ("mvpe", lambda P: sc.mvpe_rel_l2(P, Y))):
++    a, b = f(ref[0]), f(Pr); print(f"  permutation {nm}: {a:.7f} -> {b:.7f} (|d| {abs(a-b):.1e})"); bad += [nm] if abs(a - b) >= 1e-5 else []
++w0 = sc.aggregate_sps(ref[0], Y, 2, lower=ref[1], upper=ref[2])[0]; w1 = sc.aggregate_sps(Pr, Y, 2, lower=lr, upper=hr)[0]
++print(f"  permutation sps: {100*w0:.5f} -> {100*w1:.5f}"); bad += ["sps"] if abs(w0 - w1) * 100 >= 1e-3 else []
++print("RESULT", "PASS" if not bad else "FAIL " + str(bad))
+diff --git a/Track_1/verify/k0a_lat.py b/Track_1/verify/k0a_lat.py
+new file mode 100644
+index 0000000..0b654cd
+--- /dev/null
++++ b/Track_1/verify/k0a_lat.py
+@@ -0,0 +1,36 @@
++"""E0a latency: shipped band vs SIGBLEND (EBAND) packages, package level, paired and interleaved in ONE process (both
++packages share the same _fno.py; only submission.py's EBAND and band.npz differ), plus a kernel-level read of eband_yhat.
++usage: k0a_lat.py <pkgA> <pkgB> [reps]"""
++import importlib.util, os, sys, time
++import numpy as np, torch
++a, b = sys.argv[1], sys.argv[2]; reps = int(sys.argv[3]) if len(sys.argv) > 3 else 15
++X = np.load("/users/PAS1187/qwu/workspace/realpde/main/Track_1/val_unseen.npz")["x"]
++def load(pkg, name):
++    spec = importlib.util.spec_from_file_location(name, os.path.join(pkg, "submission.py"))
++    m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m); return m
++A, B = load(a, "subA"), load(b, "subB")
++print("A EBAND", A.EBAND, "| B EBAND", B.EBAND, flush=True)
++for m in (A, B):
++    for n in (14, 56, 99):
++        m.predict(X[:n])
++res = {}
++for n in (14, 56, 99):
++    ta, tb = [], []
++    for r in range(reps):
++        for m, acc in ((A, ta), (B, tb)) if r % 2 == 0 else ((B, tb), (A, ta)):
++            torch.cuda.synchronize(); t0 = time.perf_counter(); m.predict(X[:n]); torch.cuda.synchronize()
++            acc.append((time.perf_counter() - t0) * 1e3 / n)
++    ta, tb = np.array(ta), np.array(tb); d = tb - ta
++    print(f"PACKAGE N={n:<3d} ship {np.median(ta):.4f}  sigblend {np.median(tb):.4f} ms/window   paired d median {np.median(d):+.4f} "
++          f"mean {d.mean():+.4f} (sd {d.std(ddof=1)/np.sqrt(len(d)):.4f})  B slower in {int((d>0).sum())}/{len(d)}", flush=True)
++# kernel level: eband_yhat on device tensors of chunk size
++fno = B._fno; dev = "cuda"
++beta = torch.tensor(B.EBAND[0], dtype=torch.float32, device=dev)
++for n in (14, 56, 99):
++    c0 = torch.randn(n, 20, 32, 64, 2, device=dev) * 0.1 + 0.2; sg = torch.rand(n, 1, 32, 64, 2, device=dev) * 0.02 + 1e-3
++    x = torch.randn(n, 20, 32, 64, 3, device=dev)
++    for _ in range(5): torch.exp(fno.eband_yhat(c0, sg, x, beta))
++    torch.cuda.synchronize(); t0 = time.perf_counter()
++    for _ in range(50): torch.exp(fno.eband_yhat(c0, sg, x, beta))
++    torch.cuda.synchronize(); t = (time.perf_counter() - t0) / 50 * 1e3
++    print(f"KERNEL  N={n:<3d} exp(eband_yhat) {t:.4f} ms/call = {t/n:.4f} ms/window", flush=True)
+diff --git a/Track_1/verify/k0a_score.py b/Track_1/verify/k0a_score.py
+new file mode 100644
+index 0000000..bb96189
+--- /dev/null
++++ b/Track_1/verify/k0a_score.py
+@@ -0,0 +1,55 @@
++"""E0a: score package dumps (k0a_dump.py) on val_unseen with the kit v9 scorer, per trajectory, at target stretch f
++(y_f = c0 + f (y - c0), c0 = the package's alpha-0 centre), paired against the first dump.
++usage: k0a_score.py <ref_dump> <arm_dump> [<arm_dump> ...]"""
++import importlib.util, sys
++import numpy as np
++spec = importlib.util.spec_from_file_location("sc", "/users/PAS1187/qwu/RealPDE/realpde_t1_starting_kit_v9/realpde_t1_starting_kit_v9/scoring.py")
++sc = importlib.util.module_from_spec(spec); spec.loader.exec_module(sc)
++Y = np.load("/users/PAS1187/qwu/workspace/realpde/main/Track_1/val_unseen.npz")["y"]
++HI = ["21600_15", "8850_20", "11400_20"]
++
++
++def read(path, f):
++    D = np.load(path); traj = np.array([str(i).split(":")[0] for i in D["ids"]])
++    names = sorted(set(traj), key=lambda t: (int(t.split("_")[1]), int(t.split("_")[0])))
++    P, lo, hi, c0 = D["P"], D["lo"], D["hi"], D["c0"]
++    res = {}
++    for t in names:
++        m = traj == t
++        y = Y[m].astype(np.float32).copy()
++        y[..., :2] = c0[m] + np.float32(f) * (y[..., :2] - c0[m])
++        r = float(np.mean(sc.rel_l2_per_sample(P[m], y, 2))); k = float(np.mean(sc.tke_rel_l2_per_sample(P[m], y, 2)))
++        mv = sc.mvpe_rel_l2(P[m], y)
++        g = lambda e: 0.5 / (0.5 + e)
++        abar = float(np.mean(0.5 * g(sc.rel_l2_per_sample(P[m], y, 2)) + 0.3 * g(sc.tke_rel_l2_per_sample(P[m], y, 2))
++                             + 0.2 * g(sc.mvpe_rel_l2_per_sample(P[m], y))))
++        w, cov = sc.aggregate_sps(P[m], y, 2, lower=lo[m], upper=hi[m])
++        res[t] = dict(rel=r, tke=k, mvpe=mv, sps=100 * w, cov=100 * cov, C=100 * w / abar, n=int(m.sum()))
++    return names, res
++
++
++def agg(res, ts, k):
++    return float(np.mean([res[t][k] for t in ts]))   # trajectory-mean (equal weight per trajectory)
++
++
++paths = sys.argv[1:]
++for f in (1.00, 1.29):
++    names, R = read(paths[0], f)
++    print(f"\n######## stretch f = {f:.2f}   (trajectory-mean; C = sps/(100 abar) x100; cov %)")
++    print(f"{'arm':<10s} {'traj':<9s} {'rel':>8s} {'tke':>8s} {'mvpe':>8s} {'sps':>8s} {'cov':>6s} {'C':>8s}")
++    for t in names:
++        r = R[t]; print(f"{'ref':<10s} {t:<9s} {r['rel']:8.5f} {r['tke']:8.5f} {r['mvpe']:8.5f} {r['sps']:8.4f} {r['cov']:6.2f} {r['C']:8.4f}")
++    for lab, ts in (("AoA15-20", HI), ("all8", names)):
++        print(f"{'ref':<10s} {lab:<9s} " + " ".join(f"{agg(R, ts, k):8.5f}" for k in ("rel", "tke", "mvpe")) +
++              f" {agg(R, ts, 'sps'):8.4f} {agg(R, ts, 'cov'):6.2f} {agg(R, ts, 'C'):8.4f}")
++    for pth in paths[1:]:
++        arm = pth.split("/")[-1].replace(".npz", "")
++        _, S = read(pth, f)
++        for t in names:
++            d = {k: S[t][k] - R[t][k] for k in ("rel", "tke", "mvpe", "sps", "cov", "C")}
++            print(f"{arm:<10s} {t:<9s} d: rel {d['rel']:+.1e} tke {d['tke']:+.1e} mvpe {d['mvpe']:+.1e} sps {d['sps']:+.4f} cov {d['cov']:+.2f} C {d['C']:+.4f}")
++        for lab, ts in (("AoA15-20", HI), ("all8", names)):
++            dC = [S[t]["C"] - R[t]["C"] for t in ts]; ds = [S[t]["sps"] - R[t]["sps"] for t in ts]
++            print(f"{arm:<10s} {lab:<9s} PAIRED dsps {np.mean(ds):+.4f} dC {np.mean(dC):+.4f} ({sum(x > 0 for x in dC)}/{len(ts)} up)  "
++                  f"cov {agg(S, ts, 'cov'):.2f} (ref {agg(R, ts, 'cov'):.2f})  d-rel/tke/mvpe max|.| "
++                  f"{max(abs(S[t][k]-R[t][k]) for t in ts for k in ('rel','tke','mvpe')):.1e}")
+diff --git a/Track_1/verify/sigblend.py b/Track_1/verify/sigblend.py
+new file mode 100644
+index 0000000..edb36c0
+--- /dev/null
++++ b/Track_1/verify/sigblend.py
+@@ -0,0 +1,43 @@
++"""SIGBLEND band verifier (E0a, 09-27).  From a Track-1 package's OWN outputs on val_unseen (k0a_dump.py: prediction, lower,
++upper, the package's sigma head and alpha-0 centre) recompute the intended interval in numpy
++
++    half = base' * clip(sigma/sigma_ref, .3, 3)^p' * exp(lam*q_c * log(sigma + 1e-8))
++    [lower, upper] = [min(c0 - half, P), max(c0 + half, P)]
++
++and compare it with what the package returned.  Also asserts: prediction identical to the shipped-band package, lower <= P <=
++upper, finite, channel p exactly 0 in all three arrays.
++usage: sigblend.py <ship_dump.npz> <sb_dump.npz> <sigblend band.npz> <EBAND literal or .json>"""
++import ast, json, sys
++import numpy as np
++ship, sb, bandp, eb = sys.argv[1:5]
++if eb.endswith(".json"):
++    eb = json.load(open(eb))["EBAND"]
++beta, mode, clip = ast.literal_eval(eb)
++assert mode == "mult" and clip is None and all(v == 0.0 for b in beta for v in b[1:]), "not a SIGBLEND EBAND"
++lq = np.array([beta[0][0], beta[1][0]], np.float32)
++A, B = np.load(ship), np.load(sb)
++z = np.load(bandp); base = z["base"].astype(np.float32)[..., :2]; ref = z["sigma_ref"].astype(np.float32)[..., :2]; p = np.float32(z["p"])
++P, lo, hi, sig, c0 = B["P"], B["lo"], B["hi"], B["sig"], B["c0"]
++fails = []
++def chk(name, ok):
++    print(f"  [{'PASS' if ok else 'FAIL'}] {name}"); fails.append(name) if not ok else None
++dP = float(np.abs(A["P"] - P).max())
++chk(f"prediction identical to shipped-band package (max|d| {dP:.3e})", dP == 0.0)
++chk("lower, upper, prediction finite", all(np.isfinite(a).all() for a in (P, lo, hi)))
++chk("lower <= prediction <= upper everywhere", bool((lo <= P).all() and (P <= hi).all()))
++chk("channel p exactly 0 in prediction, lower, upper", all(float(np.abs(a[..., 2]).max()) == 0.0 for a in (P, lo, hi)))
++chk("centre (alpha-0 field) identical between packages", float(np.abs(A["c0"] - c0).max()) == 0.0)
++half = (base * np.clip(sig / ref, 0.3, 3.0) ** p * np.exp(lq * np.log(sig + np.float32(1e-8)))).astype(np.float32)
++Pu = P[..., :2]
++elo, ehi = np.minimum(c0 - half, Pu), np.maximum(c0 + half, Pu)
++for nm, a, b in (("lower", lo[..., :2], elo), ("upper", hi[..., :2], ehi), ("width", (hi - lo)[..., :2], ehi - elo)):
++    d = np.abs(a.astype(np.float64) - b); r = d / np.maximum(np.abs(b), 1e-6)
++    print(f"  {nm:<6s} package vs numpy formula: max|d| {d.max():.3e}  max rel {r.max():.3e}  mean|d| {d.mean():.3e}")
++    chk(f"{nm} matches formula to float32 noise", d.max() < 1e-5)
++# the same check for the half width where the contain-P rule does not bind
++free = (c0 - half <= Pu) & (Pu <= c0 + half)
++w = (hi - lo)[..., :2]; rw = np.abs(w[free] - 2 * half[free]) / (2 * half[free])
++print(f"  half-width where contain-P is inactive ({100*free.mean():.1f}% of elements): max rel |w - 2 half| {rw.max():.3e}")
++# and the shipped-band package vs ITS formula (base, p of the shipped band, no EBAND)
++print("  width ratio SIGBLEND / shipped (median, u / v):", [float(np.median(w[..., c] / (A["hi"] - A["lo"])[..., c])) for c in (0, 1)])
++print("VERIFIER", "PASS" if not fails else "FAIL " + str(fails))
+-- 
+2.47.3
+
+
+From c69d8ba247264337de10cf47d0cc0230268567d0 Mon Sep 17 00:00:00 2001
+From: William Wu <williamqwu@gmail.com>
+Date: Sun, 27 Sep 2026 17:30:00 -0400
+Subject: [PATCH 2/3] E0a: k0a_score keeps masked (zero) targets at 0 under the
+ stretch; lat2 driver; in-sample vs LOTO numpy check
+
+---
+ Track_1/probe_k0a/bandlab.py  | 110 +++++++++++++++++++++++++++++++++
+ Track_1/probe_k0a/insample.py | 112 ++++++++++++++++++++++++++++++++++
+ Track_1/verify/k0a_lat2.py    |  37 +++++++++++
+ Track_1/verify/k0a_score.py   |   3 +-
+ 4 files changed, 261 insertions(+), 1 deletion(-)
+ create mode 100644 Track_1/probe_k0a/bandlab.py
+ create mode 100644 Track_1/probe_k0a/insample.py
+ create mode 100644 Track_1/verify/k0a_lat2.py
+
+diff --git a/Track_1/probe_k0a/bandlab.py b/Track_1/probe_k0a/bandlab.py
+new file mode 100644
+index 0000000..755b581
+--- /dev/null
++++ b/Track_1/probe_k0a/bandlab.py
+@@ -0,0 +1,110 @@
++"""Design B band lab: leave-one-trajectory-out (LOTO) containment probes on held-out twin fields (dump_twins.py).
++
++Every variant = (centre field c, per-window width factor R).  half = base * R, base solved per element by the exact
++sps9 solver on the FIT trajectories' |c - y| * inflate / R, box-smoothed k=3 (exactly fit_band.py), interval
++[min(c-h, P), max(c+h, P)] (shipped 'contain P' rule) unless contain=False.
++LOTO: an AoA 15-20 eval trajectory is scored with a base fitted on the OTHER AoA 15-20 trajectories; any other eval
++trajectory with the base fitted on all three AoA 15-20 trajectories (= the shipped fit set).  Nothing is scored in-sample.
++Stretch f: target moved to y_f = c0 + f*(y - c0) (c0 = the shipped centre y0, the same stretched target for every variant)
++and the three metrics in a_i multiplied by f.
++"""
++import os, sys
++import numpy as np
++HERE = os.path.dirname(os.path.abspath(__file__)); T1 = os.path.dirname(HERE)
++sys.path.insert(0, T1)
++import sps9
++from sps9 import optimal_band, SIGMA
++DUMP = os.environ.get("B_DUMP", "/fs/scratch/PAS1187/qwu/tmp/realpde/final0927/ckpt/b/dump_unseen.npz")
++ALPHA, P_EXP, INFL = 0.80, 0.45, 1.39
++FS = (1.0, 1.29, 1.39)
++
++
++def load():
++    d = np.load(DUMP)
++    F, S, x, y = d["F"].astype(np.float32), d["S"].astype(np.float32), d["x"], d["y"]
++    traj = np.array([str(i).split(":")[0] for i in d["ids"]])
++    aoa = np.array([int(t.split("_")[1]) for t in traj]); re = np.array([int(t.split("_")[0]) for t in traj])
++    return F, S, x, y, traj, aoa, re
++
++
++def compose(y0, sig, alpha=ALPHA):
++    m = y0.mean(1, keepdims=True); s = np.maximum(y0.std(1, keepdims=True), 1e-8)
++    return (m + (y0 - m) * (alpha * sig + (1 - alpha) * s) / s).astype(np.float32)
++
++
++def smooth(b, k=3):
++    o = b.astype(np.float64)
++    for ax in (1, 2, 3):
++        pad = [(0, 0)] * 5; pad[ax] = (k // 2, k // 2)
++        q = np.pad(o, pad, mode="edge")
++        o = np.mean([np.take(q, range(i, i + b.shape[ax]), axis=ax) for i in range(k)], axis=0)
++    return o.astype(np.float32)
++
++
++def sigma_ratio(sig, fit, p=P_EXP):
++    ref = np.maximum(sig[fit].mean(0, keepdims=True), 1e-8)
++    return (np.clip(sig / ref, 0.3, 3.0) ** p).astype(np.float32)
++
++
++class Lab:
++    def __init__(self):
++        self.F, self.S, self.x, self.y, self.traj, self.aoa, self.re = load()
++        self.y0 = self.F.mean(0); self.sig = self.S.mean(0)
++        self.P = compose(self.y0, self.sig)
++        P3 = np.concatenate([self.P, np.zeros_like(self.P[..., :1])], -1)
++        Y3 = np.concatenate([self.y, np.zeros_like(self.y[..., :1])], -1)
++        self.met = sps9.sample_metrics(P3, Y3)            # local (f = 1) metrics of the scored prediction
++        self.scored = self.y != 0.0
++        self.names = sorted(set(self.traj), key=lambda t: (int(t.split("_")[1]), int(t.split("_")[0])))
++        self.hi = [t for t in self.names if int(t.split("_")[1]) in (15, 20)]
++
++    def a(self, f=1.0):
++        return sps9.weights_from_metrics(*(f * m for m in self.met))
++
++    def fits(self):
++        """eval trajectory -> boolean mask of its FIT windows (LOTO inside AoA 15-20; shipped fit set otherwise)."""
++        out = {}
++        for t in self.names:
++            out[t] = np.isin(self.traj, [h for h in self.hi if h != t])
++        return out
++
++    def run(self, centre, rfun=None, infl=INFL, contain=True, fitmask=None, basefun=None):
++        """centre (N,20,H,W,2); rfun(fit_mask) -> R broadcastable to centre (default: shipped sigma ratio).
++        returns {f: {traj: (sps, abar)}}"""
++        res = {f: {} for f in FS}
++        a1 = self.a(1.0)
++        for t, fit in (fitmask or self.fits()).items():
++            R = sigma_ratio(self.sig, fit) if rfun is None else rfun(fit)
++            R = np.broadcast_to(R, centre.shape)
++            A = np.abs(centre[fit] - self.y[fit]) * np.float32(infl) / R[fit]
++            base = smooth(optimal_band(A.astype(np.float32), a1[fit], self.scored[fit]))
++            if basefun is not None:
++                base = basefun(base)
++            ev = self.traj == t
++            h = base * R[ev]
++            lo, up = centre[ev] - h, centre[ev] + h
++            if contain:
++                lo, up = np.minimum(lo, self.P[ev]), np.maximum(up, self.P[ev])
++            sc_ = self.scored[ev]; n = int(sc_.sum())
++            for f in FS:
++                yf = self.y0[ev] + np.float32(f) * (self.y[ev] - self.y0[ev])
++                con = np.where((yf >= lo) & (yf <= up) & sc_, np.exp(-(up - lo).astype(np.float64) / SIGMA), 0.0)
++                af = self.a(f)[ev]
++                sps = 100.0 * float(af @ con.reshape(len(con), -1).sum(1)) / n
++                res[f][t] = (sps, float(af.mean()), 100.0 * float(con.sum()) / n)
++        return res
++
++    def table(self, name, res, ref=None):
++        """one line per stretch: sps / C (x100) on AoA 15-20 and the full split, paired delta vs ref and sign counts."""
++        lines = []
++        for f in FS:
++            row = [f"{name:<28s} f={f:4.2f}"]
++            for lab, ts in (("hi", self.hi), ("all", self.names)):
++                s = np.mean([res[f][t][0] for t in ts]); c = np.mean([res[f][t][2] for t in ts])
++                txt = f"{lab}: sps {s:6.3f} C {c:6.3f}"
++                if ref is not None:
++                    ds = [res[f][t][0] - ref[f][t][0] for t in ts]; dc = [res[f][t][2] - ref[f][t][2] for t in ts]
++                    txt += f"  dsps {np.mean(ds):+.3f} dC {np.mean(dc):+.3f} ({sum(d > 0 for d in dc)}/{len(ts)})"
++                row.append(txt)
++            lines.append(" | ".join(row))
++        print("\n".join(lines), flush=True)
+diff --git a/Track_1/probe_k0a/insample.py b/Track_1/probe_k0a/insample.py
+new file mode 100644
+index 0000000..56aac6f
+--- /dev/null
++++ b/Track_1/probe_k0a/insample.py
+@@ -0,0 +1,112 @@
++"""K0 'SIGBLEND' band (commander, 2026-09-27): geometric blend of the shipped per-element band with a low-dimensional
++sigma power law, in a form the EXISTING package code evaluates:
++
++    half = base' * clip(sigma/sigma_ref, .3, 3)^p' * exp(lam * q_c * log(sigma + 1e-8))
++    base' = base^(1-lam) * kappa_{t,c}^lam          p' = (1-lam) * p          (npz only)
++    EBAND = (((lam*q_u, 0,0,0,0, 0), (lam*q_v, 0,0,0,0, 0)), "mult", None)    (T1 build knob RPDE_SHIP_EBAND)
++
++kappa_{t,c} (per frame, per channel) and q_c (per channel) come from the exact per-bin optimum of the SPS interval term on
++the HELD-OUT twins' errors (val_unseen, 8 trajectories never trained on), |y0 - y| * infl, binned by the twins' own sigma.
++Evaluation: leave-one-trajectory-out over the 8 (the power law never sees the trajectory it is scored on); the shipped
++band itself was fitted on val_seen and is honest on val_unseen.  Final constants: fitted on all 8.
++
++usage: python make_k0_band.py [outdir]      env: K0_BAND (shipped npz), K0_INFL (default 1.29), K0_NB (default 16)
++"""
++import json, os, sys
++import numpy as np
++from bandlab import Lab, FS
++from sps9 import SIGMA
++
++BAND = os.environ.get("K0_BAND", "/fs/scratch/PAS1187/qwu/tmp/realpde/final0927/pkg/x_work/band_r38_a080_c0_fill.npz")
++INFL = float(os.environ.get("K0_INFL", "1.29")); NB = int(os.environ.get("K0_NB", "16"))
++LAMS = (0.3, 0.5, 0.7)
++OUT = "/tmp/k0a_unused"
++os.makedirs(OUT, exist_ok=True)
++
++L = Lab(); y0, sig, y, P, scored, traj = L.y0, L.sig, L.y, L.P, L.scored, L.traj
++E = np.abs(y0 - y).astype(np.float32); a1 = L.a(1.0)
++names, hi = L.names, L.hi
++lo_names = [t for t in names if t not in hi]
++z = np.load(BAND)
++base3 = z["base"].astype(np.float32); sref3 = z["sigma_ref"].astype(np.float32); p_s = float(z["p"])
++base_s, sref = base3[..., :2], sref3[..., :2]
++clipr = np.clip(sig / sref, 0.3, 3.0).astype(np.float32)             # (N,1,32,64,2)
++logsig = np.log(sig.astype(np.float32) + np.float32(1e-8))           # the EBAND 'logsig' feature, (N,1,32,64,2)
++
++
++def fit_pl(fit, infl=INFL, nb=NB):
++    """-> q (2,), logk (20, 2)"""
++    W = (a1[fit][:, None, None, None, None] * scored[fit]).astype(np.float64)
++    Ef, Ls = E[fit], np.broadcast_to(logsig, y0.shape)[fit]
++    q = np.zeros(2); logk = np.zeros((20, 2))
++    for c in range(2):
++        X, Y, T = [], [], []
++        for t in range(20):
++            A = (Ef[:, t, :, :, c] * np.float32(infl)).ravel(); s = Ls[:, t, :, :, c].ravel(); w = W[:, t, :, :, c].ravel()
++            ok = w > 0; A, s, w = A[ok], s[ok], w[ok]
++            edges = np.quantile(s, np.linspace(0, 1, nb + 1)); edges[0], edges[-1] = -np.inf, np.inf
++            bi = np.clip(np.searchsorted(edges, s, side="right") - 1, 0, nb - 1)
++            for j in range(nb):
++                m = bi == j
++                Aj, wj = A[m], w[m]
++                o = np.argsort(Aj, kind="stable"); Aj, wj = Aj[o], wj[o]
++                gain = np.cumsum(wj) * np.exp(-2.0 * Aj.astype(np.float64) / SIGMA)
++                X.append(np.median(s[m])); Y.append(np.log(max(float(Aj[gain.argmax()]), 1e-6))); T.append(t)
++        X, Y, T = np.array(X), np.array(Y), np.array(T)
++        xm = np.array([X[T == t].mean() for t in range(20)]); ym = np.array([Y[T == t].mean() for t in range(20)])
++        q[c] = float(((X - xm[T]) * (Y - ym[T])).sum() / ((X - xm[T]) ** 2).sum())      # pooled slope, per-frame intercepts
++        logk[:, c] = ym - q[c] * xm
++    return q, logk
++
++
++def half(lam, q, logk, ev):
++    """exactly the package formula, numpy"""
++    bp = (base_s ** np.float32(1 - lam)) * np.exp(lam * logk).astype(np.float32)[None, :, None, None, :]
++    return (bp * clipr[ev] ** np.float32((1 - lam) * p_s) * np.exp(np.float32(lam) * q.astype(np.float32) * logsig[ev])).astype(np.float32)
++
++
++def score(hfun):
++    res = {f: {} for f in FS}
++    for t in names:
++        ev = traj == t; fit = ~ev
++        h = hfun(fit, ev)
++        lo_, up_ = np.minimum(y0[ev] - h, P[ev]), np.maximum(y0[ev] + h, P[ev])
++        sc_ = scored[ev]; n = int(sc_.sum())
++        for f in FS:
++            yf = y0[ev] + np.float32(f) * (y[ev] - y0[ev])
++            ins = (yf >= lo_) & (yf <= up_) & sc_
++            con = np.where(ins, np.exp(-(up_ - lo_).astype(np.float64) / SIGMA), 0.0)
++            af = L.a(f)[ev]
++            res[f][t] = (100.0 * float(af @ con.reshape(len(con), -1).sum(1)) / n, float(af.mean()), 100.0 * float(con.sum()) / n,
++                         100.0 * float(ins.sum()) / n, float((up_ - lo_)[sc_].mean()))
++    return res
++
++
++def table(name, res, ref=None):
++    for f in FS:
++        row = [f"{name:<34s} f={f:4.2f}"]
++        for lab, ts in (("hi", hi), ("lo", lo_names), ("all", names)):
++            s = np.mean([res[f][t][0] for t in ts]); c = np.mean([res[f][t][2] for t in ts])
++            cov = np.mean([res[f][t][3] for t in ts]); w = np.mean([res[f][t][4] for t in ts])
++            txt = f"{lab}: sps {s:6.3f} C {c:6.3f} cov {cov:5.1f} w {w:.4f}"
++            if ref is not None:
++                dc = [res[f][t][2] - ref[f][t][2] for t in ts]; ds = [res[f][t][0] - ref[f][t][0] for t in ts]
++                txt += f" dsps {np.mean(ds):+.3f} dC {np.mean(dc):+.3f} ({sum(d > 0 for d in dc)}/{len(ts)})"
++            row.append(txt)
++        print(" | ".join(row), flush=True)
++    if ref is not None:
++        print("    per trajectory dC (f=1.29): " + "  ".join(f"{t} {res[1.29][t][2] - ref[1.29][t][2]:+.3f}" for t in names), flush=True)
++
++
++
++ref = score(lambda fit, ev: (base_s * clipr[ev] ** np.float32(p_s)).astype(np.float32)); table("A shipped band", ref)
++qa, lka = fit_pl(np.ones(len(traj), bool))
++for lam in (0.3, 0.5):
++    table(f"SIGBLEND lam {lam} IN-SAMPLE (all-8 constants)", score(lambda fit, ev, lam=lam: half(lam, qa, lka, ev)), ref)
++memo = {}
++def pl(fit):
++    k = fit.tobytes()
++    if k not in memo: memo[k] = fit_pl(fit)
++    return memo[k]
++for lam in (0.3, 0.5):
++    table(f"SIGBLEND lam {lam} LOTO-7", score(lambda fit, ev, lam=lam: half(lam, *pl(fit), ev)), ref)
+diff --git a/Track_1/verify/k0a_lat2.py b/Track_1/verify/k0a_lat2.py
+new file mode 100644
+index 0000000..c588620
+--- /dev/null
++++ b/Track_1/verify/k0a_lat2.py
+@@ -0,0 +1,37 @@
++"""E0a latency v2: shipped band (A) vs SIGBLEND (B) fast path vs B general path (fast path disabled by monkeypatch), one
++process, interleaved, package batch forced equal for all arms.  Both packages carry the SAME _fno.py (with the fast path).
++usage: k0a_lat2.py <pkgA> <pkgB> <batch> [reps]"""
++import importlib.util, os, sys, time
++import numpy as np, torch
++a, b, bs = sys.argv[1], sys.argv[2], int(sys.argv[3]); reps = int(sys.argv[4]) if len(sys.argv) > 4 else 20
++X = np.load("/users/PAS1187/qwu/workspace/realpde/main/Track_1/val_unseen.npz")["x"]
++def load(pkg, name):
++    spec = importlib.util.spec_from_file_location(name, os.path.join(pkg, "submission.py"))
++    m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m); return m
++A, B = load(a, "subA"), load(b, "subB")
++for m in (A, B):
++    m._state = tuple(m._state[:5]) + (bs,) + tuple(m._state[6:])
++fno = B._fno; fast_fn = fno._eband_logsig_only
++def arm(k):
++    if k == "ship": return lambda n: A.predict(X[:n])
++    def f(n):
++        fno._eband_logsig_only = fast_fn if k == "fast" else (lambda _b: False)
++        try: return B.predict(X[:n])
++        finally: fno._eband_logsig_only = fast_fn
++    return f
++arms = {k: arm(k) for k in ("ship", "fast", "general")}
++o1, o2 = arms["fast"](56), arms["general"](56)
++print(f"batch {bs}: fast vs general N=56 lower max|d| {np.abs(o1['lower']-o2['lower']).max():.3e} upper {np.abs(o1['upper']-o2['upper']).max():.3e}", flush=True)
++for n in (14, 56, 99):
++    for k in arms: arms[k](n)
++    T = {k: [] for k in arms}
++    for r in range(reps):
++        order = list(arms) if r % 2 == 0 else list(arms)[::-1]
++        for k in order:
++            torch.cuda.synchronize(); t0 = time.perf_counter(); arms[k](n); torch.cuda.synchronize()
++            T[k].append((time.perf_counter() - t0) * 1e3 / n)
++    T = {k: np.array(v) for k, v in T.items()}
++    s = "  ".join(f"{k} {np.median(v):.4f}" for k, v in T.items())
++    dg, df = T["general"] - T["ship"], T["fast"] - T["ship"]
++    print(f"PACKAGE batch {bs} N={n:<3d} ms/window median: {s} | paired vs ship: general {np.median(dg):+.4f} ({int((dg>0).sum())}/{reps} slower)"
++          f"  fast {np.median(df):+.4f} ({int((df>0).sum())}/{reps} slower)", flush=True)
+diff --git a/Track_1/verify/k0a_score.py b/Track_1/verify/k0a_score.py
+index bb96189..d363991 100644
+--- a/Track_1/verify/k0a_score.py
++++ b/Track_1/verify/k0a_score.py
+@@ -17,7 +17,8 @@ def read(path, f):
+     for t in names:
+         m = traj == t
+         y = Y[m].astype(np.float32).copy()
+-        y[..., :2] = c0[m] + np.float32(f) * (y[..., :2] - c0[m])
++        # zero targets are masked PIV (unscored): keep them exactly 0 under the stretch, as the numpy reference does
++        y[..., :2] = np.where(y[..., :2] == 0, np.float32(0), c0[m] + np.float32(f) * (y[..., :2] - c0[m]))
+         r = float(np.mean(sc.rel_l2_per_sample(P[m], y, 2))); k = float(np.mean(sc.tke_rel_l2_per_sample(P[m], y, 2)))
+         mv = sc.mvpe_rel_l2(P[m], y)
+         g = lambda e: 0.5 / (0.5 + e)
+-- 
+2.47.3
+
+
+From 9ea280b65b7a3823b7359a2ca6d8501329a4e207 Mon Sep 17 00:00:00 2001
+From: William Wu <williamqwu@gmail.com>
+Date: Sun, 27 Sep 2026 17:30:19 -0400
+Subject: [PATCH 3/3] E0a: fast path only for mode 'mult' (replace mode keeps
+ the general path)
+
+---
+ Track_1/submit_fno/_fno.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/Track_1/submit_fno/_fno.py b/Track_1/submit_fno/_fno.py
+index d187521..55fa92e 100644
+--- a/Track_1/submit_fno/_fno.py
++++ b/Track_1/submit_fno/_fno.py
+@@ -2586,7 +2586,7 @@ def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
+             if eband is not None:
+                 # EBAND: channels u, v of the half-width scaled (mult) or replaced by exp(yhat); channel 2 stays 0.
+                 beta_dev, eb_mode, eb_clip = eband
+-                if eb_clip is None and _eband_logsig_only(beta_dev):
++                if eb_mode == "mult" and eb_clip is None and _eband_logsig_only(beta_dev):
+                     # SIGBLEND fast path (E0a 09-27): features 1..4 carry zero weight, so yhat = b0*log(sigma+1e-8) + b5 on the
+                     # (B,1,H,W,2) sigma field, broadcast over t below -- bit-identical to the general path (adding the four
+                     # 0*finite terms and the zero intercept is exact) without building the (B,20,H,W,2,5) feature stack.
+-- 
+2.47.3
+

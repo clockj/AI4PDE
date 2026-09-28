@@ -70,7 +70,14 @@ BASE_FNO = [os.path.join(UNET, n) for n in
             ("fno_r18_cmb3sim.pth", "fno_r18_cmb3sim_s2.pth", "fno_r18_cmb3sim_s3.pth")]
 BASE_VIT = [os.path.join(UNET, n) for n in ("arch_vit_d384.pth", "arch_vit_cmb3sim.pth")]
 FNO_CTRL = os.path.join(SCREEN, "w1", "w1_fno_ctrl_s1.pth")
-ALPHA, BAND_P, F_BOARD, A100_TO_4060 = 0.60, 0.45, 1.39, 1.850
+# 2026-09-28: ALPHA, BAND_P, F_BOARD come from opoint (were 0.60, 0.45, 1.39). The 09-14 screen's
+# ledger rows (leaderboard/screen.jsonl) were all produced at ALPHA 0.60; a re-run is at 0.80 and
+# band_for's cache key (which hashes alpha) refits rather than reusing a 0.60 band. The screen's
+# band is still fit_band.py's pred-centred static fit (no --centre-alpha, no --fill-unscored), and
+# the compose is per-channel (_fno.JOINT_GAIN untouched), like its anchors r25 / t2r12.
+import opoint  # noqa: E402
+ALPHA, BAND_P, F_BOARD, A100_TO_4060 = opoint.ALPHA, opoint.BAND_P, opoint.INFLATE, 1.850
+AKEY = f"{ALPHA:.1f}"                   # the single-model sweep's key at ALPHA (was the literal "0.6")
 ANCHOR_INV = 2                          # xfam6: one fused FNO group + one fused ViT group
 SHIP_FNO = 4                            # xfam6's FNO group size
 T_FIXED = 92.297891                     # R25's time_score; only shifts the wfinal ranking column
@@ -230,10 +237,14 @@ def score_block(P, Y, sig, band_path, sel) -> dict:
     import final_v9
     import sps9
     from sps9 import prep, sc, sps_score
-    z = np.load(band_path)
-    base, ref, p = z["base"][..., :2], z["sigma_ref"][..., :2], float(z["p"])
+    import band_io
+    # band_io refuses a SIGBLEND npz without its sidecar and raises on a y0-centred band here,
+    # because this block scores P -/+ half (band_for's bands are pred-centred and static).
+    band = band_io.load_band(band_path)
+    if band.centre_alpha is not None:
+        raise ValueError(f"{band_path}: centred at alpha {band.centre_alpha}; score_block is pred-centred")
     Ps, Ys, ss = P[sel], Y[sel], sig[sel]
-    half = (base * np.clip(ss / ref, 0.3, 3.0) ** np.float32(p)).astype(np.float32)
+    half = band_io.half_width(band, ss)
     rel = float(np.mean(sc.rel_l2_per_sample(Ps, Ys, 2)))
     tke = float(np.mean(sc.tke_rel_l2_per_sample(Ps, Ys, 2)))
     mvpe = float(sc.mvpe_rel_l2(Ps, Ys))
@@ -680,7 +691,7 @@ def arm_eval(args) -> None:
 
     # 1. single model, ALPHA sweep
     sweep = {}
-    for a in (0.4, 0.6, 0.8):
+    for a in sorted({0.4, 0.6, 0.8, ALPHA}):
         sweep[f"{a:.1f}"] = s = eval_set(X[:1], data, dev, a)
         print(f"  single alpha {a}: full {s['full']}\n                  aoa  {s['aoa1520']}",
               flush=True)
@@ -747,11 +758,11 @@ def arm_eval(args) -> None:
             comp = BASE_FNO[0]
         x4 = {}
         for track, anchor, key in ((1, t1, "ms_b64_fp16"), (2, t2, k2)):
-            fc = project(X[:1], sweep["0.6"]["band"], band_for([comp], ALPHA), 1, 0.0, anchor,
+            fc = project(X[:1], sweep[AKEY]["band"], band_for([comp], ALPHA), 1, 0.0, anchor,
                          os.path.join(logdir, f"predict_board_t{track}_family_vs_fno.txt"),
                          anchor_set=[comp], anchor_inv=1)
             fam = fc["sps"]["sps_1to1"] - fc["sps"]["sps_pf"]
-            x4[track] = standalone_xk(track, anchor, sweep["0.6"]["aoa1520"],
+            x4[track] = standalone_xk(track, anchor, sweep[AKEY]["aoa1520"],
                                       set_res["base"]["aoa1520"], fam, ms_of(lat, xrow, key)[0],
                                       lat, key, kc, x_name=xrow["name"])
             x4[track].update(fam_comparator=os.path.basename(comp), fam_detail=fc)
@@ -801,8 +812,8 @@ def arm_eval(args) -> None:
         epochs=cfg.get("epochs"), dropout=cfg.get("dropout"),
         ms_b64_fp16=xrow["ms_b64_fp16"], ms_b64_fp32=xrow["ms_b64_fp32"],
         ms_b1_fp16=xrow["ms_b1_fp16"], ms_ratio_fno=xrow["ms_ratio_fno"],
-        single_full={k: sweep["0.6"]["full"][k] for k in ("rel", "tke", "mvpe", "sps")},
-        single_aoa1520={k: sweep["0.6"]["aoa1520"][k] for k in ("rel", "tke", "mvpe", "sps")},
+        single_full={k: sweep[AKEY]["full"][k] for k in ("rel", "tke", "mvpe", "sps")},
+        single_aoa1520={k: sweep[AKEY]["aoa1520"][k] for k in ("rel", "tke", "mvpe", "sps")},
         proj_dfinal_t1_standalone=st1["proj"], proj_dfinal_t1_partner=pa1["proj"],
         proj_dfinal_t2_partner=pa2["proj"], verdict="pending", note=args.note,
         # ---- extra keys ----
@@ -1235,7 +1246,7 @@ def x4_mode(args) -> None:
         comp = BASE_FNO[0]
     t1, t2 = anchors()
     k2 = t2_key(lat)
-    sw = row["single_detail"]["alpha_sweep"]["0.6"]
+    sw = row["single_detail"]["alpha_sweep"][AKEY]
     base_proxy = row["sets"]["base"]["aoa1520"]
     logdir = os.path.join(SCREEN, "eval", f"x4_{args.arm}")
     os.makedirs(logdir, exist_ok=True)

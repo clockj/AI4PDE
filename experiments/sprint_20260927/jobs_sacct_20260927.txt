@@ -1,0 +1,293 @@
+JobID|JobName|Cluster|Partition|State|Elapsed|AllocTRES|Submit|Start|End
+7566570|rp_f27p_asc|ascend|nextgen|COMPLETED|00:11:58|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:13:28|2026-09-27T16:13:47|2026-09-27T16:25:45
+14942370|rp_f27p_car|cardinal|debug|COMPLETED|00:08:56|billing=12,cpu=12,gres/gpu:h100=1,gres/gpu=1,mem=108G,node=1|2026-09-27T16:13:28|2026-09-27T16:14:43|2026-09-27T16:23:39
+7566571|rp_f27c_dump|ascend|debug-nextgen|COMPLETED|00:02:40|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:14:13|2026-09-27T16:14:13|2026-09-27T16:16:53
+7566572|rp_f27x_build|ascend|nextgen|COMPLETED|00:04:50|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:14:33|2026-09-27T16:14:54|2026-09-27T16:19:44
+7566573|rp_f27x_ref|ascend|nextgen|COMPLETED|00:02:27|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:14:33|2026-09-27T16:14:54|2026-09-27T16:17:21
+7566614|rp_f27a_smoke|ascend|nextgen|COMPLETED|00:01:57|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:18:36|2026-09-27T16:18:56|2026-09-27T16:20:53
+7566615|rp_f27a_ffvit_t1|ascend|nextgen|COMPLETED|00:54:07|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:18:36|2026-09-27T16:18:56|2026-09-27T17:13:03
+7566616|rp_f27a_ffvit_t2|ascend|nextgen|COMPLETED|00:54:35|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:18:36|2026-09-27T16:18:56|2026-09-27T17:13:31
+7566617|rp_f27a_ffvit_t3|ascend|nextgen|COMPLETED|00:54:23|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:18:36|2026-09-27T16:18:56|2026-09-27T17:13:19
+7566618|rp_f27a_ffvit0_t1|ascend|nextgen|COMPLETED|00:49:38|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:18:37|2026-09-27T16:18:56|2026-09-27T17:08:34
+7566619|rp_f27a_ffvit0_t2|ascend|nextgen|COMPLETED|00:49:39|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:18:37|2026-09-27T16:18:56|2026-09-27T17:08:35
+7566620|rp_f27a_ffvit0_t3|ascend|nextgen|COMPLETED|00:50:00|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:18:37|2026-09-27T16:18:56|2026-09-27T17:08:56
+7566621|rp_f27a_ffvit_m1|ascend|nextgen|COMPLETED|01:00:09|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:18:37|2026-09-27T16:18:56|2026-09-27T17:19:05
+7566622|rp_f27a_ffvit_m2|ascend|nextgen|COMPLETED|01:00:17|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:18:38|2026-09-27T16:18:56|2026-09-27T17:19:13
+7566623|rp_f27a_ffvit_m3|ascend|nextgen|COMPLETED|00:59:58|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:18:38|2026-09-27T16:18:56|2026-09-27T17:18:54
+7566624|rp_f27a_ffvit_m4|ascend|nextgen|COMPLETED|01:00:00|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:18:38|2026-09-27T16:18:56|2026-09-27T17:18:56
+7566625|rp_f27a_ffvit0_m1|ascend|nextgen|COMPLETED|00:54:54|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:18:38|2026-09-27T16:18:56|2026-09-27T17:13:50
+7566626|rp_f27a_ffvit0_m2|ascend|nextgen|COMPLETED|00:54:27|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:18:38|2026-09-27T16:18:56|2026-09-27T17:13:23
+7566631|rp_f27c_dumpood|ascend|debug-nextgen|COMPLETED|00:00:28|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:20:53|2026-09-27T16:20:56|2026-09-27T16:21:24
+7566633|rp_f27x_candref|ascend|nextgen|COMPLETED|00:03:38|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:21:03|2026-09-27T16:21:28|2026-09-27T16:25:06
+7566636|rp_f27a_ffvitL_t1|ascend|nextgen|CANCELLED by 41376|00:04:47|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:21:40|2026-09-27T16:21:59|2026-09-27T16:26:46
+7566637|rp_f27a_ffvitL_t2|ascend|nextgen|CANCELLED by 41376|00:04:47|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:21:40|2026-09-27T16:21:59|2026-09-27T16:26:46
+7566638|rp_f27a_ffvitL_t3|ascend|nextgen|CANCELLED by 41376|00:04:47|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:21:41|2026-09-27T16:21:59|2026-09-27T16:26:46
+7566639|rp_f27a_ffvit0L_t1|ascend|nextgen|CANCELLED by 41376|00:04:47|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:21:41|2026-09-27T16:21:59|2026-09-27T16:26:46
+7566640|rp_f27a_ffvit0L_t2|ascend|nextgen|CANCELLED by 41376|00:04:47|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:21:41|2026-09-27T16:21:59|2026-09-27T16:26:46
+7566641|rp_f27a_ffvitL_m1|ascend|nextgen|CANCELLED by 41376|00:04:47|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:21:42|2026-09-27T16:21:59|2026-09-27T16:26:46
+7566642|rp_f27a_ffvitL_m2|ascend|nextgen|CANCELLED by 41376|00:04:47|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:21:42|2026-09-27T16:21:59|2026-09-27T16:26:46
+7566643|rp_f27a_ffvitL_m3|ascend|nextgen|CANCELLED by 41376|00:04:47|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:21:42|2026-09-27T16:21:59|2026-09-27T16:26:46
+7566644|rp_f27a_ffvitL_m4|ascend|nextgen|CANCELLED by 41376|00:04:47|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:21:42|2026-09-27T16:21:59|2026-09-27T16:26:46
+7566645|rp_f27a_ffvit0L_m1|ascend|nextgen|CANCELLED by 41376|00:04:47|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:21:43|2026-09-27T16:21:59|2026-09-27T16:26:46
+7566646|rp_f27a_ffvit0L_m2|ascend|nextgen|CANCELLED by 41376|00:04:47|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:21:43|2026-09-27T16:21:59|2026-09-27T16:26:46
+7566662|rp_f27c_smoke|ascend|debug-nextgen|COMPLETED|00:05:54|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:24:30|2026-09-27T16:24:30|2026-09-27T16:30:24
+7566669|rp_f27a_ffvitL_t1|ascend|nextgen|COMPLETED|01:06:37|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:26:49|2026-09-27T16:27:03|2026-09-27T17:33:40
+7566670|rp_f27a_ffvitL_t2|ascend|nextgen|COMPLETED|01:06:23|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:26:49|2026-09-27T16:27:03|2026-09-27T17:33:26
+7566671|rp_f27a_ffvitL_t3|ascend|nextgen|COMPLETED|01:07:09|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:26:50|2026-09-27T16:27:03|2026-09-27T17:34:12
+7566672|rp_f27a_ffvit0L_t1|ascend|nextgen|COMPLETED|01:00:31|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:26:50|2026-09-27T16:27:03|2026-09-27T17:27:34
+7566673|rp_f27a_ffvit0L_t2|ascend|nextgen|COMPLETED|01:00:59|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:26:50|2026-09-27T16:27:03|2026-09-27T17:28:02
+7566674|rp_f27a_ffvitL_m1|ascend|nextgen|COMPLETED|01:13:26|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:26:50|2026-09-27T16:27:03|2026-09-27T17:40:29
+7566675|rp_f27a_ffvitL_m2|ascend|nextgen|COMPLETED|01:14:31|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:26:50|2026-09-27T16:27:03|2026-09-27T17:41:34
+7566676|rp_f27a_ffvitL_m3|ascend|nextgen|COMPLETED|01:14:18|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:26:50|2026-09-27T16:27:03|2026-09-27T17:41:21
+7566677|rp_f27a_ffvitL_m4|ascend|nextgen|COMPLETED|01:14:13|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:26:51|2026-09-27T16:27:03|2026-09-27T17:41:16
+7566678|rp_f27a_ffvit0L_m1|ascend|nextgen|COMPLETED|01:07:41|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:26:51|2026-09-27T16:27:03|2026-09-27T17:34:44
+7566679|rp_f27a_ffvit0L_m2|ascend|nextgen|COMPLETED|01:06:58|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:26:51|2026-09-27T16:27:03|2026-09-27T17:34:01
+7566683|rp_f27a_evalS|ascend|nextgen|COMPLETED|00:03:40|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:27:59|2026-09-27T16:28:05|2026-09-27T16:31:45
+7566718|rp_f27a_reh|ascend|nextgen|COMPLETED|00:05:09|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:29:19|2026-09-27T16:29:36|2026-09-27T16:34:45
+7566719|rp_f27a_evalZ|ascend|nextgen|COMPLETED|00:03:16|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:29:32|2026-09-27T16:29:36|2026-09-27T16:32:52
+14942562|rp_k27_probe_cg|cardinal|gpu|COMPLETED|00:00:01|billing=12,cpu=12,gres/gpu:h100=1,gres/gpu=1,mem=108G,node=1|2026-09-27T16:30:17|2026-09-27T16:30:58|2026-09-27T16:30:59
+7566721|rp_k27_probe_an|ascend|nextgen|COMPLETED|00:00:00|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:30:18|2026-09-27T16:30:37|2026-09-27T16:30:37
+7566725|rp_f27b_xf_ffno_f0|ascend|nextgen|COMPLETED|01:03:33|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:30:48|2026-09-27T16:31:07|2026-09-27T17:34:40
+7566726|rp_f27b_xf_vit_f0|ascend|nextgen|COMPLETED|00:32:31|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:30:48|2026-09-27T16:31:07|2026-09-27T17:03:38
+7566727|rp_f27b_xf_ffno_f1|ascend|nextgen|COMPLETED|01:03:56|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:30:49|2026-09-27T16:31:07|2026-09-27T17:35:03
+7566728|rp_f27b_xf_vit_f1|ascend|nextgen|COMPLETED|00:33:19|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:30:49|2026-09-27T16:31:07|2026-09-27T17:04:26
+7566729|rp_f27b_xf_ffno_f2|ascend|nextgen|COMPLETED|01:04:32|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:30:49|2026-09-27T16:31:07|2026-09-27T17:35:39
+7566730|rp_f27b_xf_vit_f2|ascend|nextgen|COMPLETED|00:34:05|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:30:49|2026-09-27T16:31:07|2026-09-27T17:05:12
+7566731|rp_f27b_xf_ffno_f3|ascend|nextgen|COMPLETED|01:03:31|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:30:49|2026-09-27T16:31:07|2026-09-27T17:34:38
+7566732|rp_f27b_xf_vit_f3|ascend|nextgen|COMPLETED|00:32:58|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:30:49|2026-09-27T16:31:07|2026-09-27T17:04:05
+7566733|rp_f27b_xf_ffno_f4|ascend|nextgen|COMPLETED|01:05:42|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:30:49|2026-09-27T16:31:07|2026-09-27T17:36:49
+7566734|rp_f27b_xf_vit_f4|ascend|nextgen|COMPLETED|00:33:55|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:30:49|2026-09-27T16:31:07|2026-09-27T17:05:02
+7566735|rp_f27a_fuse|ascend|nextgen|FAILED|00:00:10|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:31:18|2026-09-27T16:31:37|2026-09-27T16:31:47
+7566737|rp_f27a_fuse|ascend|nextgen|COMPLETED|00:00:08|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:32:00|2026-09-27T16:32:07|2026-09-27T16:32:15
+7566742|rp_f27c_smoke2|ascend|debug-nextgen|COMPLETED|00:05:09|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:34:06|2026-09-27T16:34:09|2026-09-27T16:39:18
+7566745|rp_f27a_reh|ascend|nextgen|COMPLETED|00:03:42|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:35:07|2026-09-27T16:35:15|2026-09-27T16:38:57
+7566746|rp_f27b_reh_ffno_f0|ascend|nextgen|COMPLETED|00:01:44|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:35:14|2026-09-27T16:35:15|2026-09-27T16:36:59
+7566747|rp_f27b_reh_vit_f0|ascend|nextgen|COMPLETED|00:01:18|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:35:14|2026-09-27T16:35:15|2026-09-27T16:36:33
+7566748|rp_f27b_reh_ffno_f1|ascend|nextgen|COMPLETED|00:01:44|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:35:14|2026-09-27T16:35:15|2026-09-27T16:36:59
+7566749|rp_f27b_reh_vit_f1|ascend|nextgen|COMPLETED|00:01:18|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:35:15|2026-09-27T16:35:15|2026-09-27T16:36:33
+7566750|rp_f27b_reh_ffno_f2|ascend|nextgen|COMPLETED|00:01:31|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:35:15|2026-09-27T16:35:15|2026-09-27T16:36:46
+7566751|rp_f27b_reh_vit_f2|ascend|nextgen|COMPLETED|00:01:04|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:35:15|2026-09-27T16:35:15|2026-09-27T16:36:19
+7566752|rp_f27b_reh_ffno_f3|ascend|nextgen|COMPLETED|00:01:29|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:35:15|2026-09-27T16:35:15|2026-09-27T16:36:44
+7566753|rp_f27b_reh_vit_f3|ascend|nextgen|COMPLETED|00:01:04|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:35:15|2026-09-27T16:35:45|2026-09-27T16:36:49
+7566754|rp_f27b_reh_ffno_f4|ascend|nextgen|COMPLETED|00:01:31|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:35:15|2026-09-27T16:35:45|2026-09-27T16:37:16
+7566755|rp_f27b_reh_vit_f4|ascend|nextgen|COMPLETED|00:01:24|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:35:15|2026-09-27T16:35:45|2026-09-27T16:37:09
+14942616|rp_k272_jit|cardinal|gpu|COMPLETED|00:00:56|billing=12,cpu=12,gres/gpu:h100=1,gres/gpu=1,mem=108G,node=1|2026-09-27T16:35:22|2026-09-27T16:36:50|2026-09-27T16:37:46
+7566757|rp_f27b_rehprobe|ascend|nextgen|COMPLETED|00:02:48|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:37:39|2026-09-27T16:37:47|2026-09-27T16:40:35
+14942663|rp_k273_ctl_t1|cardinal|gpu|COMPLETED|00:19:26|billing=12,cpu=12,gres/gpu:h100=1,gres/gpu=1,mem=108G,node=1|2026-09-27T16:37:59|2026-09-27T16:39:55|2026-09-27T16:59:21
+14942664|rp_k273_hib_t1|cardinal|gpu|CANCELLED by 41376|00:00:00||2026-09-27T16:37:59|None|2026-09-27T16:41:29
+14942665|rp_k273_hio_t1|cardinal|gpu|CANCELLED by 41376|00:00:00||2026-09-27T16:37:59|None|2026-09-27T16:41:29
+14942666|rp_k273_do0_t1|cardinal|gpu|CANCELLED by 41376|00:00:00||2026-09-27T16:37:59|None|2026-09-27T16:41:29
+14942667|rp_k273_ctl_t2|cardinal|gpu|CANCELLED by 41376|00:00:00||2026-09-27T16:37:59|None|2026-09-27T16:41:28
+14942668|rp_k273_hib_t2|cardinal|gpu|CANCELLED by 41376|00:00:00||2026-09-27T16:38:00|None|2026-09-27T16:41:28
+14942669|rp_k273_hio_t2|cardinal|gpu|CANCELLED by 41376|00:00:00||2026-09-27T16:38:00|None|2026-09-27T16:41:28
+14942670|rp_k273_do0_t2|cardinal|gpu|CANCELLED by 41376|00:00:00||2026-09-27T16:38:00|None|2026-09-27T16:41:28
+14942671|rp_k273_ctl_t3|cardinal|gpu|CANCELLED by 41376|00:00:00||2026-09-27T16:38:00|None|2026-09-27T16:41:27
+14942672|rp_k273_hib_t3|cardinal|gpu|CANCELLED by 41376|00:00:00||2026-09-27T16:38:00|None|2026-09-27T16:41:27
+14942673|rp_k273_hio_t3|cardinal|gpu|CANCELLED by 41376|00:00:00||2026-09-27T16:38:00|None|2026-09-27T16:41:27
+14942674|rp_k273_do0_t3|cardinal|gpu|CANCELLED by 41376|00:00:00||2026-09-27T16:38:00|None|2026-09-27T16:41:27
+7566759|rp_k271_t1lat_a|ascend|nextgen|COMPLETED|00:02:36|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:38:46|2026-09-27T16:38:48|2026-09-27T16:41:24
+14942681|rp_k271_t1lat_c|cardinal|gpu|CANCELLED by 41376|00:00:00||2026-09-27T16:38:46|None|2026-09-27T16:41:20
+7566761|rp_k273_ctl_m1|ascend|nextgen|COMPLETED|00:35:36|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:38:57|2026-09-27T16:39:19|2026-09-27T17:14:55
+7566762|rp_k273_hib_m1|ascend|nextgen|COMPLETED|00:35:23|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:38:57|2026-09-27T16:39:19|2026-09-27T17:14:42
+7566763|rp_k273_hio_m1|ascend|nextgen|COMPLETED|00:35:03|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:38:57|2026-09-27T16:39:19|2026-09-27T17:14:22
+7566764|rp_k273_ctl_m2|ascend|nextgen|COMPLETED|00:35:12|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:38:57|2026-09-27T16:39:19|2026-09-27T17:14:31
+7566765|rp_k273_hib_m2|ascend|nextgen|COMPLETED|00:35:19|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:38:58|2026-09-27T16:39:19|2026-09-27T17:14:38
+7566766|rp_k273_hio_m2|ascend|nextgen|FAILED|00:32:52|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:38:58|2026-09-27T16:39:19|2026-09-27T17:12:11
+7566767|rp_k273_ctl_m3|ascend|nextgen|COMPLETED|00:35:12|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:38:58|2026-09-27T16:39:19|2026-09-27T17:14:31
+7566768|rp_k273_hib_m3|ascend|nextgen|COMPLETED|00:35:06|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:38:58|2026-09-27T16:39:19|2026-09-27T17:14:25
+7566769|rp_k273_hio_m3|ascend|nextgen|COMPLETED|00:35:28|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:38:58|2026-09-27T16:39:19|2026-09-27T17:14:47
+7566770|rp_k273_ctl_m4|ascend|nextgen|COMPLETED|00:35:18|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:38:58|2026-09-27T16:39:19|2026-09-27T17:14:37
+7566771|rp_k273_hib_m4|ascend|nextgen|COMPLETED|00:35:12|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:38:59|2026-09-27T16:39:19|2026-09-27T17:14:31
+7566772|rp_k273_hio_m4|ascend|nextgen|COMPLETED|00:35:33|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:38:59|2026-09-27T16:39:19|2026-09-27T17:14:52
+7566773|rp_k273_do0_m1|ascend|nextgen|CANCELLED by 41376|00:13:10|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:38:59|2026-09-27T16:39:19|2026-09-27T16:52:29
+7566774|rp_k273_do0_m2|ascend|nextgen|CANCELLED by 41376|00:13:10|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:38:59|2026-09-27T16:39:19|2026-09-27T16:52:29
+14942692|rp_k273_do0_m3|cardinal|gpu|CANCELLED by 41376|00:00:00||2026-09-27T16:38:59|None|2026-09-27T16:41:26
+14942693|rp_k273_do0_m4|cardinal|gpu|CANCELLED by 41376|00:00:00||2026-09-27T16:38:59|None|2026-09-27T16:41:27
+7566775|rp_f27c_build|ascend|nextgen|CANCELLED by 41376|00:25:47|billing=120,cpu=120,gres/bind:apps=0,gres/bind:apps_src=0,gres/gpfs:ess=0,gres/gpfs:scratch=0,gres/gpu:a100=3,gres/gpu=3,gres/nsight=0,gres/overlay:apps=0,gres/overlay:apps_src=0,gres/pfsdir:scratch=0,gres/pfsdir=0,gres/vis=0,mem=483240M,node=1|2026-09-27T16:39:10|2026-09-27T16:39:19|2026-09-27T17:05:06
+7566777|rp_f27a_mb|ascend|nextgen|COMPLETED|00:00:34|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:39:27|2026-09-27T16:39:50|2026-09-27T16:40:24
+7566819|rp_f27a_eval|ascend|nextgen|COMPLETED|00:08:46|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:40:04|2026-09-27T17:13:52|2026-09-27T17:22:38
+7566820|rp_f27a_evalL|ascend|nextgen|COMPLETED|00:07:44|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:40:05|2026-09-27T17:34:15|2026-09-27T17:41:59
+7566821|rp_f27a_cand_aY|ascend|nextgen|COMPLETED|00:03:34|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:40:05|2026-09-27T17:19:17|2026-09-27T17:22:51
+7566822|rp_f27a_cand_aYC|ascend|nextgen|COMPLETED|00:03:34|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:40:06|2026-09-27T17:13:52|2026-09-27T17:17:26
+7566823|rp_f27a_cand_aX|ascend|nextgen|COMPLETED|00:03:39|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:40:06|2026-09-27T17:19:17|2026-09-27T17:22:56
+7566824|rp_f27a_cand_LY|ascend|nextgen|COMPLETED|00:03:35|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:40:06|2026-09-27T17:41:52|2026-09-27T17:45:27
+7566825|rp_f27a_cand_LYC|ascend|nextgen|COMPLETED|00:03:36|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:40:07|2026-09-27T17:34:45|2026-09-27T17:38:21
+7566826|rp_k273_cr_baseline|ascend|nextgen|COMPLETED|00:03:46|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:40:07|2026-09-27T16:40:23|2026-09-27T16:44:09
+7566827|rp_f27a_cand_LX|ascend|nextgen|COMPLETED|00:03:48|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:40:07|2026-09-27T17:41:52|2026-09-27T17:45:40
+7566828|rp_k273_cr_zmix|ascend|nextgen|COMPLETED|00:03:37|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:40:08|2026-09-27T16:40:23|2026-09-27T16:44:00
+7566829|rp_f27c_mx|ascend|nextgen|COMPLETED|00:02:58|billing=56,cpu=56,gres/gpu:a100=1,gres/gpu=1,mem=220G,node=1|2026-09-27T16:40:12|2026-09-27T16:40:23|2026-09-27T16:43:21
+7566833|rp_k271_t1lat2_a|ascend|nextgen|COMPLETED|00:10:29|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:41:20|2026-09-27T16:41:23|2026-09-27T16:51:52
+14942770|rp_k271_t1lat2_c|cardinal|debug|COMPLETED|00:07:23|billing=12,cpu=12,gres/gpu:h100=1,gres/gpu=1,mem=108G,node=1|2026-09-27T16:41:20|2026-09-27T16:42:29|2026-09-27T16:49:52
+7566849|rp_k273_do0_m3|ascend|nextgen|CANCELLED by 41376|00:10:35|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:41:26|2026-09-27T16:41:54|2026-09-27T16:52:29
+7566850|rp_k273_do0_m4|ascend|nextgen|CANCELLED by 41376|00:10:35|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:41:27|2026-09-27T16:41:54|2026-09-27T16:52:29
+7566851|rp_k273_do0_t3|ascend|nextgen|CANCELLED by 41376|00:10:35|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:41:27|2026-09-27T16:41:54|2026-09-27T16:52:29
+7566852|rp_k273_hio_t3|ascend|nextgen|COMPLETED|00:32:10|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:41:27|2026-09-27T16:41:54|2026-09-27T17:14:04
+7566853|rp_k273_hib_t3|ascend|nextgen|COMPLETED|00:31:59|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:41:27|2026-09-27T16:41:54|2026-09-27T17:13:53
+7566854|rp_k273_ctl_t3|ascend|nextgen|COMPLETED|00:32:12|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:41:28|2026-09-27T16:41:54|2026-09-27T17:14:06
+7566855|rp_k273_hio_t2|ascend|nextgen|COMPLETED|00:32:10|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:41:28|2026-09-27T16:41:54|2026-09-27T17:14:04
+7566856|rp_k273_do0_t2|ascend|nextgen|CANCELLED by 41376|00:10:35|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:41:28|2026-09-27T16:41:54|2026-09-27T16:52:29
+7566857|rp_k273_hib_t2|ascend|nextgen|COMPLETED|00:32:10|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:41:28|2026-09-27T16:41:54|2026-09-27T17:14:04
+7566858|rp_k273_ctl_t2|ascend|nextgen|COMPLETED|00:32:12|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:41:29|2026-09-27T16:41:54|2026-09-27T17:14:06
+7566859|rp_k273_do0_t1|ascend|nextgen|CANCELLED by 41376|00:10:35|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:41:29|2026-09-27T16:41:54|2026-09-27T16:52:29
+7566860|rp_f27b_rehbuild|ascend|nextgen|COMPLETED|00:04:47|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:41:29|2026-09-27T16:41:54|2026-09-27T16:46:41
+7566861|rp_k273_hio_t1|ascend|nextgen|COMPLETED|00:31:43|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:41:29|2026-09-27T16:41:54|2026-09-27T17:13:37
+7566862|rp_k273_hib_t1|ascend|nextgen|COMPLETED|00:31:56|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:41:29|2026-09-27T16:41:54|2026-09-27T17:13:50
+7566863|rp_k271_t2lat_a|ascend|nextgen|COMPLETED|00:01:03|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:42:39|2026-09-27T16:42:54|2026-09-27T16:43:57
+14942780|rp_k273_hib_vtp|cardinal|gpu|CANCELLED by 41376|00:00:00||2026-09-27T16:42:43|None|2026-09-27T16:45:33
+14942781|rp_k273_hio_vtp|cardinal|gpu|CANCELLED by 41376|00:00:00||2026-09-27T16:42:43|None|2026-09-27T16:45:33
+14942782|rp_k273_ctl_vtp|cardinal|gpu|CANCELLED by 41376|00:00:00||2026-09-27T16:42:44|None|2026-09-27T16:45:41
+14942783|rp_k273_hib_vtc|cardinal|gpu|CANCELLED by 41376|00:00:00||2026-09-27T16:42:44|None|2026-09-27T16:45:39
+14942784|rp_k273_hio_vtc|cardinal|gpu|CANCELLED by 41376|00:00:00||2026-09-27T16:42:44|None|2026-09-27T16:45:40
+14942785|rp_k273_ctl_vtc|cardinal|gpu|CANCELLED by 41376|00:00:00||2026-09-27T16:42:44|None|2026-09-27T16:45:39
+14942786|rp_k273_hib_vmp|cardinal|gpu|CANCELLED by 41376|00:00:00||2026-09-27T16:42:44|None|2026-09-27T16:45:38
+14942787|rp_k273_hio_vmp|cardinal|gpu|CANCELLED by 41376|00:00:00||2026-09-27T16:42:44|None|2026-09-27T16:45:38
+14942788|rp_k273_ctl_vmp|cardinal|gpu|CANCELLED by 41376|00:00:00||2026-09-27T16:42:44|None|2026-09-27T16:45:37
+14942792|rp_k273_hib_vmc|cardinal|gpu|CANCELLED by 41376|00:00:00||2026-09-27T16:42:45|None|2026-09-27T16:45:36
+14942793|rp_k273_hio_vmc|cardinal|gpu|CANCELLED by 41376|00:00:00||2026-09-27T16:42:45|None|2026-09-27T16:45:35
+14942794|rp_k273_ctl_vmc|cardinal|gpu|CANCELLED by 41376|00:00:00||2026-09-27T16:42:45|None|2026-09-27T16:45:34
+7566868|rp_f27c_mx|ascend|nextgen|COMPLETED|00:01:17|billing=56,cpu=56,gres/gpu:a100=1,gres/gpu=1,mem=220G,node=1|2026-09-27T16:43:56|2026-09-27T16:44:25|2026-09-27T16:45:42
+7566870|rp_k271_prof_a|ascend|nextgen|COMPLETED|00:00:20|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:44:30|2026-09-27T16:44:57|2026-09-27T16:45:17
+7566871|rp_k273_cr_baseline|ascend|nextgen|COMPLETED|00:04:07|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:44:33|2026-09-27T16:44:57|2026-09-27T16:49:04
+7566872|rp_k273_cr_zvcc|ascend|nextgen|COMPLETED|00:04:13|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:44:33|2026-09-27T16:44:57|2026-09-27T16:49:10
+7566877|rp_k273_hio_vtp|ascend|nextgen|COMPLETED|00:17:09|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:45:33|2026-09-27T16:45:58|2026-09-27T17:03:07
+7566878|rp_k273_hib_vtp|ascend|nextgen|COMPLETED|00:17:26|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:45:34|2026-09-27T16:45:58|2026-09-27T17:03:24
+7566879|rp_k273_ctl_vmc|ascend|nextgen|COMPLETED|00:35:51|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:45:35|2026-09-27T16:45:58|2026-09-27T17:21:49
+7566880|rp_k273_hio_vmc|ascend|nextgen|COMPLETED|00:35:32|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:45:36|2026-09-27T16:45:58|2026-09-27T17:21:30
+7566881|rp_k273_hib_vmc|ascend|nextgen|COMPLETED|00:36:13|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:45:37|2026-09-27T16:45:58|2026-09-27T17:22:11
+7566882|rp_k273_ctl_vmp|ascend|nextgen|COMPLETED|00:19:14|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:45:37|2026-09-27T16:45:58|2026-09-27T17:05:12
+7566884|rp_k273_hio_vmp|ascend|nextgen|COMPLETED|00:19:19|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:45:38|2026-09-27T16:45:58|2026-09-27T17:05:17
+7566885|rp_k273_hib_vmp|ascend|nextgen|COMPLETED|00:19:16|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:45:39|2026-09-27T16:45:58|2026-09-27T17:05:14
+7566886|rp_k273_ctl_vtc|ascend|nextgen|COMPLETED|00:32:14|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:45:39|2026-09-27T16:45:58|2026-09-27T17:18:12
+7566887|rp_k273_hib_vtc|ascend|nextgen|COMPLETED|00:32:04|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:45:40|2026-09-27T16:45:58|2026-09-27T17:18:02
+7566888|rp_k273_hio_vtc|ascend|nextgen|COMPLETED|00:32:36|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:45:41|2026-09-27T16:45:58|2026-09-27T17:18:34
+7566889|rp_k273_ctl_vtp|ascend|nextgen|COMPLETED|00:17:18|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:45:41|2026-09-27T16:45:58|2026-09-27T17:03:16
+7566890|rp_f27c_mx|ascend|nextgen|COMPLETED|00:01:28|billing=56,cpu=56,gres/gpu:a100=1,gres/gpu=1,mem=220G,node=1|2026-09-27T16:46:02|2026-09-27T16:46:28|2026-09-27T16:47:56
+7566894|rp_k271_ln_a|ascend|nextgen|COMPLETED|00:00:19|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:46:38|2026-09-27T16:46:59|2026-09-27T16:47:18
+7566895|rp_k273_hio2_t1|ascend|nextgen|COMPLETED|00:32:02|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:46:42|2026-09-27T16:46:59|2026-09-27T17:19:01
+7566896|rp_k273_hio2_t2|ascend|nextgen|COMPLETED|00:32:02|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:46:43|2026-09-27T16:46:59|2026-09-27T17:19:01
+7566897|rp_k273_hio2_t3|ascend|nextgen|COMPLETED|00:32:02|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:46:43|2026-09-27T16:46:59|2026-09-27T17:19:01
+7566898|rp_k273_hio2_m1|ascend|nextgen|COMPLETED|00:35:53|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:46:44|2026-09-27T16:46:59|2026-09-27T17:22:52
+7566899|rp_k273_hio2_m2|ascend|nextgen|COMPLETED|00:35:24|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:46:44|2026-09-27T16:46:59|2026-09-27T17:22:23
+7566900|rp_k273_hio2_m3|ascend|nextgen|COMPLETED|00:35:21|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:46:45|2026-09-27T16:46:59|2026-09-27T17:22:20
+7566901|rp_k273_hio2_m4|ascend|nextgen|COMPLETED|00:35:27|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:46:45|2026-09-27T16:46:59|2026-09-27T17:22:26
+7566915|rp_k271_t1lat3_a|ascend|nextgen|COMPLETED|00:06:02|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:49:37|2026-09-27T16:50:00|2026-09-27T16:56:02
+7566953|rp_f27c2_real|ascend|debug-nextgen|CANCELLED by 41376|00:10:43|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:53:27|2026-09-27T16:53:30|2026-09-27T17:04:13
+7566958|rp_f27b2_c_ood|ascend|nextgen|COMPLETED|00:10:12|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:56:13|2026-09-27T16:56:21|2026-09-27T17:06:33
+7566959|rp_f27b2_c_in|ascend|nextgen|COMPLETED|00:05:29|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:56:13|2026-09-27T16:56:21|2026-09-27T17:01:50
+7566960|rp_f27b2_w2_ood|ascend|nextgen|COMPLETED|00:11:06|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:56:13|2026-09-27T16:56:21|2026-09-27T17:07:27
+7566961|rp_f27b2_w2_in|ascend|nextgen|COMPLETED|00:05:43|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:56:13|2026-09-27T16:56:21|2026-09-27T17:02:04
+7566962|rp_f27b2_c_d10|ascend|nextgen|COMPLETED|00:09:07|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:56:13|2026-09-27T16:56:21|2026-09-27T17:05:28
+7566965|rp_k271_build|ascend|nextgen|COMPLETED|00:05:47|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:56:38|2026-09-27T16:56:52|2026-09-27T17:02:39
+7566967|rp_k271_eqt1|ascend|nextgen|COMPLETED|00:05:55|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:57:56|2026-09-27T17:02:56|2026-09-27T17:08:51
+7566968|rp_k271_eqt2|ascend|nextgen|COMPLETED|00:01:10|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T16:57:56|2026-09-27T17:02:56|2026-09-27T17:04:06
+7566969|rp_k271_time|ascend|nextgen|COMPLETED|00:06:38|billing=120,cpu=120,gres/bind:apps=0,gres/bind:apps_src=0,gres/gpfs:ess=0,gres/gpfs:scratch=0,gres/gpu:a100=3,gres/gpu=3,gres/nsight=0,gres/overlay:apps=0,gres/overlay:apps_src=0,gres/pfsdir:scratch=0,gres/pfsdir=0,gres/vis=0,mem=483240M,node=1|2026-09-27T16:57:56|2026-09-27T17:02:56|2026-09-27T17:09:34
+14943048|rp_k272_verify|cardinal|gpu|CANCELLED by 41376|00:00:00||2026-09-27T16:59:41|None|2026-09-27T17:03:15
+14943049|rp_k272_candref|cardinal|gpu|CANCELLED by 41376|00:00:00||2026-09-27T16:59:41|None|2026-09-27T17:03:15
+14943050|rp_k272_build|cardinal|gpu|CANCELLED by 41376|00:00:00||2026-09-27T16:59:42|None|2026-09-27T17:03:15
+7567000|rp_f27c2_final|ascend|debug-nextgen|COMPLETED|00:10:59|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:01:30|2026-09-27T17:01:30|2026-09-27T17:12:29
+7567001|rp_f27c2_time|ascend|debug-nextgen|CANCELLED by 41376|00:00:00||2026-09-27T17:01:57|None|2026-09-27T17:03:04
+7567031|rp_f27c2_s1b|ascend|debug-nextgen|FAILED|00:04:31|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:03:04|2026-09-27T17:04:16|2026-09-27T17:08:47
+7567032|rp_k272_verify|ascend|nextgen|COMPLETED|00:04:58|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:03:15|2026-09-27T17:03:26|2026-09-27T17:08:24
+7567033|rp_k272_candref|ascend|nextgen|COMPLETED|00:10:14|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:03:15|2026-09-27T17:03:26|2026-09-27T17:13:40
+7567034|rp_k272_build|ascend|nextgen|COMPLETED|00:02:33|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:03:15|2026-09-27T17:03:26|2026-09-27T17:05:59
+7567035|rp_k271_twin|ascend|nextgen|COMPLETED|00:00:38|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:03:24|2026-09-27T17:03:26|2026-09-27T17:04:04
+7567042|rp_f27b2_w3_ood|ascend|nextgen|COMPLETED|00:06:23|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:03:55|2026-09-27T17:03:57|2026-09-27T17:10:20
+7567043|rp_f27b2_w3_in|ascend|nextgen|COMPLETED|00:03:18|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:03:55|2026-09-27T17:03:57|2026-09-27T17:07:15
+7567155|rp_k271_bint|ascend|nextgen|COMPLETED|00:04:16|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:04:48|2026-09-27T17:04:57|2026-09-27T17:09:13
+7567225|rp_f27c_time|ascend|nextgen|COMPLETED|00:07:41|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:05:06|2026-09-27T17:05:28|2026-09-27T17:13:09
+7567230|rp_f27c_real|ascend|nextgen|COMPLETED|00:17:11|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:05:50|2026-09-27T17:06:01|2026-09-27T17:23:12
+7567231|rp_f27b_earlyvit|ascend|nextgen|COMPLETED|00:02:45|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:06:48|2026-09-27T17:07:01|2026-09-27T17:09:46
+7567232|rp_k272_verify|ascend|nextgen|COMPLETED|00:04:56|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:06:49|2026-09-27T17:07:01|2026-09-27T17:11:57
+7567236|rp_k272_t1twin|ascend|nextgen|COMPLETED|00:00:38|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:07:46|2026-09-27T17:08:02|2026-09-27T17:08:40
+7567244|rp_k271_eqt1|ascend|nextgen|COMPLETED|00:07:02|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:09:14|2026-09-27T17:09:35|2026-09-27T17:16:37
+7567245|rp_k271_eqt2|ascend|nextgen|COMPLETED|00:01:46|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:09:15|2026-09-27T17:09:35|2026-09-27T17:11:21
+7567246|rp_f27b2_w4_ood|ascend|nextgen|COMPLETED|00:03:00|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:09:32|2026-09-27T17:09:35|2026-09-27T17:12:35
+7567247|rp_f27b2_w4_in|ascend|nextgen|COMPLETED|00:01:38|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:09:32|2026-09-27T17:09:35|2026-09-27T17:11:13
+7567248|rp_f27b2_w4_d10|ascend|nextgen|COMPLETED|00:02:55|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:09:32|2026-09-27T17:09:35|2026-09-27T17:12:30
+7567290|rp_f27c2_fin2|ascend|debug-nextgen|COMPLETED|00:02:36|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:11:24|2026-09-27T17:11:30|2026-09-27T17:14:06
+14943110|rp_k270_main|cardinal|gpu|CANCELLED by 41376|00:00:00||2026-09-27T17:12:16|None|2026-09-27T17:15:30
+7567309|rp_f27b2_realA|ascend|nextgen|COMPLETED|00:03:31|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:12:29|2026-09-27T17:12:50|2026-09-27T17:16:21
+7567310|rp_f27b2_realB|ascend|nextgen|COMPLETED|00:03:38|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:12:29|2026-09-27T17:12:50|2026-09-27T17:16:28
+14943113|rp_k270b_reads|cardinal|gpu|CANCELLED by 41376|00:00:00||2026-09-27T17:13:11|None|2026-09-27T17:16:09
+14943114|rp_k270b_build|cardinal|gpu|CANCELLED by 41376|00:00:00||2026-09-27T17:13:41|None|2026-09-27T17:16:09
+7567354|rp_k270_main|ascend|nextgen|CANCELLED by 41376|00:00:08|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:15:30|2026-09-27T17:15:45|2026-09-27T17:15:53
+7567355|rp_k270_main|ascend|nextgen|COMPLETED|00:13:23|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:15:58|2026-09-27T17:16:15|2026-09-27T17:29:38
+7567357|rp_k270b_reads|ascend|nextgen|COMPLETED|00:15:48|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:16:09|2026-09-27T17:16:15|2026-09-27T17:32:03
+7567358|rp_k270b_build|ascend|nextgen|COMPLETED|00:05:16|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:16:09|2026-09-27T17:16:15|2026-09-27T17:21:31
+7567360|rp_k271_sg|ascend|nextgen|COMPLETED|00:00:30|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:16:57|2026-09-27T17:17:16|2026-09-27T17:17:46
+7567361|rp_f27b2_realA2|ascend|nextgen|COMPLETED|00:03:33|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:17:19|2026-09-27T17:17:46|2026-09-27T17:21:19
+7567362|rp_f27b_realprobe|ascend|nextgen|COMPLETED|00:03:06|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:17:33|2026-09-27T17:37:16|2026-09-27T17:40:22
+7567366|rp_k270_lat|ascend|nextgen|COMPLETED|00:00:44|billing=120,cpu=120,gres/bind:apps=0,gres/bind:apps_src=0,gres/gpfs:ess=0,gres/gpfs:scratch=0,gres/gpu:a100=2,gres/gpu=2,gres/nsight=0,gres/overlay:apps=0,gres/overlay:apps_src=0,gres/pfsdir:scratch=0,gres/pfsdir=0,gres/vis=0,mem=483240M,node=1|2026-09-27T17:19:22|2026-09-27T17:19:47|2026-09-27T17:20:31
+7567368|rp_k273_cr_ctl_f|ascend|nextgen|COMPLETED|00:04:12|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:20:19|2026-09-27T17:20:48|2026-09-27T17:25:00
+7567369|rp_k273_cr_hib_f|ascend|nextgen|COMPLETED|00:04:14|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:20:19|2026-09-27T17:20:48|2026-09-27T17:25:02
+7567370|rp_k273_cr_hio_f_sub2|ascend|nextgen|COMPLETED|00:04:11|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:20:35|2026-09-27T17:20:48|2026-09-27T17:24:59
+7567371|rp_k273_cr_hio2_f_ens|ascend|nextgen|COMPLETED|00:01:31|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:20:35|2026-09-27T17:20:48|2026-09-27T17:22:19
+7567378|rp_k273_cr_hio2_f|ascend|nextgen|COMPLETED|00:04:06|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:22:55|2026-09-27T17:23:16|2026-09-27T17:27:22
+7567379|rp_k273_cr_ctl_fv|ascend|nextgen|COMPLETED|00:04:06|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:22:59|2026-09-27T17:23:16|2026-09-27T17:27:22
+7567380|rp_k273_cr_hib_fv|ascend|nextgen|COMPLETED|00:04:20|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:22:59|2026-09-27T17:23:16|2026-09-27T17:27:36
+7567381|rp_k273_cr_hio_fv_sub2|ascend|nextgen|COMPLETED|00:04:23|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:23:00|2026-09-27T17:23:16|2026-09-27T17:27:39
+7567382|rp_k270_fast|ascend|nextgen|COMPLETED|00:01:44|billing=120,cpu=120,gres/bind:apps=0,gres/bind:apps_src=0,gres/gpfs:ess=0,gres/gpfs:scratch=0,gres/gpu:a100=2,gres/gpu=2,gres/nsight=0,gres/overlay:apps=0,gres/overlay:apps_src=0,gres/pfsdir:scratch=0,gres/pfsdir=0,gres/vis=0,mem=483240M,node=1|2026-09-27T17:23:01|2026-09-27T17:23:16|2026-09-27T17:25:00
+7567386|rp_f27c_build2|ascend|nextgen|COMPLETED|00:04:43|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:24:19|2026-09-27T17:24:47|2026-09-27T17:29:30
+7567388|rp_f27c_real2|ascend|nextgen|CANCELLED by 41376|00:00:14|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:24:38|2026-09-27T17:29:37|2026-09-27T17:29:51
+7567430|rp_f27q_cons|ascend|nextgen|COMPLETED|00:02:51|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:27:45|2026-09-27T17:27:59|2026-09-27T17:30:50
+7567431|rp_f27q_aggr|ascend|nextgen|COMPLETED|00:01:38|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:27:45|2026-09-27T17:27:59|2026-09-27T17:29:37
+7567432|rp_f27q_fb|ascend|nextgen|COMPLETED|00:01:36|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:27:45|2026-09-27T17:27:59|2026-09-27T17:29:35
+7567433|rp_f27q_p2x|ascend|nextgen|COMPLETED|00:01:52|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:27:45|2026-09-27T17:27:59|2026-09-27T17:29:51
+7567434|rp_f27q_c2|ascend|nextgen|COMPLETED|00:00:35|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:27:45|2026-09-27T17:27:59|2026-09-27T17:28:34
+7567444|rp_f27q_rerun1|ascend|nextgen|COMPLETED|00:00:58|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:29:09|2026-09-27T17:29:37|2026-09-27T17:30:35
+7567445|rp_f27q_rerun2|ascend|nextgen|COMPLETED|00:01:28|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:29:09|2026-09-27T17:29:37|2026-09-27T17:31:05
+7567447|rp_f27c_build2|ascend|nextgen|COMPLETED|00:08:23|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:29:51|2026-09-27T17:30:09|2026-09-27T17:38:32
+7567448|rp_f27c_real2|ascend|nextgen|COMPLETED|00:20:32|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:29:51|2026-09-27T17:38:49|2026-09-27T17:59:21
+7567449|rp_k270_shipchk|ascend|nextgen|CANCELLED by 41376|00:00:10|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:29:54|2026-09-27T17:30:09|2026-09-27T17:30:19
+7567452|rp_k270_ship2|ascend|nextgen|FAILED|00:00:01|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:30:19|2026-09-27T17:30:39|2026-09-27T17:30:40
+7567462|rp_k270_ship2|ascend|nextgen|COMPLETED|00:08:40|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:32:32|2026-09-27T17:32:42|2026-09-27T17:41:22
+7567464|rp_f27q_norm|ascend|nextgen|COMPLETED|00:00:15|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:32:56|2026-09-27T17:33:12|2026-09-27T17:33:27
+7567468|rp_k27_final|ascend|nextgen|COMPLETED|00:02:58|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:33:17|2026-09-27T17:33:45|2026-09-27T17:36:43
+7567497|rp_k27v_cbuild|ascend|nextgen|COMPLETED|00:02:45|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:38:18|2026-09-27T17:38:49|2026-09-27T17:41:34
+7567500|rp_f27c_time|ascend|nextgen|COMPLETED|00:10:27|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:38:59|2026-09-27T17:39:20|2026-09-27T17:49:47
+7567501|rp_k27v_A|ascend|nextgen|COMPLETED|00:06:57|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:39:23|2026-09-27T17:39:50|2026-09-27T17:46:47
+7567503|rp_k27v_B|ascend|nextgen|COMPLETED|00:03:13|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:39:54|2026-09-27T17:40:20|2026-09-27T17:43:33
+7567504|rp_k27v_C|ascend|nextgen|COMPLETED|00:02:21|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:40:17|2026-09-27T17:41:52|2026-09-27T17:44:13
+7567506|rp_k27v_D|ascend|nextgen|COMPLETED|00:06:08|billing=120,cpu=120,gres/bind:apps=0,gres/bind:apps_src=0,gres/gpfs:ess=0,gres/gpfs:scratch=0,gres/gpu:a100=2,gres/gpu=2,gres/nsight=0,gres/overlay:apps=0,gres/overlay:apps_src=0,gres/pfsdir:scratch=0,gres/pfsdir=0,gres/vis=0,mem=483240M,node=1|2026-09-27T17:40:33|2026-09-27T17:40:50|2026-09-27T17:46:58
+7567510|rp_k271_mb|ascend|nextgen|COMPLETED|00:02:56|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:41:11|2026-09-27T17:41:22|2026-09-27T17:44:18
+7567511|rp_k271_mb|ascend|nextgen|COMPLETED|00:03:13|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:41:11|2026-09-27T17:41:22|2026-09-27T17:44:35
+7567512|rp_k271_mb|ascend|nextgen|COMPLETED|00:02:49|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:41:11|2026-09-27T17:41:22|2026-09-27T17:44:11
+7567514|rp_k271_mgate|ascend|nextgen|COMPLETED|00:02:40|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:41:42|2026-09-27T17:44:25|2026-09-27T17:47:05
+7567515|rp_k271_mread|ascend|nextgen|COMPLETED|00:05:53|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:41:42|2026-09-27T17:44:55|2026-09-27T17:50:48
+7567516|rp_k271_mread|ascend|nextgen|COMPLETED|00:04:43|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:41:42|2026-09-27T17:44:25|2026-09-27T17:49:08
+7567559|rp_f27q_p2a|ascend|nextgen|COMPLETED|00:02:21|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:43:56|2026-09-27T17:44:25|2026-09-27T17:46:46
+7567560|rp_f27q_p2b|ascend|nextgen|COMPLETED|00:02:19|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:43:56|2026-09-27T17:44:25|2026-09-27T17:46:44
+7567576|rp_f27q_time|ascend|nextgen|COMPLETED|00:01:22|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:47:09|2026-09-27T17:47:27|2026-09-27T17:48:49
+7567578|rp_f27a_ood10|ascend|debug-nextgen|COMPLETED|00:00:36|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:47:27|2026-09-27T17:47:27|2026-09-27T17:48:03
+7567583|rp_k27_final|ascend|nextgen|COMPLETED|00:01:29|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:48:29|2026-09-27T17:48:33|2026-09-27T17:50:02
+7567588|rp_f27a_p10f100|ascend|nextgen|COMPLETED|00:01:31|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:48:53|2026-09-27T17:49:03|2026-09-27T17:50:34
+7567589|rp_f27a_p10t14|ascend|nextgen|COMPLETED|00:00:35|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:48:53|2026-09-27T17:49:03|2026-09-27T17:49:38
+7567590|rp_f27a_p10f129|ascend|nextgen|COMPLETED|00:02:18|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:48:53|2026-09-27T17:49:03|2026-09-27T17:51:21
+7567591|rp_f27a_p10simonly|ascend|nextgen|COMPLETED|00:01:28|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:48:53|2026-09-27T17:49:03|2026-09-27T17:50:31
+7567592|rp_f27a_p10b2d|ascend|nextgen|COMPLETED|00:02:28|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:48:53|2026-09-27T17:49:03|2026-09-27T17:51:31
+7567593|rp_f27a_p10b2c|ascend|nextgen|COMPLETED|00:02:33|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:48:53|2026-09-27T17:49:03|2026-09-27T17:51:36
+7567602|rp_k27v_E|ascend|nextgen|COMPLETED|00:04:28|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:50:58|2026-09-27T17:51:07|2026-09-27T17:55:35
+7567603|rp_k27v_E|ascend|nextgen|COMPLETED|00:05:26|billing=120,cpu=120,gres/bind:apps=0,gres/bind:apps_src=0,gres/gpfs:ess=0,gres/gpfs:scratch=0,gres/gpu:a100=2,gres/gpu=2,gres/nsight=0,gres/overlay:apps=0,gres/overlay:apps_src=0,gres/pfsdir:scratch=0,gres/pfsdir=0,gres/vis=0,mem=483240M,node=1|2026-09-27T17:50:58|2026-09-27T17:51:07|2026-09-27T17:56:33
+7567605|rp_k271_mb|ascend|nextgen|COMPLETED|00:00:53|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:51:06|2026-09-27T17:51:07|2026-09-27T17:52:00
+7567606|rp_k271_mgate|ascend|nextgen|COMPLETED|00:01:22|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:51:06|2026-09-27T17:52:08|2026-09-27T17:53:30
+7567801|rp_k27v_load|ascend|nextgen|COMPLETED|00:00:00|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:57:52|2026-09-27T17:58:22|2026-09-27T17:58:22
+7567820|rp_k27v_load|ascend|nextgen|COMPLETED|00:01:00|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T17:58:40|2026-09-27T17:58:52|2026-09-27T17:59:52
+7567852|rp_f27q_fin|ascend|nextgen|COMPLETED|00:03:52|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T18:00:28|2026-09-27T18:00:48|2026-09-27T18:04:40
+7568175|rp_f27q_k1|ascend|nextgen|COMPLETED|00:03:30|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T18:35:20|2026-09-27T18:35:31|2026-09-27T18:39:01
+7568176|rp_f27q_k2|ascend|nextgen|COMPLETED|00:01:41|billing=26,cpu=26,gres/gpu:a100=1,gres/gpu=1,mem=100G,node=1|2026-09-27T18:35:20|2026-09-27T18:35:31|2026-09-27T18:37:12
+7568177|rp_f27q_k3|ascend|nextgen|COMPLETED|00:01:44|billing=26,cpu=26,gres/gpu:a100=1,gres/gpu=1,mem=100G,node=1|2026-09-27T18:35:20|2026-09-27T18:35:31|2026-09-27T18:37:15
+7568178|rp_f27q_k4|ascend|nextgen|COMPLETED|00:01:07|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T18:35:20|2026-09-27T18:35:31|2026-09-27T18:36:38
+7568186|rp_f27c_mb|ascend|nextgen|COMPLETED|00:12:36|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T18:35:52|2026-09-27T18:36:01|2026-09-27T18:48:37
+7568187|rp_f27c_mb|ascend|nextgen|CANCELLED by 41376|00:00:00||2026-09-27T18:36:10|None|2026-09-27T18:36:23
+7568188|rp_f27c_mb|ascend|nextgen|COMPLETED|00:02:13|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T18:36:23|2026-09-27T18:36:31|2026-09-27T18:38:44
+7568191|rp_f27q_k5|ascend|nextgen|COMPLETED|00:01:30|billing=26,cpu=26,gres/gpu:a100=1,gres/gpu=1,mem=100G,node=1|2026-09-27T18:36:50|2026-09-27T18:37:02|2026-09-27T18:38:32
+7568212|rp_f27c_mr|ascend|nextgen|COMPLETED|00:13:13|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T18:42:40|2026-09-27T18:43:07|2026-09-27T18:56:20
+7568213|rp_f27c_mr|ascend|nextgen|COMPLETED|00:08:04|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T18:42:46|2026-09-27T18:43:07|2026-09-27T18:51:11
+7568361|rp_f27c_time|ascend|nextgen|COMPLETED|00:06:14|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T18:48:51|2026-09-27T18:49:18|2026-09-27T18:55:32
+7568364|rp_f27q_m1|ascend|nextgen|COMPLETED|00:02:25|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T18:49:09|2026-09-27T18:49:18|2026-09-27T18:51:43
+7568365|rp_f27q_m2|ascend|nextgen|COMPLETED|00:01:47|billing=26,cpu=26,gres/gpu:a100=1,gres/gpu=1,mem=100G,node=1|2026-09-27T18:49:09|2026-09-27T18:49:18|2026-09-27T18:51:05
+7568366|rp_f27q_m3|ascend|nextgen|COMPLETED|00:03:16|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T18:49:09|2026-09-27T18:49:18|2026-09-27T18:52:34
+7568398|rp_f27c_mr|ascend|nextgen|COMPLETED|00:09:09|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T18:56:37|2026-09-27T18:56:58|2026-09-27T19:06:07
+7568399|rp_f27c_mr|ascend|nextgen|COMPLETED|00:09:07|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T18:56:37|2026-09-27T18:56:58|2026-09-27T19:06:05
+7568407|rp_f27m_ood|ascend|debug-nextgen|COMPLETED|00:09:34|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T18:57:40|2026-09-27T18:57:40|2026-09-27T19:07:14
+7569053|rp_w27_verify|ascend|nextgen|COMPLETED|00:01:26|billing=12,cpu=12,gres/gpu:a100=1,gres/gpu=1,mem=48324M,node=1|2026-09-27T21:54:36|2026-09-27T21:54:40|2026-09-27T21:56:06

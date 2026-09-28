@@ -35,6 +35,7 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, "submit_fno"))
+import opoint  # noqa: E402
 DATA = "/users/PAS1187/qwu/RealPDE/train_real/train_real"
 T_IN = T_OUT = 20
 INTERVAL = 20
@@ -89,8 +90,14 @@ def main():
                          "0.001 wfinal on the interior control and differ by 1.42 on relo "
                          "(round 13), so an ensemble's real job out of distribution is to "
                          "average that draw away, and this measures whether it does.")
-    ap.add_argument("--alpha", type=float, default=0.90)
-    ap.add_argument("--inflate", type=float, default=1.39)
+    # 2026-09-28: default from opoint (was 0.90); the band is still this script's own fit.
+    ap.add_argument("--alpha", type=float, default=opoint.ALPHA,
+                    help=f"compose alpha (default {opoint.ALPHA}, opoint.ALPHA)")
+    ap.add_argument("--joint-gain", action=argparse.BooleanOptionalAction, default=opoint.JOINT_GAIN,
+                    help="compose with _fno.JOINT_GAIN (sets the module flag predict_fno reads; default "
+                         f"{opoint.JOINT_GAIN}, opoint.JOINT_GAIN)")
+    ap.add_argument("--inflate", type=float, default=opoint.INFLATE,
+                    help=f"error stretch the band is fitted at (default {opoint.INFLATE}, opoint.INFLATE)")
     ap.add_argument("--ms", type=float, default=1.02)
     a = ap.parse_args()
     if a.build:
@@ -107,6 +114,7 @@ def main():
     from eval_v9 import infer
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
+    _fno.JOINT_GAIN = bool(a.joint_gain)
     d = {t: np.load(os.path.join(HERE, f"val_{t}.npz")) for t in SETS}
     t_score = sc.score_time(a.ms / 1000.0)
     f = np.float32(a.inflate)

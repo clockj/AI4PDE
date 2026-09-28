@@ -28,6 +28,7 @@ import sys
 import numpy as np
 
 import final_v9
+import opoint
 import sps9
 from sps9 import optimal_band, prep, sc, sps_score
 
@@ -38,8 +39,16 @@ sys.path.insert(0, os.path.join(HERE, "submit_fno"))
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt", nargs="+", required=True)
-    ap.add_argument("--alpha", type=float, default=0.75)
-    ap.add_argument("--inflate", type=float, default=1.5)
+    # 2026-09-28: defaults from opoint (were --alpha 0.75 --inflate 1.5). The band is still this
+    # script's own symmetric p = 0 fit about the prediction, NOT the shipped y0-centred SIGBLEND band.
+    ap.add_argument("--alpha", type=float, default=opoint.ALPHA,
+                    help=f"compose alpha (default {opoint.ALPHA}, opoint.ALPHA)")
+    ap.add_argument("--inflate", type=float, default=opoint.INFLATE,
+                    help=f"error stretch the per-checkpoint band is fitted at (default {opoint.INFLATE}, "
+                         "opoint.INFLATE)")
+    ap.add_argument("--joint-gain", action=argparse.BooleanOptionalAction, default=opoint.JOINT_GAIN,
+                    help="compose with _fno.JOINT_GAIN (sets the module flag predict_fno reads; default "
+                         f"{opoint.JOINT_GAIN}, opoint.JOINT_GAIN)")
     ap.add_argument("--ms", type=float, default=1.32,
                    help="end-to-end ms/window for a single-member package; identical across "
                         "rows, so it shifts the table rather than reordering it")
@@ -57,6 +66,7 @@ def main() -> None:
     from eval_v9 import infer
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
+    _fno.JOINT_GAIN = bool(args.joint_gain)
     ds = np.load(os.path.join(HERE, "val_seen.npz"))
     du = np.load(os.path.join(HERE, "val_unseen.npz"))
     t_score = sc.score_time(args.ms / 1000.0)

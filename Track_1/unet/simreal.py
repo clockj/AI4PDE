@@ -93,7 +93,14 @@ def _stats(d: np.ndarray) -> tuple[float, float, np.ndarray, np.ndarray, np.ndar
     return float(d[..., 0].mean()), float(np.linalg.norm(sd)), m, d.mean(0), sd
 
 
-CACHE = "/fs/scratch/PAS1187/qwu/tmp/realpde/work"
+# CACHE is a DEFAULT ARGUMENT of load_sim_mapped below, so it binds at import time: setting
+# simreal.CACHE from a caller after the import does NOT change it. A gate job cannot see
+# /fs/scratch, so the value has to come from the environment at import, not afterwards.
+# Added 2026-09-23 after smoke2 (job 54522052) failed on my own assertion: I had copied an
+# `RPDE_SIMCACHE` override idiom from another agent's run.sh without checking that THIS copy of
+# simreal.py reads it. It does not -- the path was a bare constant. The assertion was right and
+# the thing it asserted did not exist.
+CACHE = os.environ.get("RPDE_SIMCACHE", "/fs/scratch/PAS1187/qwu/tmp/realpde/work")
 
 
 def load_sim_mapped(sim_dir: str, real_dir: str, exclude: list[str] | None = None,

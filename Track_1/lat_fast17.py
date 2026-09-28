@@ -40,7 +40,9 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, "submit_fno"))
 
 import final_v9                                                        # noqa: E402
-from sps9 import prep, sc, sps_score                                   # noqa: E402
+import opoint                                                          # noqa: E402
+import sps9                                                            # noqa: E402
+from sps9 import sc                                                    # noqa: E402
 
 R_4060 = 1.850
 BOARD_C, BOARD_INV, BOARD_LOC = 2.616, 0.435, 0.803
@@ -106,8 +108,8 @@ def subscores(P, Y, lo, hi, tms):
     r = float(np.mean(sc.rel_l2_per_sample(P, Y, 2)))
     k = float(np.mean(sc.tke_rel_l2_per_sample(P, Y, 2)))
     mv = float(sc.mvpe_rel_l2(P, Y))
-    A, a, scored, n = prep(P, Y)
-    s = sps_score(A, a, scored, n, (hi - P)[..., :2])
+    # 2026-09-28: kit per-element rule on the given interval (band_io's, not necessarily P -/+ half)
+    s = sps9.sps_interval(sps9.sample_weights(P, Y), Y, lo, hi)[0]
     five = [sc.score_error(r), sc.score_error(k), sc.score_error(mv), sc.score_time(tms / 1e3), s]
     return (r, k, mv), five
 
@@ -115,8 +117,15 @@ def subscores(P, Y, lo, hi, tms):
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--sets", nargs="+", required=True, help="NAME=a.pth,b.pth ...")
-    ap.add_argument("--band", required=True)
-    ap.add_argument("--alpha", type=float, default=0.60)
+    ap.add_argument("--band", required=True,
+                    help="band npz, read through band_io.load_band (a SIGBLEND npz needs its sidecar); "
+                         f"the package of record's is {opoint.FINAL_BAND}")
+    # 2026-09-28: default from opoint (was 0.60).
+    ap.add_argument("--alpha", type=float, default=opoint.ALPHA,
+                    help=f"compose alpha (default {opoint.ALPHA}, opoint.ALPHA)")
+    ap.add_argument("--joint-gain", action=argparse.BooleanOptionalAction, default=None,
+                    help="compose with _fno.JOINT_GAIN (same cost either way). Neither flag (default) = "
+                         f"opoint.JOINT_GAIN ({opoint.JOINT_GAIN}) when --band is centred on y0, else off")
     ap.add_argument("--rep", type=int, default=5)
     ap.add_argument("--variants", nargs="+", default=list(VARIANTS))
     ap.add_argument("--batch", type=int, default=0, help="0 = measure it, per variant")
@@ -125,9 +134,10 @@ def main() -> None:
     args = ap.parse_args()
 
     import _fno
-    z = np.load(args.band)
-    band, ref, p = (z["base"].astype(np.float32), z["sigma_ref"].astype(np.float32),
-                    float(z["p"]))
+    import band_io
+    bd = band_io.load_band(args.band)
+    band, ref, p = bd.base, bd.sigma_ref, bd.p
+    _fno.JOINT_GAIN = band_io.joint_gain_for(bd, args.joint_gain)
     du = np.load(os.path.join(HERE, "val_unseen.npz"))
     x, Y = du["x"].astype(np.float32), du["y"]
     rng = np.random.default_rng(17)
@@ -136,6 +146,7 @@ def main() -> None:
     RAG = 333                       # no candidate batch size divides it -> a partial tail
     perm_r = rng.permutation(RAG)
     inv_r = np.argsort(perm_r)
+    print(f"band {bd.describe()}  joint_gain {_fno.JOINT_GAIN}", flush=True)
     print(f"windows={len(x)} band={os.path.basename(args.band)} alpha={args.alpha} p={p} "
           f"ragged_n={RAG}", flush=True)
 
@@ -184,6 +195,14 @@ def main() -> None:
             if base_board is None:
                 base_board = boardms
             scale = float(np.abs(reference).max())
+            if bd.centre_alpha is not None or bd.kind != "static":
+                # The timed replica is the pre-09-21 host path (pred -/+ base*ratio^p). Score the
+                # package's interval instead (y0 centre, SIGBLEND factor), from one UNTIMED pass.
+                c0 = np.zeros((len(x), 20, 32, 64, 3), dtype=np.float32)
+                s0 = np.empty((len(x), 1, 32, 64, 2), dtype=np.float32)
+                _fno.predict_fno(models, x, "cuda", alpha=args.alpha, batch=b, sigma_out=s0,
+                                 centre_out=c0, pad_batch=pad, amp=amp)
+                lo, hi = band_io.interval(bd, c0, P, s0, alpha=args.alpha, joint_gain=_fno.JOINT_GAIN)
             (r, k, mv), five = subscores(P, Y, lo, hi, loc)
             print(f"{v:<12} {b:>4} {a100:>7.3f} {loc:>7.3f} {boardms:>6.2f} "
                   f"{(boardms - base_board) * FINAL_PER_BOARD_MS:>+6.3f} "

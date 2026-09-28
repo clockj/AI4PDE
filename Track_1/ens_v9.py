@@ -30,22 +30,30 @@ import sys
 import numpy as np
 
 import final_v9
+import opoint
 import sps9
 from sps9 import optimal_band, prep, sc, sps_score
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "submit_fno"))
 
-F_BOARD = 1.39
+F_BOARD = opoint.INFLATE             # 1.39
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--sets", nargs="+", required=True,
                     help="comma-separated checkpoint lists, one per ensemble")
-    ap.add_argument("--alpha", type=float, default=0.75)
+    # 2026-09-28: --alpha default from opoint (was 0.75). The band is still this script's own p = 0
+    # fit about the prediction, NOT the shipped y0-centred SIGBLEND band.
+    ap.add_argument("--alpha", type=float, default=opoint.ALPHA,
+                    help=f"compose alpha (default {opoint.ALPHA}, opoint.ALPHA)")
+    ap.add_argument("--joint-gain", action=argparse.BooleanOptionalAction, default=opoint.JOINT_GAIN,
+                    help="compose with _fno.JOINT_GAIN (sets the module flag predict_fno reads; default "
+                         f"{opoint.JOINT_GAIN}, opoint.JOINT_GAIN)")
     ap.add_argument("--aoa", type=int, nargs="+", default=[15, 20])
-    ap.add_argument("--f", type=float, default=F_BOARD)
+    ap.add_argument("--f", type=float, default=F_BOARD,
+                    help=f"board stretch of errors and band fit (default {F_BOARD}, opoint.INFLATE)")
     ap.add_argument("--time-score", type=float, default=90.5066,
                     help="board time_score to assume for the `final` projection. The default "
                          "is round 8's, i.e. an 8-member package; subtract ~0.42 board ms per "
@@ -57,6 +65,7 @@ def main() -> None:
     from eval_v9 import infer
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
+    _fno.JOINT_GAIN = bool(args.joint_gain)
     ds = np.load(os.path.join(HERE, "val_seen.npz"))
     du = np.load(os.path.join(HERE, "val_unseen.npz"))
     hi_s = np.isin([int(str(i).split(":")[0].split("_")[1]) for i in ds["ids"]], args.aoa)

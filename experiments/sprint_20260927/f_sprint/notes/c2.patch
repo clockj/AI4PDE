@@ -1,0 +1,84 @@
+--- a/Track_2/submit/submission.py	2026-09-27 17:03:25.996298000 -0400
++++ b/Track_2/submit/submission.py	2026-09-27 17:04:03.692383000 -0400
+@@ -216,4 +216,12 @@
+                            # memory traffic and V100 fp32 rate); False: float64, bit-matching his numpy reference
+ _SIGMA_G = 0.0563870259
++D1C_EB = False             # D1c-EB (design C phase 2, 09-27): True = the D1c shrink becomes max(n/(n+D1C_N0), tau2/(tau2+se2)) once n >= 2, an
++                           # empirical-Bayes factor PER CHANNEL pooled over all pixels: raw = dsum/n (per pixel), b2 = mean_px(raw^2),
++                           # s2 = sum_k(e_k - raw)^2 / (n - 1) (e_k = window k's time-mean error, per pixel), se2 = mean_px(s2) / n, tau2 = max(b2 - se2, 0).
++                           # A trajectory whose persistent bias stands out of its own window-to-window scatter is corrected at nearly full strength
++                           # within a few windows; one whose bias does not keeps D1c's n/(n+D1C_N0). No constant. Needs D1C_N0 > 0. False = D1c as before.
++D1C_EB_N0 = 0.0            # damping of the empirical-Bayes factor in its first windows: factor *= n/(n+D1C_EB_N0). 0.0 = none.
++D1C_LEAD_N0 = 0.0          # D1c lead-time profile (design C phase 2): > 0 = on. The shift becomes a(t) * b(pixel): a(t) = <bt, raw>_px / <raw, raw>_px per
++                           # channel (bt = per-frame mean error over past windows), shrunk to 1 by n/(n+D1C_LEAD_N0), clipped to [0, 3]. 0.0 = off.
+ 
+ 
+@@ -408,5 +416,9 @@
+             self.dsum = torch.zeros((1, 1, H, W, 2), dtype=torch.float64, device=device)
+             self.dn = torch.zeros((), dtype=torch.float64, device=device)
+-            self.gD = torch.zeros((1, 1, H, W, 2), dtype=torch.float32, device=device)
++            self.gD = torch.zeros((1, T_OUT if D1C_LEAD_N0 else 1, H, W, 2), dtype=torch.float32, device=device)
++        self.d1x = self.d1c and (bool(D1C_EB) or bool(D1C_LEAD_N0))
++        if self.d1x:
++            self.dsq = torch.zeros((1, 1, H, W, 2), dtype=torch.float64, device=device)       # sum of squared time-mean errors
++            self.dsumf = torch.zeros((1, T_OUT, H, W, 2), dtype=torch.float64, device=device)  # per-frame error sum (lead profile)
+         # sigma_EMA state: vS / vW = forgetting sums of revealed-window variances and weights, vn = revealed windows, gEma = vS / vW.
+         self.sigema = bool(SIGEMA) and self.r1 is not None
+@@ -486,8 +498,29 @@
+         if self.d1c:
+             # Score the PREVIOUS window's uncorrected C against the target revealed this step (gated by gflag, no host branch).
+-            e = (self.gC0 - (self.gyp[..., :2] * self.Ad + self.Bd)).mean(1, keepdim=True)
++            ef = self.gC0 - (self.gyp[..., :2] * self.Ad + self.Bd)
++            e = ef.mean(1, keepdim=True)
+             self.dsum.add_(e.double() * self.gflag)
+             self.dn.add_(self.gflag)
+-            self.gD.copy_(-(self.dsum / (self.dn + D1C_N0)))
++            if self.d1x:
++                n_ = self.dn; nn = torch.clamp(n_, min=1.0)
++                raw = self.dsum / nn                                  # n = 0: exactly 0, so every product below is 0
++                shr = n_ / (n_ + D1C_N0)
++                if D1C_EB:
++                    self.dsq.add_(e.double() * e.double() * self.gflag)
++                    ss = torch.clamp(self.dsq - nn * raw * raw, min=0.0)
++                    se2 = (ss / torch.clamp(nn - 1.0, min=1.0) / nn).mean((2, 3), keepdim=True)
++                    tau2 = torch.clamp((raw * raw).mean((2, 3), keepdim=True) - se2, min=0.0)
++                    eb = torch.where(n_ > 1.5, tau2 / (tau2 + se2 + 1e-30), torch.zeros_like(tau2))      # n < 2: no variance estimate, EB off
++                    if D1C_EB_N0:
++                        eb = eb * (n_ / (n_ + D1C_EB_N0))
++                    shr = torch.maximum(eb, shr)
++                b_ = raw * shr
++                if D1C_LEAD_N0:
++                    self.dsumf.add_(ef.double() * self.gflag)
++                    a_ = ((self.dsumf / nn) * raw).sum((2, 3), keepdim=True) / torch.clamp((raw * raw).sum((2, 3), keepdim=True), min=1e-30)
++                    b_ = b_ * torch.clamp(1.0 + (a_ - 1.0) * (n_ / (n_ + D1C_LEAD_N0)), 0.0, 3.0)
++                self.gD.copy_((-b_).to(torch.float32))
++            else:
++                self.gD.copy_(-(self.dsum / (self.dn + D1C_N0)))
+         if self.sigema:
+             # The target revealed this step belongs to the PREVIOUS window: fold its per-pixel variance in (gated, no host branch).
+@@ -693,5 +726,7 @@
+         self._reset_c()
+ 
+-    def _reset_c(self) -> None:          # VARCAL / FAMW per-trajectory state (design C); no-op when both are off
++    def _reset_c(self) -> None:          # VARCAL / FAMW / D1c-EB per-trajectory state (design C); no-op when all are off
++        if self.d1x:
++            self.dsq.zero_(); self.dsumf.zero_()
+         if self.vc:
+             self.cT.zero_(); self.cP.zero_(); self.cn.zero_(); self.gG.fill_(1.0)
+@@ -865,5 +900,5 @@
+             gpu = torch.cuda.get_device_name(0) if dev.startswith("cuda") else "cpu"
+             print(f"[rpde-t2] load: gpu {gpu!r} cpus {os.cpu_count()} affinity {aff} torch {torch.__version__} "
+-                  f"cuda {torch.version.cuda} amp {AMP_ACTIVE} par_streams {PAR_STREAMS} r1 {R1} r1_asym {R1_ASYM} d1c_n0 {D1C_N0} vc_n0 {VC_N0} fw_n0 {FW_N0} sigema {SIGEMA} b {SIGEMA_BETA} n0 {SIGEMA_N0} alpha {ALPHA} "
++                  f"cuda {torch.version.cuda} amp {AMP_ACTIVE} par_streams {PAR_STREAMS} r1 {R1} r1_asym {R1_ASYM} d1c_n0 {D1C_N0} d1c_eb {D1C_EB} d1c_eb_n0 {D1C_EB_N0} d1c_lead_n0 {D1C_LEAD_N0} vc_n0 {VC_N0} fw_n0 {FW_N0} sigema {SIGEMA} b {SIGEMA_BETA} n0 {SIGEMA_N0} alpha {ALPHA} "
+                   f"graph {'CAPTURED' if m.graph is not None else 'NONE'} graph_worst {GRAPH_WORST} graph_tol {GRAPH_TOL} "
+                   f"graph_err {GRAPH_ERR} fallback_fp {FALLBACK_FP} stacked_out {STACKED_OUT} numpy_out {NUMPY_OUT} members {len(ckpts)}", flush=True)
+--- a/Track_1/submit_fno/build_round13.sh	2026-09-27 17:03:26.028537000 -0400
++++ b/Track_1/submit_fno/build_round13.sh	2026-09-27 17:04:03.713331000 -0400
+@@ -134,4 +134,7 @@
+ [ -n "${RPDE_SHIP_SIGEMA_N0:-}" ] && sed -i "s/^SIGEMA_N0 = .*/SIGEMA_N0 = $RPDE_SHIP_SIGEMA_N0/" Track_2/submit/submission.py
+ [ -n "${RPDE_SHIP_SIGEMA_DDOF:-}" ] && sed -i "s/^SIGEMA_DDOF = [0-9]*/SIGEMA_DDOF = $RPDE_SHIP_SIGEMA_DDOF/" Track_2/submit/submission.py
++[ -n "${RPDE_SHIP_D1C_EB:-}" ] && sed -i "s/^D1C_EB = [^ ]*/D1C_EB = $RPDE_SHIP_D1C_EB/" Track_2/submit/submission.py
++[ -n "${RPDE_SHIP_D1C_EB_N0:-}" ] && sed -i "s/^D1C_EB_N0 = [^ ]*/D1C_EB_N0 = $RPDE_SHIP_D1C_EB_N0/" Track_2/submit/submission.py
++[ -n "${RPDE_SHIP_D1C_LEAD_N0:-}" ] && sed -i "s/^D1C_LEAD_N0 = [^ ]*/D1C_LEAD_N0 = $RPDE_SHIP_D1C_LEAD_N0/" Track_2/submit/submission.py
+ [ -n "${RPDE_SHIP_VC_N0:-}" ] && sed -i "s/^VC_N0 = [^ ]*/VC_N0 = $RPDE_SHIP_VC_N0/" Track_2/submit/submission.py
+ [ -n "${RPDE_SHIP_FW_N0:-}" ] && sed -i "s/^FW_N0 = [^ ]*/FW_N0 = $RPDE_SHIP_FW_N0/" Track_2/submit/submission.py

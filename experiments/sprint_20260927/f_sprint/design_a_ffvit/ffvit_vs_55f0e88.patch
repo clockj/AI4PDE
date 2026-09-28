@@ -1,0 +1,364 @@
+diff --git a/Track_1/submit_fno/_fno.py b/Track_1/submit_fno/_fno.py
+index 39cae8b..70f553c 100644
+--- a/Track_1/submit_fno/_fno.py
++++ b/Track_1/submit_fno/_fno.py
+@@ -2055,6 +2055,203 @@ class StackedFFNO(nn.Module):
+         return field, logstd
+ 
+ 
++# ---------------------------------------------------------------------------------------------
++# `ffvit` / `ffvit0` (2026-09-27, final-day design A): the cross-stitched F-FNO x ViT hybrid.
++FFVIT_ARCHS = ("ffvit", "ffvit0")
++# Fuse K FFViT2d members into one StackedFFViT invocation (EA 09-27). False = each hybrid is its own invocation.
++FUSE_FFVIT = True
++
++
++class FFViT2d(nn.Module):
++    """Copy of `Track_1/unet/models_alt.py:FFViT2d` built from the VENDORED FFNO2d (`f`) and ViT2d
++    (`v`): the two streams run layer for layer and trade features after the layers in LINKS
++    (`f2v.<i>`: LayerNorm2d -> Conv 4x4/4 -> GELU -> Conv 1x1, added to the tokens; `v2f.<i>`:
++    LayerNorm -> Linear -> GELU -> Linear, unpatchified and added to the map). Output is
++    s*field_f + (1-s)*field_v, s = sigmoid(mix), and the log of the same mixture of the two sigmas.
++    Dropout / drop-path are training-only and omitted. `ffvit0` has no links (the control)."""
++
++    VIT_DIM, VIT_HEADS = 384, 6
++    LINKS = (1, 3, 5)
++
++    def __init__(self, width: int = 40, modes_y: int = 16, modes_x: int = 32, n_layers: int = 8,
++                 var_head: bool = True, links: bool = True):
++        super().__init__()
++        self.f = FFNO2d(width, modes_y, modes_x, n_layers, var_head)
++        self.v = ViT2d(self.VIT_DIM, n_layers, var_head, 0, heads=self.VIT_HEADS)
++        self.width = width
++        self.mix = nn.Parameter(torch.zeros(()))
++        d, pp = self.VIT_DIM, self.v.patch
++        self.f2v, self.v2f = nn.ModuleDict(), nn.ModuleDict()
++        for i in (self.LINKS if links else ()):
++            if i >= n_layers - 1:
++                continue
++            self.f2v[str(i)] = nn.Sequential(_LayerNorm2d(width), nn.Conv2d(width, d, pp, stride=pp),
++                                             nn.GELU(), nn.Conv2d(d, d, 1))
++            self.v2f[str(i)] = nn.Sequential(nn.LayerNorm(d), nn.Linear(d, d), nn.GELU(),
++                                             nn.Linear(d, width * pp * pp))
++
++    @property
++    def grid(self):
++        return self.f.grid
++
++    def set_spectral_path(self, path: str = "fft"):
++        self.f.set_spectral_path(path)
++        return self
++
++    def forward(self, prev: torch.Tensor, detach_var: bool = False):
++        f, v = self.f, self.v
++        b, pp, wd = len(prev), v.patch, self.width
++        x = torch.cat([prev, f.grid.expand(b, -1, -1, -1)], 1)
++        h = _F.pad(f.lift(x), (0, f.PAD[1], 0, f.PAD[0]))
++        t = v.embed(x).flatten(2).transpose(1, 2) + v.pos
++        for i, (layer, blk) in enumerate(zip(f.layers, v.blocks)):
++            h = layer(h)
++            q = blk["n1"](t)
++            t = t + blk["attn"](q, q, q, need_weights=False)[0]
++            t = t + blk["mlp"](blk["n2"](t))
++            k = str(i)
++            if k in self.f2v:
++                dt = self.f2v[k](h[..., :H, :W]).flatten(2).transpose(1, 2)
++                dh = (self.v2f[k](t).reshape(b, v.gh, v.gw, wd, pp, pp)
++                      .permute(0, 3, 1, 4, 2, 5).reshape(b, wd, H, W))
++                t = t + dt
++                h = h + _F.pad(dh, (0, f.PAD[1], 0, f.PAD[0]))
++        hf = f.norm_out(h[..., :H, :W])
++        tv = v.proj(v.norm_out(t))
++        hv = (tv.reshape(b, v.gh, v.gw, v.wid, pp, pp)
++              .permute(0, 3, 1, 4, 2, 5).reshape(b, v.wid, H, W))
++        s = torch.sigmoid(self.mix)
++        field = s * f.head_field(hf) + (1.0 - s) * v.head_field(hv)
++        logstd = None
++        if f.head_logstd is not None:
++            lf = f.head_logstd(hf.detach() if detach_var else hf).float()
++            lv = v.head_logstd(hv.detach() if detach_var else hv).float()
++            logstd = torch.logaddexp(lf + _F.logsigmoid(self.mix), lv + _F.logsigmoid(-self.mix))
++        return field, logstd
++
++
++class StackedFFViT(nn.Module):
++    """K FFViT2d hybrids (same structure) in ONE invocation (final-day design A, executor EA).
++
++    The F-FNO streams run as a StackedFFNO, the ViT streams as a StackedViT (its per-block math is
++    reproduced inline, unchanged), and the cross-stitch links fold the member axis the same way:
++    LayerNorm once + per-member affine, the 4x4/4 patch conv and the 1x1 conv as grouped convs over
++    member-major channels, the Linears as stacked einsums. Every member's field and sigma are formed
++    exactly as FFViT2d forms them; the group returns the member mean of the field and
++    log(mean_k exp(clamp(logstd_k, -8, 2))) -- the StackedFFNO contract -- with n_members = K."""
++
++    def __init__(self, members):
++        super().__init__()
++        first = members[0]
++        self.n_members = k = len(members)
++        sd0 = first.state_dict()
++        for m in members[1:]:
++            sd = m.state_dict()
++            assert sd.keys() == sd0.keys(), "state_dict keys differ"
++            for key, v in sd.items():
++                assert v.shape == sd0[key].shape, f"{key} shape mismatch"
++        self.sf = StackedFFNO([m.f for m in members])
++        self.sv = StackedViT([m.v for m in members]).to(first.mix.device)
++        self.width, self.pp = first.width, first.v.patch
++        self.gh, self.gw = first.v.gh, first.v.gw
++        self.fpad = tuple(first.f.PAD)
++        self.register_buffer("grid", first.f.grid.detach().clone(), persistent=False)
++        self.links = [int(i) for i in first.f2v.keys()]
++        with torch.no_grad():
++            self.register_buffer("mix", torch.stack([m.mix.detach() for m in members]), persistent=False)
++            self.lk = nn.ModuleDict()
++            for i in self.links:
++                key = str(i)
++                f2v = [m.f2v[key] for m in members]
++                v2f = [m.v2f[key] for m in members]
++                mod = nn.Module()
++                mod.fln = _StkLN([s[0] for s in f2v])                    # (K,B,H,W,40)
++                mod.c1 = _StkConv([s[1] for s in f2v])                   # grouped 4x4/4
++                mod.c2 = _StkConv([s[3] for s in f2v])                   # grouped 1x1
++                mod.vln_eps = float(v2f[0][0].eps)
++                mod.register_buffer("vln_w", torch.stack([s[0].weight.detach() for s in v2f])[:, None, None]
++                                    .clone(), persistent=False)
++                mod.register_buffer("vln_b", torch.stack([s[0].bias.detach() for s in v2f])[:, None, None]
++                                    .clone(), persistent=False)
++                mod.register_buffer("l1_w", torch.stack([s[1].weight.detach() for s in v2f]).clone(),
++                                    persistent=False)
++                mod.register_buffer("l1_b", torch.stack([s[1].bias.detach() for s in v2f])[:, None, None]
++                                    .clone(), persistent=False)
++                mod.register_buffer("l2_w", torch.stack([s[3].weight.detach() for s in v2f]).clone(),
++                                    persistent=False)
++                mod.register_buffer("l2_b", torch.stack([s[3].bias.detach() for s in v2f])[:, None, None]
++                                    .clone(), persistent=False)
++                self.lk[key] = mod
++        self.self_norm = bool(getattr(first, "self_norm", False))
++
++    def set_spectral_path(self, path: str = "fft"):
++        self.sf.set_spectral_path(path)
++        return self
++
++    def _vblock(self, i, t):
++        sv, dim = self.sv, self.sv.dim
++        k, b, n = t.shape[0], t.shape[1], t.shape[2]
++        hd = dim // sv.heads
++        lnorm = torch.nn.functional.layer_norm
++        q = lnorm(t, (dim,)) * sv.n1_w[i] + sv.n1_b[i]
++        qkv = sv._lin(q, sv.qkv_w[i], sv.qkv_b[i])
++        qkv = qkv.reshape(k * b, n, 3, sv.heads, hd).permute(2, 0, 3, 1, 4)
++        a = torch.nn.functional.scaled_dot_product_attention(qkv[0], qkv[1], qkv[2])
++        a = a.transpose(1, 2).reshape(k, b, n, dim)
++        t = t + sv._lin(a, sv.op_w[i], sv.op_b[i])
++        h = lnorm(t, (dim,)) * sv.n2_w[i] + sv.n2_b[i]
++        h = torch.nn.functional.gelu(sv._lin(h, sv.f1_w[i], sv.f1_b[i]))
++        return t + sv._lin(h, sv.f2_w[i], sv.f2_b[i])
++
++    def forward(self, prev, detach_var: bool = False):
++        sf, sv = self.sf, self.sv
++        b, k, wd, pp = len(prev), self.n_members, self.width, self.pp
++        dim, gh, gw = sv.dim, self.gh, self.gw
++        x = torch.cat([prev, self.grid.expand(b, -1, -1, -1)], 1)
++        h = sf.lift2(_F.gelu(sf.lift0(x)))
++        h = _F.pad(h, (0, self.fpad[1], 0, self.fpad[0]))
++        t = sv.embed(x).reshape(b, k, dim, gh * gw).permute(1, 0, 3, 2)
++        t = (t + sv.pos).contiguous()                                        # (k, b, N, dim)
++        for i in range(sv.depth):
++            h = sf.layers[i](h)
++            t = self._vblock(i, t)
++            key = str(i)
++            if key in self.lk:
++                L = self.lk[key]
++                hc = h[..., :H, :W].reshape(b, k, wd, H, W).permute(1, 0, 3, 4, 2)   # (k,b,H,W,wd)
++                z = L.fln(hc).permute(1, 0, 4, 2, 3).reshape(b, k * wd, H, W)
++                dt = L.c2(_F.gelu(L.c1(z)))                                          # (b, k*dim, gh, gw)
++                dt = dt.reshape(b, k, dim, gh * gw).permute(1, 0, 3, 2)              # (k, b, N, dim)
++                q = torch.nn.functional.layer_norm(t, (dim,), eps=L.vln_eps) * L.vln_w + L.vln_b
++                q = _F.gelu(sv._lin(q, L.l1_w, L.l1_b))
++                q = sv._lin(q, L.l2_w, L.l2_b)                                       # (k, b, N, wd*pp*pp)
++                dh = (q.reshape(k, b, gh, gw, wd, pp, pp)
++                      .permute(1, 0, 4, 2, 5, 3, 6).reshape(b, k * wd, H, W))
++                t = t + dt
++                h = h + _F.pad(dh, (0, self.fpad[1], 0, self.fpad[0]))
++        # F-FNO heads, per member: (k, b, H, W, c)
++        hc = h[..., :H, :W]
++        tf = sf.norm_out(hc.reshape(b, k, wd, H, W).permute(1, 0, 3, 4, 2))
++        ff = sf.hf[1](_F.gelu(sf.hf[0](tf))).float().permute(0, 1, 4, 2, 3)        # (k, b, CH, H, W)
++        # ViT heads, per member
++        tv = torch.nn.functional.layer_norm(t, (dim,)) * sv.no_w + sv.no_b
++        tv = sv._lin(tv, sv.pj_w, sv.pj_b)
++        wid = sv.wid
++        hv = (tv.reshape(k, b, gh, gw, wid, pp, pp)
++              .permute(1, 0, 4, 2, 5, 3, 6).reshape(b, k * wid, H, W))
++        fv = sv.head_field(hv).float().reshape(b, k, CH, H, W).transpose(0, 1)    # (k, b, CH, H, W)
++        s = torch.sigmoid(self.mix).reshape(k, 1, 1, 1, 1)
++        field = (s * ff + (1.0 - s) * fv).mean(0)
++        logstd = None
++        if sf.hl is not None and sv.head_logstd is not None:
++            lf = sf.hl[1](_F.gelu(sf.hl[0](tf))).float().permute(0, 1, 4, 2, 3)    # (k, b, C, H, W)
++            lv = sv.head_logstd(hv).float().reshape(b, k, C, H, W).transpose(0, 1)
++            mx = self.mix.reshape(k, 1, 1, 1, 1)
++            ls = torch.logaddexp(lf + _F.logsigmoid(mx), lv + _F.logsigmoid(-mx))
++            logstd = ls.clamp(-8.0, 2.0).exp().mean(0).log()
++        return field, logstd
++
++
+ def fuse(models):
+     """Group `models` by architecture and fuse each FNO group. Order-preserving by first sight.
+ 
+@@ -2125,6 +2322,9 @@ def fuse(models):
+             # 2026-09-14: K F-FNOs in one invocation (StackedFFNO), on the members' own spectral
+             # path; padding, modes and path are keyed, so only identical structures share a stack.
+             out.append(StackedFFNO(g).eval())
++        elif type(g[0]).__name__ == "FFViT2d" and FUSE_FFVIT:
++            # 2026-09-27 design A: K cross-stitched hybrids in one invocation (StackedFFViT).
++            out.append(StackedFFViT(g).eval())
+         elif not isinstance(g[0], FNO2d) or g[0].head_mean is not None:
+             out.extend(g)
+         else:
+@@ -2318,6 +2518,17 @@ def load_any(path: str, device: str):
+             m.eval()
+             m.self_norm = _self_norm_of(blob)
+             return m
++    if arch in FFVIT_ARCHS:
++        # 2026-09-27 design A: always the vendored class, so instruments and the package score one code path.
++        m = FFViT2d(blob.get("width", 40), blob.get("modes_y", 16), blob.get("modes_x", 32),
++                    blob.get("n_layers", 8), blob.get("var_head", True),
++                    links=(arch == "ffvit")).to(device)
++        m.load_state_dict(blob["model_state_dict"])
++        m.eval()
++        m.self_norm = _self_norm_of(blob)
++        if FFNO_PATH is not None:
++            m.set_spectral_path(FFNO_PATH)
++        return m
+     if arch in FFNO_VARIANTS:
+         # Vendored 2026-09-14 under the Swin contract: `_ffno_member` returns None whenever FFNO_IMPL
+         # resolves to the training definition, and the models_alt branch below runs as before.
+diff --git a/Track_1/unet/models_alt.py b/Track_1/unet/models_alt.py
+index 68a1394..d85057b 100644
+--- a/Track_1/unet/models_alt.py
++++ b/Track_1/unet/models_alt.py
+@@ -602,6 +602,11 @@ def build(arch: str, width: int, var_head: bool, extra_ch: int, modes_y: int = 1
+     if arch == "deeponet":
+         return DeepONetCh(p, trunk_width=width * 2, branch_width=width,
+                           var_head=var_head, extra_ch=extra_ch)
++    if arch in FFVIT_ARCHS:
++        # 2026-09-27 final-day hybrid (design A): F-FNO and ViT streams, cross-stitched. `width`,
++        # modes and `n_layers` are the F-FNO stream's; the ViT stream is ViT2d(384, n_layers, heads 6).
++        return FFViT2d(width, modes_y, modes_x, n_layers, var_head, extra_ch, dropout,
++                       links=(arch == "ffvit"))
+     if arch in WAVE1_ARCHS or arch in PHASE2_ARCHS:
+         # 2026-09-14 wave 1 (the block at the end of this file). Each family is fully specified
+         # by (width, n_layers, modes_y, modes_x) plus class constants, because _fno.load_any's
+@@ -1902,6 +1907,98 @@ class STViT(_GridIn):
+         return field, logstd
+ 
+ 
++# ---------------------------------------------------------------------------------------------
++# 2026-09-27 (final-day sprint, design A): `ffvit` -- ONE network holding the two shipped families
++# as two STREAMS that exchange features. See final0927/notes/design_a.md.
++FFVIT_ARCHS = ("ffvit", "ffvit0")
++
++
++class FFViT2d(nn.Module):
++    """Cross-stitched F-FNO x ViT.
++
++    Stream `f` is an FFNO2d (per-pixel, separable spectral mixing), stream `v` a ViT2d (128 tokens,
++    input-dependent global attention). Both read the same input and run layer for layer in lockstep.
++    After the layers in LINKS the streams trade features:
++        f2v[i]: LayerNorm2d(w) -> Conv(w, 384, 4, stride 4) -> GELU -> Conv1x1(384, 384)   added to t
++        v2f[i]: LayerNorm(384) -> Linear(384, 384) -> GELU -> Linear(384, w*16), unpatchify added to h
++    The LAST layer of every link is ZERO-initialised, so with `f.*` / `v.*` loaded from a trained
++    F-FNO and a trained ViT the network at step 0 is exactly the two parents run side by side.
++    Output: field = s*field_f + (1-s)*field_v with s = sigmoid(mix) (learned scalar, init WF), and
++    sigma = s*sigma_f + (1-s)*sigma_v (returned as its log) -- i.e. at step 0 the WF-weighted
++    ensemble of the two parents, the same field/sigma averaging `_fno.fuse` groups perform.
++
++    `links=False` (`ffvit0`) builds no link at all: the paired control, which fine-tunes the same two
++    parents through the same mixed output, so arm minus control is the cross-stitch and nothing else.
++
++    State-dict names are `f.<FFNO2d name>` and `v.<ViT2d name>`: `make_ffvit_init.py` writes a
++    merged parent file with exactly those keys for `train2.py --init`.
++    """
++
++    VIT_DIM, VIT_HEADS = 384, 6
++    LINKS = (1, 3, 5)
++    WF = 1.0 / 3.0
++
++    def __init__(self, width: int = 40, modes_y: int = 16, modes_x: int = 32, n_layers: int = 8,
++                 var_head: bool = True, extra_ch: int = 0, dropout: float = 0.0,
++                 links: bool = True):
++        super().__init__()
++        self.f = FFNO2d(width, modes_y, modes_x, n_layers, var_head, extra_ch, dropout)
++        self.v = ViT2d(self.VIT_DIM, n_layers, var_head, extra_ch, heads=self.VIT_HEADS,
++                       dropout=dropout)
++        self.width = width
++        self.mix = nn.Parameter(torch.tensor(float(np.log(self.WF / (1.0 - self.WF)))))
++        d, pp = self.VIT_DIM, self.v.patch
++        self.f2v, self.v2f = nn.ModuleDict(), nn.ModuleDict()
++        for i in (self.LINKS if links else ()):
++            if i >= n_layers - 1:
++                continue
++            a = nn.Sequential(_LayerNorm2d(width), nn.Conv2d(width, d, pp, stride=pp), nn.GELU(),
++                              nn.Conv2d(d, d, 1))
++            b = nn.Sequential(nn.LayerNorm(d), nn.Linear(d, d), nn.GELU(),
++                              nn.Linear(d, width * pp * pp))
++            for last in (a[-1], b[-1]):
++                nn.init.zeros_(last.weight)
++                nn.init.zeros_(last.bias)
++            self.f2v[str(i)], self.v2f[str(i)] = a, b
++
++    def set_spectral_path(self, path: str = "fft"):
++        self.f.set_spectral_path(path)
++        return self
++
++    def forward(self, prev: torch.Tensor, detach_var: bool = False):
++        f, v = self.f, self.v
++        b, pp, wd = len(prev), v.patch, self.width
++        x = f.cat(prev)
++        h = F.pad(f.lift(x), (0, f.PAD[1], 0, f.PAD[0]))
++        t = v.embed(x).flatten(2).transpose(1, 2) + v.pos
++        for i, (layer, blk, p) in enumerate(zip(f.layers, v.blocks, v.dp)):
++            h = layer(h)
++            q = blk["n1"](t)
++            t = t + v._drop_path(blk["attn"](q, q, q, need_weights=False)[0], p)
++            t = t + v._drop_path(blk["mlp"](blk["n2"](t)), p)
++            k = str(i)
++            if k in self.f2v:
++                dt = self.f2v[k](h[..., :H, :W]).flatten(2).transpose(1, 2)
++                dh = (self.v2f[k](t).reshape(b, v.gh, v.gw, wd, pp, pp)
++                      .permute(0, 3, 1, 4, 2, 5).reshape(b, wd, H, W))
++                t = t + dt
++                h = h + F.pad(dh, (0, f.PAD[1], 0, f.PAD[0]))
++        hf = f.norm_out(h[..., :H, :W])
++        tv = v.proj(v.norm_out(t))
++        hv = (tv.reshape(b, v.gh, v.gw, v.wid, pp, pp)
++              .permute(0, 3, 1, 4, 2, 5).reshape(b, v.wid, H, W))
++        s = torch.sigmoid(self.mix)
++        field = s * f.head_field(hf) + (1.0 - s) * v.head_field(hv)
++        logstd = None
++        if f.head_logstd is not None:
++            lf = f.head_logstd(hf.detach() if detach_var else hf).float()
++            lv = v.head_logstd(hv.detach() if detach_var else hv).float()
++            logstd = torch.logaddexp(lf + F.logsigmoid(self.mix), lv + F.logsigmoid(-self.mix))
++        return field, logstd
++
++
++
++
+ def build_wave1(arch: str, width: int, var_head: bool, extra_ch: int, modes_y: int,
+                 modes_x: int, n_layers: int, dropout: float = 0.0,
+                 drop_path: float | None = None, err_head: bool = False,
+diff --git a/Track_1/unet/train2.py b/Track_1/unet/train2.py
+index 2bf7cf1..363ccaf 100644
+--- a/Track_1/unet/train2.py
++++ b/Track_1/unet/train2.py
+@@ -408,7 +408,7 @@ def main() -> None:
+                     choices=["unet", "fno", "deeponet", "afno", "dilres", "ufno", "vit",
+                              "cnext_unet", "unet_mod", "ffno", "ffno_nff", "swin_unet",
+                              "simvp", "stvit", "swin_unet_b6", "swin_unet_win16",
+-                             "swin_unet_p1"],
++                             "swin_unet_p1", "ffvit", "ffvit0"],
+                     default="unet",
+                     help="round 15 adds afno / dilres / ufno / vit, all with FNO2d's "
+                          "interface. --width is the trunk width (the token dim for "

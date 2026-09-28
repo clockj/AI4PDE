@@ -506,8 +506,8 @@ def section6(dev, Xall, tmp):
               sub._fno.SWIN_IMPL == "auto"
               and not os.path.exists(os.path.join(sub._fno._UNET_DIR, "models_alt.py")))
         REC[f"s6.t1.{tag}.state"] = dict(AMP_ACTIVE=sub.AMP_ACTIVE, AMP_PROBE_DIFF=sub.AMP_PROBE_DIFF,
-                                         GRAPH_ACTIVE=sub.GRAPH_ACTIVE,
-                                         GRAPH_PROBE_DIFF=sub.GRAPH_PROBE_DIFF, batch=st[5])
+                                         GRAPH_ACTIVE=getattr(sub, "GRAPH_ACTIVE", None),
+                                         GRAPH_PROBE_DIFF=getattr(sub, "GRAPH_PROBE_DIFF", None), batch=st[5])
         print(f"    {REC[f's6.t1.{tag}.state']}", flush=True)
         if consts["AMP"] != "None":
             check(f"s6.t1.{tag}.amp", f"T1 {tag}: AMP self-check kept fp16 (probe {sub.AMP_PROBE_DIFF})",

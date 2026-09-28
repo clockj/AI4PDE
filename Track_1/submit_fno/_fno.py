@@ -7,11 +7,16 @@ submission zip carries no path assumptions and no accidental h5py/scipy imports 
 present in the Track 1 evaluation container; `unet/model.py` imports h5py, lazily, and is
 therefore not importable material for a zip).
 
-Round 12 ships a MIXED ensemble: 8 FNO members plus one U-Net. Both classes expose the same
-`forward(prev, detach_var=False) -> (field, logstd)` contract, so `predict_fno` averages them
-without a special case and `fuse` gives the U-Net its own group (its state_dict keys differ
-from every FNO's, so it can never be folded into a StackedFNO). Use `load_any`, not `load`,
-anywhere a member list may contain one.
+Every family exposes the same `forward(prev, detach_var=False) -> (field, logstd)` contract, so
+`predict_fno` averages a MIXED ensemble without a special case and `fuse` gives each architecture
+its own group (state_dict keys differ across families, so they are never folded together). Use
+`load_any`, not `load`, anywhere a member list may contain more than one family.
+
+What the final packages (2026-09-27) run from this file: 4 F-FNO members (`FFNO2d`, w40 L8, fused
+into one `StackedFFNO`, dense spectral path) + 2 ViT members (`ViT2d`, d384 L8, one `StackedViT`),
+int8-packed (`dequant8`), averaged uniformly over the 6 members by `predict_fno` (Track 1) or by
+Track 2's own `_body`. The other families (FNO2d / StackedFNO, UNetTwoHead, UFNO2d, AFNO2d, Swin)
+do not ship; they stay because ~25 repo tools and `reproduce.sh` still load them (2026-09-28).
 """
 from __future__ import annotations
 
@@ -1324,6 +1329,9 @@ def _swin_member(blob: dict, device: str):
                     blob.get("var_head", True), **SWIN_VARIANTS[arch]).to(device)
 
 
+LN_MANUAL = False      # set by Track 1's submission.py (baked constant); Track 2 leaves it off
+
+
 class _StkLN(nn.Module):
     """K LayerNorms over the last axis of a member-major (K, B, h, w, c) tensor.
 
@@ -1342,6 +1350,14 @@ class _StkLN(nn.Module):
                              .reshape(k, 1, 1, 1, c).clone(), persistent=False)
 
     def forward(self, x):
+        if LN_MANUAL and x.is_cuda:
+            # K1 (09-27): native_layer_norm's row-wise kernel is 28 % of the fused F-FNO stack's device time at batch 56
+            # (1.44 ms per call over 580k tokens x 40). Same arithmetic from var_mean + elementwise kernels, moments in
+            # fp32: stack -10 %, package -0.09 ms/window (A100, 2.2.2); prediction differs 6.6e-4 relative (inside the
+            # AMP gate), scores unchanged to 5 digits. Track 1 only -- at batch 1 it adds kernels to Track 2's graph.
+            x32 = x.float()
+            var, mu = torch.var_mean(x32, dim=-1, keepdim=True, unbiased=False)
+            return torch.addcmul(self.b, (x32 - mu).mul_(torch.rsqrt(var + self.eps)), self.w)
         return torch.addcmul(self.b, _F.layer_norm(x, x.shape[-1:], eps=self.eps), self.w)
 
 
@@ -1658,7 +1674,8 @@ FFNO_VARIANTS = {"ffno": {"ff": True}, "ffno_nff": {"ff": False}}
 FFNO_IMPL = "auto"
 # The spectral path `load_any` gives every F-FNO member: None keeps the as-built one (the as-trained
 # FFTs); "dense" (1-D FFTs as matmuls on a precomputed real basis, fp16-native) or "fft". A package
-# bakes it per track, as SPEC_PATH is baked: dense for Track 1's batch, fft for Track 2's batch 1.
+# bakes it per track, as SPEC_PATH is baked. Both final packages (09-27) bake "dense" on BOTH tracks (fft was the
+# Track-2 choice of the T2R13 era; the batch-1 graph now runs dense too). (Comment refreshed 2026-09-28.)
 FFNO_PATH = None
 # FFNO_TILE: rows of the batch the FUSED F-FNO stack's dense spectral stage processes at a time.
 # Measured 09-18 (job 7370333, profiler + interleaved bench on the L8 twins at b64 fp16): the whole
@@ -1781,7 +1798,7 @@ class FFNO2d(nn.Module):
     FF_FACTOR = 2
 
     def __init__(self, width: int = 64, modes_y: int = 16, modes_x: int = 32, n_layers: int = 12,
-                 var_head: bool = True, ff: bool = True):
+                 var_head: bool = True, ff: bool = True, err_head: bool = False):
         super().__init__()
         yy, xx = torch.meshgrid(torch.linspace(-1, 1, H), torch.linspace(-1, 1, W),
                                 indexing="ij")
@@ -1796,6 +1813,13 @@ class FFNO2d(nn.Module):
         if var_head:
             self.head_logstd = nn.Sequential(nn.Conv2d(width, 128, 1), nn.GELU(),
                                              nn.Conv2d(128, C, 1))
+        # `--err-head` (2026-09-23): a THIRD readout, log|pred - y| per element PER FRAME, (B, CH, H, W)
+        # in head_field's layout. Built last, as in models_alt._heads, so state_dict keys match.
+        # Only then does forward() return three outputs; every existing member keeps its 2-tuple.
+        self.head_logerr = None
+        if err_head:
+            self.head_logerr = nn.Sequential(nn.Conv2d(width, 128, 1), nn.GELU(),
+                                             nn.Conv2d(128, CH, 1))
 
     def set_spectral_path(self, path: str = "fft"):
         if path not in ("fft", "dense"):
@@ -1813,6 +1837,8 @@ class FFNO2d(nn.Module):
         logstd = None
         if self.head_logstd is not None:
             logstd = self.head_logstd(h.detach() if detach_var else h)
+        if self.head_logerr is not None:
+            return self.head_field(h), logstd, self.head_logerr(h)
         return self.head_field(h), logstd
 
 
@@ -1843,7 +1869,7 @@ def _ffno_member(blob: dict, device: str):
     cfg = blob.get("config", {})
     return FFNO2d(blob.get("width", cfg.get("width", 96)), blob.get("modes_y", 8),
                   blob.get("modes_x", 12), blob.get("n_layers", 4), blob.get("var_head", True),
-                  **FFNO_VARIANTS[arch]).to(device)
+                  err_head=bool(blob.get("err_head", False)), **FFNO_VARIANTS[arch]).to(device)
 
 
 class _StkFFNOLayer(nn.Module):
@@ -1975,8 +2001,8 @@ class StackedFFNO(nn.Module):
     The P2-L8 package line (F-FNO L8 x4 + ViT x2) projects best on Track 1 only if the four F-FNOs
     cost one invocation (+1.151 board ms each otherwise). Structure is read off the members (modes,
     padding, feed-forward or point/GroupNorm, depth) and the spectral path is the members' own
-    (`set_spectral_path` switches the whole stack): dense for Track 1's batch, fft for Track 2's
-    batch 1. Channels are member-major throughout: the lift's first conv reads the shared input
+    (`set_spectral_path` switches the whole stack): both final packages run dense, on Track 1's batch
+    and on Track 2's batch-1 graph alike (fft was Track 2's choice before 09-27). Channels are member-major throughout: the lift's first conv reads the shared input
     once (K*128 outputs), every later conv is grouped by K, the LayerNorms normalize once with a
     per-member affine, and the 1x1 heads are batched matmuls on tokens (`_StkPoint`).
     `forward` returns the member mean of the field and log(mean(exp(clamped logstd))), the
@@ -2009,6 +2035,12 @@ class StackedFFNO(nn.Module):
             if first.head_logstd is not None:
                 self.hl = nn.ModuleList([_StkPoint([m.head_logstd[0] for m in members]),
                                          _StkPoint([m.head_logstd[2] for m in members])])
+            # --err-head members: fused like head_logstd. All-or-none -- the state_dict key check
+            # above already refuses a stack that mixes head and no-head members.
+            self.he = None
+            if getattr(first, "head_logerr", None) is not None:
+                self.he = nn.ModuleList([_StkPoint([m.head_logerr[0] for m in members]),
+                                         _StkPoint([m.head_logerr[2] for m in members])])
         self.self_norm = bool(getattr(first, "self_norm", False))
 
     def set_spectral_path(self, path: str = "fft"):
@@ -2031,6 +2063,12 @@ class StackedFFNO(nn.Module):
         if self.hl is not None:
             ls = self.hl[1](_F.gelu(self.hl[0](t))).float()
             logstd = ls.clamp(-8.0, 2.0).exp().mean(0).log().permute(0, 3, 1, 2)
+        if self.he is not None:
+            # Same contract as logstd: log of the member mean of exp(clamped log-error), so
+            # predict_fno weights it by n_members like any other err-bearing module.
+            le = self.he[1](_F.gelu(self.he[0](t))).float()
+            logerr = le.clamp(-8.0, 2.0).exp().mean(0).log().permute(0, 3, 1, 2)
+            return field, logstd, logerr
         return field, logstd
 
 
@@ -2319,10 +2357,11 @@ def load_any(path: str, device: str):
         _sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
                                           "..", "unet"))
         cfg = blob.get("config", {})
+        _eh = {"err_head": True} if blob.get("err_head", False) else {}
         m = importlib.import_module("models_alt").build(
             arch, blob.get("width", cfg.get("width", 96)), blob.get("var_head", True), 0,
             blob.get("modes_y", 8), blob.get("modes_x", 12), blob.get("n_layers", 4),
-            dropout=cfg.get("dropout", 0.0)).to(device)
+            dropout=cfg.get("dropout", 0.0), **_eh).to(device)
         m.load_state_dict(blob["model_state_dict"])
         m.eval()
         m.self_norm = _self_norm_of(blob)
@@ -2344,11 +2383,72 @@ def load_any(path: str, device: str):
     return m
 
 
+# D2 step 2 (D2b): in the band_gpu path, write the 3-channel prediction straight into a contiguous (N,20,H,W,3) `dst`.
+# False = the D2 (c868b3a) path, byte for byte. OPT-IN since 09-25 18Z: it trades +0.03 ms/window on a many-core host for
+# -0.18 on one core, and is stacked only if D2's board read says CPU-bound; build_round13 bakes it (RPDE_SHIP_DIRECT_PRED).
+D2_DIRECT_PRED = False
+# JOINT_GAIN (K2 09-27): the ALPHA compose uses ONE gain per pixel for both channels, g = |T|/|s| with the channels weighted in
+# PHYSICAL units (std**2, compose runs in normalized space). Same per-pixel TKE map, same time mean, prediction closer to y0.
+# Valid only with the band centred on y0 (CENTRE_ALPHA 0: the callers assert it). False = the per-channel compose, bit for bit.
+JOINT_GAIN = False
+# GPU_FP (Track 1 submission.py, 09-26): the batch fingerprint eps, set by the caller for one call; 0.0 = off. Applied below
+# to each chunk's prediction just before the direct copy; _PRED_FP_HITS counts the chunks it was applied to.
+_PRED_FP = 0.0
+_PRED_FP_HITS = 0
+
+
+# EBAND (09-27 T1 arm, #Leaders tasks #1 / #2, variant B): a per-element log-linear factor on the SPS half-width, from five
+# window-local features (definitions and numpy reference: band_feats.py; frozen #Leaders:c5f77dfd 5b156c79):
+#   logsig log(sigma+1e-8) | loggrad log(|grad_yx C0|+1e-6) (np.gradient, unit spacing) | t/19 | loginstd log(std_t x+1e-6) | logfluc
+#   log(|C0-mean_t C0|+1e-6);  yhat = F @ beta[ch][:5] + beta[ch][5];  mode "mult": half = half_static * exp(yhat)
+#   (variant B: beta = gamma*(beta_full - beta_sigma-only), folded at build time), mode "replace": half = exp(yhat).
+def _eb_grad(a, dim):
+    n = a.shape[dim]
+    g = torch.empty_like(a)
+    g.narrow(dim, 1, n - 2).copy_((a.narrow(dim, 2, n - 2) - a.narrow(dim, 0, n - 2)) / 2.0)
+    g.narrow(dim, 0, 1).copy_(a.narrow(dim, 1, 1) - a.narrow(dim, 0, 1))
+    g.narrow(dim, n - 1, 1).copy_(a.narrow(dim, n - 1, 1) - a.narrow(dim, n - 2, 1))
+    return g
+
+
+def eband_features(c0, sig, x):
+    """c0 (B,20,H,W,2) alpha-0 field, sig (B,1,H,W,2) sigma head, x (B,20,H,W,>=2) input window; physical, float32
+    -> (B,20,H,W,2,5)."""
+    c0 = c0.float()
+    gy, gx = _eb_grad(c0, 2), _eb_grad(c0, 3)
+    t = torch.arange(c0.shape[1], device=c0.device, dtype=torch.float32) / 19.0
+    xs = x[..., :2].float().std(dim=1, keepdim=True, unbiased=False)
+    return torch.stack([torch.log(sig.float() + 1e-8).expand_as(c0),
+                        torch.log(torch.sqrt(gy * gy + gx * gx) + 1e-6),
+                        t.reshape(1, -1, 1, 1, 1).expand_as(c0),
+                        torch.log(xs + 1e-6).expand_as(c0),
+                        torch.log(torch.abs(c0 - c0.mean(dim=1, keepdim=True)) + 1e-6)], dim=-1)
+
+
+_EB_LOGSIG_ONLY = {}
+
+
+def _eband_logsig_only(beta_dev):
+    """True iff EBAND coefficients 1..4 are all exactly zero (checked once per constant tensor; one host sync)."""
+    k = id(beta_dev)
+    if k not in _EB_LOGSIG_ONLY:
+        _EB_LOGSIG_ONLY[k] = bool((beta_dev[:, 1:5] == 0).all().item())
+    return _EB_LOGSIG_ONLY[k]
+
+
+def eband_yhat(c0, sig, x, beta_dev, clip=None):
+    """beta_dev (2, 6) float32 on the device -> yhat (B,20,H,W,2), optionally clamped."""
+    y = (eband_features(c0, sig, x) * beta_dev[:, :5]).sum(-1) + beta_dev[:, 5]
+    return y if clip is None else y.clamp(float(clip[0]), float(clip[1]))
+
+
 @torch.no_grad()
 def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
                 batch: int = 64, out: np.ndarray | None = None,
                 sigma_out: np.ndarray | None = None,
-                pad_batch: bool = _PAD_BATCH, amp=_AMP) -> np.ndarray:
+                pad_batch: bool = _PAD_BATCH, amp=_AMP,
+                centre_out: np.ndarray | None = None,
+                err_out: np.ndarray | None = None, err_xform=None, band_gpu=None) -> np.ndarray:
     """(N,20,32,64,>=2) raw physical -> (N,20,32,64,2) raw physical.
 
     predict() is TIMED, and at ~0.1 ms/window of actual compute this function is dominated by
@@ -2362,6 +2462,14 @@ def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
         host first makes a non-contiguous view that ascontiguousarray must copy.
     """
     models = list(model) if isinstance(model, (list, tuple)) else [model]
+    # band_gpu (D2, 09-25): (base_dev (1,20,H,W,3), ref (1,1,H,W,>=2) host, p, lower_out, upper_out, centred).
+    # The SPS interval is finished HERE, per chunk, on the GPU, instead of in five full-size host passes
+    # after the loop (0.59 ms/window on one CPU core, d2_profile run 20260925-043642). Bit-identical to the
+    # host path WITHOUT an EBAND (with one, the host twin in Track 1's submission.py computes the same exp/log
+    # factor on the CPU and agrees to float rounding only -- 2026-09-28): the only non-exact op, the sigma-ratio pow, stays on the HOST in numpy exactly as there
+    # (numpy f32 pow != a float64-rounded or CUDA pow on ~0.06 % of values); everything done on the GPU --
+    # one multiply, then subtract/add and min/max as SEPARATE kernels (no FMA) -- is exact IEEE float32.
+    # `centred` False: interval = pred -/+ half; True: centre = the pre-compose mean y0 (CENTRE_ALPHA 0).
     # A `--norm self` member divides each window by its own mean streamwise speed before the
     # standardization, so its affine is per-WINDOW. Mixing the two conventions in one ensemble
     # would average fields that were never in the same space; refuse rather than average.
@@ -2399,54 +2507,150 @@ def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
         # across differently-rescaled ones, and K members cost K forward passes but still only
         # ONE host transfer and one output write. At 0.109 ms of compute against ~1.27 ms of
         # fixed API overhead, that is what makes ensembling affordable at all.
-        y = sig = None
-        total = 0
+        y = sig = er = None
+        total = etot = 0
         for m in models:
             # A StackedFNO already averaged over the members it fused, so it stands in for
             # `n_members` of them and must be weighted accordingly -- otherwise fusing would
             # silently change the ensemble's mixture.
             nm = getattr(m, "n_members", 1)
             total += nm
+            # A member (or fused stack) trained with --err-head returns a third output, the
+            # per-frame log|error| (B, CH, H, W); every other module keeps its (field, logstd).
             if amp is None or not cuda:
-                raw, logstd = m(prev)
+                o_ = m(prev)
             else:
                 # Only the network runs reduced-precision; everything after this -- the member
                 # average, the fluctuation rescaling, the denormalization -- stays fp32, so the
                 # variant differs from the reference in exactly one place.
                 with torch.autocast("cuda", dtype=amp):
-                    raw, logstd = m(prev)
-                raw = raw.float()
-                logstd = None if logstd is None else logstd.float()
+                    o_ = m(prev)
+            raw, logstd = o_[0].float(), (None if o_[1] is None else o_[1].float())
+            logerr = o_[2].float() if len(o_) > 2 and o_[2] is not None else None
             yi = raw.reshape(len(xb), T_OUT, C, H, W).permute(0, 1, 3, 4, 2) * nm
             y = yi if y is None else y + yi
             if logstd is not None:
                 si = logstd.clamp(-8.0, 2.0).exp().permute(0, 2, 3, 1).unsqueeze(1) * nm
                 sig = si if sig is None else sig + si
+            if logerr is not None and err_out is not None:
+                # Averaged over the ERR-BEARING members only (etot), not all members: a ViT has
+                # no head, and counting it would shrink H by K_err/K for no reason.
+                ei = logerr.clamp(-8.0, 2.0).exp().reshape(len(xb), T_OUT, C, H, W) \
+                    .permute(0, 1, 3, 4, 2) * nm
+                er = ei if er is None else er + ei
+                etot += nm
         if total > 1:
             y = y / total
             if sig is not None:
                 sig = sig / total
+        if er is not None and etot > 1:
+            er = er / etot
         if pad_batch and len(y) != nb:
             # Drop the padding here, before compose and before the write, so the tail costs
             # only the forward pass it was padded for.  Under `--norm self` the affine is
             # per-window and has to be sliced with it.
             y = y[:nb]
             sig = None if sig is None else sig[:nb]
+            er = None if er is None else er[:nb]
             if sn:
                 mean, std = mean[:nb], std[:nb]
 
-        if sig is not None and alpha > 0:
+        eband = band_gpu[6] if (band_gpu is not None and len(band_gpu) > 6) else None
+        c_dev = (y * std + mean).float() if (band_gpu is not None and (band_gpu[5] or eband is not None)) else None
+        if centre_out is not None:
+            # The member average BEFORE compose, physical units: the SPS interval centre when
+            # it is decoupled from the point prediction (Bram, 2026-09-21: centring the band on
+            # the un-rescaled mean is +0.61 sps held out, 8/8 trajectories). compose is linear
+            # in alpha, so any other centre is y0 + (a_c/alpha)*(pred - y0) on the host.
+            c_ = (y * std + mean).float().cpu().numpy()
+            if _HOSTW == "torch":
+                torch.from_numpy(centre_out)[i:i + batch, ..., :2].copy_(torch.from_numpy(c_))
+            else:
+                centre_out[i:i + batch, ..., :2] = c_
+        # `alpha != 0`, not `> 0`: a NEGATIVE alpha is a legitimate (extra-shrunk) interval centre
+        # that fit_band.py --centre-alpha asks for; alpha == 0 stays the untouched member mean.
+        if sig is not None and alpha != 0:
             m_ = y.mean(1, keepdim=True)
             f_ = y - m_
             s_ = y.std(1, keepdim=True, unbiased=False)
-            y = m_ + f_ * ((alpha * sig + (1 - alpha) * s_) / (s_ + 1e-6))
+            if JOINT_GAIN:
+                w_ = (std * std).float()
+                t_ = alpha * sig + (1 - alpha) * s_
+                y = m_ + f_ * (torch.sqrt((t_ * t_ * w_).sum(-1, keepdim=True))
+                               / (torch.sqrt((s_ * s_ * w_).sum(-1, keepdim=True)) + 1e-7))
+            else:
+                y = m_ + f_ * ((alpha * sig + (1 - alpha) * s_) / (s_ + 1e-6))
         if sigma_out is not None and sig is not None:
             # Physical units, (B, 1, H, W, 2). The SPS band is scaled by this: predicted sigma
             # correlates 0.551 with per-element |error| after the per-element mean is removed,
             # against 0.482 for ensemble spread, so it says which WINDOWS need a wider
             # interval. Costs one small copy -- 5.5 MB at N=336 against the field's 165 MB.
             sigma_out[i:i + batch] = (sig * std).float().cpu().numpy()
-        hb = (y * std + mean).float().cpu().numpy()
+        if err_out is not None:
+            # Physical units, (B, 20, H, W, 2): the heads' predicted |error| per element per frame.
+            # Stays untouched when no member carries a head; callers check.
+            # `err_xform` (Track 1's timed path) turns H into the FINISHED band factor here, on the
+            # GPU -- ("drv", q, _, ref_dev): clip(H/ref, .3, 3)^q; ("direct", _, k, _): k*H -- so the
+            # host does one in-place multiply instead of divide/clamp/pow over 22M elements
+            # (measured 09-24, ds3: the host-side version cost +0.65 ms/window on T1).
+            if er is not None:
+                h_ = er * std
+                if err_xform is not None:
+                    mode_, q_, k_, ref_ = err_xform
+                    h_ = (h_ * k_) if mode_ == "direct" else torch.clamp(h_ / ref_, 0.3, 3.0).pow_(q_)
+                hh = h_.float().cpu().numpy()
+                if _HOSTW == "torch":
+                    torch.from_numpy(err_out)[i:i + batch].copy_(torch.from_numpy(hh))
+                else:
+                    err_out[i:i + batch] = hh
+        yp = (y * std + mean).float()
+        if band_gpu is not None:
+            base_d, ref_h, p_, lo_out, hi_out, centred = band_gpu[:6]
+            # sigma ratio on the HOST (small: 1/20 of the field), same numpy expression as submission.py
+            s_h = sigma_out[i:i + batch] if sigma_out is not None else (sig * std).float().cpu().numpy()
+            r3 = np.zeros((len(yp), 1, H, W, 3), dtype=np.float32)
+            np.power(np.clip(s_h / ref_h[..., :2], 0.3, 3.0), np.float32(p_), out=r3[..., :2])
+            half = torch.mul(base_d, torch.from_numpy(r3).to(device, non_blocking=True))       # (B,20,H,W,3)
+            if eband is not None:
+                # EBAND: channels u, v of the half-width scaled (mult) or replaced by exp(yhat); channel 2 stays 0.
+                beta_dev, eb_mode, eb_clip = eband
+                if eb_clip is None and _eband_logsig_only(beta_dev):
+                    # SIGBLEND fast path (E0a 09-27): features 1..4 carry zero weight, so yhat = b0*log(sigma+1e-8) + b5 on the
+                    # (B,1,H,W,2) sigma field, broadcast over t below -- bit-identical to the general path (adding the four
+                    # 0*finite terms and the zero intercept is exact) without building the (B,20,H,W,2,5) feature stack.
+                    fac = torch.exp(torch.log((sig * std).float() + 1e-8) * beta_dev[:, 0] + beta_dev[:, 5])
+                else:
+                    fac = torch.exp(eband_yhat(c_dev, sig * std, xb[:len(yp)], beta_dev, eb_clip))
+                h2 = half[..., :2] * fac if eb_mode == "mult" else fac
+                half = torch.cat([h2, half[..., 2:]], -1)
+            # M3 (2026-09-28, shipping audit): the ingestion program zeroes EVERY subscore on one non-finite element, and the
+            # private set is out of range in Re, where an fp16 overflow is no longer impossible. So: a non-finite prediction
+            # element becomes 0, a non-finite bound becomes the (finite) prediction, and the interval is widened to contain
+            # it. On finite values every op below is the identity (nan_to_num/where pass them through; lo <= p3 <= hi already
+            # holds on both branches, so min/max return lo/hi), which is why the packages of record are unchanged bit for bit.
+            yp = torch.nan_to_num(yp, nan=0.0, posinf=0.0, neginf=0.0)
+            p3 = torch.zeros_like(half); p3[..., :2] = yp
+            if centred:
+                c3 = torch.zeros_like(half); c3[..., :2] = c_dev
+                lo = torch.minimum(torch.sub(c3, half), p3); hi = torch.maximum(torch.add(c3, half), p3)
+            else:
+                lo = torch.sub(p3, half); hi = torch.add(p3, half)
+            lo = torch.minimum(torch.where(torch.isfinite(lo), lo, p3), p3)
+            hi = torch.maximum(torch.where(torch.isfinite(hi), hi, p3), p3)
+            torch.from_numpy(lo_out)[i:i + batch].copy_(lo)
+            torch.from_numpy(hi_out)[i:i + batch].copy_(hi)
+            if D2_DIRECT_PRED and dst.shape[-1] == 3 and dst.flags.c_contiguous:
+                # D2 step 2 (09-25): p3 is the prediction with channel 2 = +0.0, which is what the caller pre-zeroed, so one
+                # contiguous device->host copy into `dst` replaces yp.cpu() (a fresh full-size host allocation) plus a second
+                # host copy into dst[..., :2]. Same float32 bits in every channel.
+                if _PRED_FP:
+                    global _PRED_FP_HITS
+                    pu = p3[..., :2]
+                    pu.add_(pu.mean(1, keepdim=True).mul_(_PRED_FP))      # host: pu += eps * mean_t(pu), fp32
+                    _PRED_FP_HITS += 1
+                torch.from_numpy(dst)[i:i + batch].copy_(p3)
+                continue
+        hb = yp.cpu().numpy()
         if _HOSTW == "torch":
             # `torch.from_numpy` is a view, not a copy, and copy_ between two float32 tensors
             # of the same shape is exact -- so this is bit-identical, only threaded.
