@@ -1,0 +1,9 @@
+fit_band_from_dump.patch (2026-09-28, executor gauge, arm I6)
+
+Adds --from-dump / --sigma-ref-from to Track_1/submit_fno/fit_band.py so the SAME static-band solver (optimal_band on
+|C - Y| * inflate / ratio^p with the a_i of P, box smoothing 3, --fill-unscored) can be run on errors dumped from OTHER
+ensembles (the pooled held-out-condition errors of arm I6, ood/ood_i6dump.py + ood/ood_i6.py), instead of running the
+--ckpt models on val_seen / val_unseen. Without --from-dump the file behaves exactly as before (the original block is only
+indented under an else). Applied only inside the scratch source trees of the I6 runs; the working tree is not edited.
+Identity check: the --from-dump path fed the regime's own static fit split (ood_i6dump.py --windows static-fit) must
+reproduce the band fit_band.py fitted by running the models (results/ood_chunk4.md).

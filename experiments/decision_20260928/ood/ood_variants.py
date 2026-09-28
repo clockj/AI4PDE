@@ -100,6 +100,10 @@ def main():
     pkg = sys.argv[1]
     if not os.path.isfile(os.path.join(pkg, "record", "submission.py")):
         raise SystemExit(f"{pkg}/record/submission.py missing: extract the built track2 archive there first")
+    # extra variants from OOD_VARIANT_SPECS="name:KNOB=VALUE,KNOB=VALUE name2:..." (on top of control: PREV_SPACE target)
+    for spec in os.environ.get("OOD_VARIANT_SPECS", "").split():
+        name, _, kv = spec.partition(":")
+        VARIANTS[name] = TARGET + [_pat(k, v) for k, v in (x.split("=", 1) for x in kv.split(",") if x)]
     only = sys.argv[2:] or list(VARIANTS)
     for name in only:
         ch = make(pkg, name, VARIANTS[name])

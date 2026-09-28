@@ -48,7 +48,8 @@ def load(run):
 
 def rec(j):
     w = j["windows"]
-    return {k: np.asarray(w[k]) for k in ("rel", "tke", "mvpe", "a", "con", "ns", "ins", "k")}, np.asarray(w["traj"])
+    return ({k: np.asarray(w[k]) for k in ("rel", "tke", "mvpe", "a", "con", "ns", "ins", "k", "wsum") if k in w},
+            np.asarray(w["traj"]))
 
 
 def sel(r, names, trajs, kmin=0, kmax=None):

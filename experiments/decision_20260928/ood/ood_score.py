@@ -51,6 +51,7 @@ def window_records(P, L, U, Y):
                 a=a.astype(np.float64),
                 con=e.reshape(n, -1).sum(1, dtype=np.float64),
                 ns=scored.reshape(n, -1).sum(1).astype(np.int64),
+                wsum=np.where(scored, up - lo, np.float32(0.0)).reshape(n, -1).sum(1, dtype=np.float64),   # interval width
                 ins=hit.reshape(n, -1).sum(1).astype(np.int64))
 
 
@@ -64,6 +65,8 @@ def aggregate(rec, sel=None):
                rel=sc.score_error(rel_e), tke=sc.score_error(tke_e), mvpe=sc.score_error(mv_e),
                sps=sc.score_sps(spsv), C=100.0 * float(np.sum(g("con"))) / ns,
                cov=100.0 * float(np.sum(g("ins"))) / ns, abar=float(np.mean(g("a"))))
+    if "wsum" in rec:
+        out["width"] = float(np.sum(g("wsum"))) / ns          # mean interval width over scored elements, physical
     out["composite"] = float(W0[0] * out["rel"] + W0[1] * out["tke"] + W0[2] * out["mvpe"] + W0[4] * out["sps"])
     return out
 

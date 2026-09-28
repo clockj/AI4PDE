@@ -59,6 +59,12 @@ def re_of(n):
 def regime(name):
     """-> (evaluation trajectories, {group: trajectories}, held-out-of-training trajectories)."""
     name = name.upper()
+    if name.endswith("ID") and name != "ID":
+        # the in-distribution read of a REGIME ensemble: VAL_TRAJ minus the regime (the ensemble trained on neither).
+        # These trajectories are the regime band's own fit split, so any band-dependent number here is in sample.
+        _, _, held = regime(name[:-2])
+        ev = sorted(t for t in val_traj() if t not in set(held))
+        return ev, {name: ev}, held
     if name in ("A20", "A10"):
         a = int(name[1:])
         ev = [n for n in all_real() if aoa_of(n) == a]

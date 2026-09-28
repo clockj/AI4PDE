@@ -47,6 +47,11 @@ def main():
     ap.add_argument("--causal-check", action="store_true")
     ap.add_argument("--prev-space", choices=["target", "input"], default="target")
     ap.add_argument("--device", default="cuda")
+    ap.add_argument("--dump", default=None,
+                    help="directory: write P, L, U, Y (physical, u and v, float32 .npy), the input's zero state per element "
+                         "(ztrail = number of trailing input frames that are the exact physical zero, 0..20; zany = zero in "
+                         "any input frame; uint8 / bool, per channel), the stream's centre field C when the package keeps one "
+                         "(gC, after D1c), and the window index -- for the arm-I7 screen (ood_i7.py)")
     ap.add_argument("--reblank", default=None, choices=["m1", "m2", "m3"],
                     help="re-blank every trajectory with a synthetic time-constant mask (ood_reblank.py) in inputs and targets")
     a = ap.parse_args()
@@ -89,7 +94,46 @@ def main():
         causal = dict(steps=n, max_abs_diff=worst)
         print(f"[ood_stream] CAUSALITY OK: {n} steps bit-identical up to each cut (max |diff| {worst:.1e})", flush=True)
 
+    cap = []
+    if a.dump and getattr(model, "gC", None) is not None:
+        # the centre the package used for this window (target-normalised, after D1c): read right after each step.
+        # Only for the dump run; the extra synchronize and copy add to the recorded step time.
+        _orig = model.ttt_step
+
+        def _step(xn, prev):
+            out = _orig(xn, prev)
+            torch.cuda.synchronize()
+            cap.append(model.gC.detach().float().cpu().numpy()[0].copy())
+            return out
+        model.ttt_step = _step
     P, L, U, Y, T = stream_eval.run(model, stream, a.device, prev_space=a.prev_space)
+    if a.dump:
+        os.makedirs(a.dump, exist_ok=True)
+        X = np.stack([s[2][..., :2] for s in stream])                     # the PHYSICAL input the harness normalised
+        # The test a package can run: |x_norm - z_c| < 1e-6 in INPUT-normalised units, i.e. |x| < 1e-6 * STD_IN[c] physical
+        # (9.7e-8 m/s for u, 1.6e-8 for v). The release holds ~1100 of 146 M values per channel in (0, 1e-12) and none in
+        # [1e-12, 1e-8), so this equals the exact test up to those denormal-size values (counted and saved below).
+        tolp = (1e-6 * t2.STD_IN[:2]).astype(np.float32)
+        z = np.abs(X) < tolp
+        n_diff = int((z & (X != 0.0)).sum())
+        ztrail = np.zeros(z.shape[:1] + z.shape[2:], np.uint8)            # (N, H, W, 2)
+        run_ = np.ones(ztrail.shape, bool)
+        for f in range(z.shape[1] - 1, -1, -1):                           # count trailing zero frames
+            run_ &= z[:, f]
+            ztrail += run_
+        np.save(os.path.join(a.dump, "P.npy"), P[..., :2]); np.save(os.path.join(a.dump, "L.npy"), L[..., :2])
+        np.save(os.path.join(a.dump, "U.npy"), U[..., :2]); np.save(os.path.join(a.dump, "Y.npy"), Y[..., :2])
+        np.save(os.path.join(a.dump, "ztrail.npy"), ztrail); np.save(os.path.join(a.dump, "zany.npy"), z.any(1))
+        if cap:
+            C = np.stack(cap)[..., :2].astype(np.float64) * t2.STD_TGT[:2] + t2.MEAN_TGT[:2]
+            np.save(os.path.join(a.dump, "C.npy"), C.astype(np.float32))
+        names_ = [s[0] for s in stream]
+        np.save(os.path.join(a.dump, "traj.npy"), np.array(names_))
+        json.dump({"input_zero_tol_normalised": 1e-6, "input_zero_tol_physical": tolp.tolist(),
+                   "input_elements_zero_by_tol_but_not_exact": n_diff}, open(os.path.join(a.dump, "meta.json"), "w"))
+        print(f"[ood_stream] dumped {len(P)} windows to {a.dump} (centre field {'yes' if cap else 'not kept by this package'}; "
+              f"{n_diff} input elements zero by tolerance but not exactly)",
+              flush=True)
     if L is None:
         raise SystemExit("the package supplied no bounds")
     h = lambda x: [hashlib.sha1(np.ascontiguousarray(w).tobytes()).hexdigest()[:16] for w in x]   # noqa: E731

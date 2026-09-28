@@ -28,6 +28,7 @@ VARIANTS=${OOD_VARIANTS:-frozen base control prev_input statsmask famw}
 # OOD_CSET=1 adds the one-at-a-time stream-constant variants (ood_variants.py CSET); OOD_REBLANK="m1 m2 m3" streams
 # OOD_REBLANK_VARIANTS (default control statsmask prev_input) once more per mask, json <variant>__<mask>.json.
 [ "${OOD_CSET:-0}" = 1 ] && VARIANTS="$VARIANTS $($PY "$HERE/ood_variants.py" --list-cset)"
+for sp in ${OOD_VARIANT_SPECS:-}; do VARIANTS="$VARIANTS ${sp%%:*}"; done      # ood_variants.py reads the specs from the env
 REBLANK=${OOD_REBLANK:-}
 RB_VARIANTS=${OOD_REBLANK_VARIANTS:-control statsmask prev_input}
 RUN=$ROOT/runs/$NAME
@@ -63,6 +64,20 @@ fi
 cat "$RUN/members.txt"; echo "$MEMBERS" > "$RUN/members.list"
 
 # band
+# i6fit (arm I6): the band is fitted post hoc on the pooled held-out dumps of OTHER regimes (OOD_I6_SOURCES = "dump[:group] ...",
+# OOD_I6_TARGET_BAND = the band whose sigma_ref this ensemble uses), with fit_band.py patched (patches/fit_band_from_dump.patch,
+# applied to THIS run's source tree only) and make_k0_band.py unchanged; then built and streamed like any other band.
+if has i6fit; then
+  if [ ! -f "$WT/.ood_patched_i6" ]; then
+    patch -p1 -d "$WT" < "$HERE/../patches/fit_band_from_dump.patch" > "$RUN/log/i6_patch.log" || { cat "$RUN/log/i6_patch.log"; exit 1; }
+    touch "$WT/.ood_patched_i6"
+  fi
+  say "i6fit: pooled band from ${OOD_I6_SOURCES:?OOD_I6_SOURCES}"
+  $PY "$HERE/ood_i6.py" fit --src "$WT" --target-band "${OOD_I6_TARGET_BAND:?OOD_I6_TARGET_BAND}" --out "$RUN/band/i6" \
+      $OOD_I6_SOURCES > "$RUN/log/i6fit.log" 2>&1 || { tail -30 "$RUN/log/i6fit.log"; say "FAILED: i6fit"; exit 1; }
+  grep -a "pooled\|band   \|lam 0.5\|FINAL fit" "$RUN/log/i6fit.log" | cut -c1-300
+  OOD_BAND=$RUN/band/i6/k0/band_k0_sigblend_lam0.5.npz; OOD_SIGBLEND=$RUN/band/i6/k0/band_k0_sigblend_lam0.5.json
+fi
 case "${OOD_BAND:-fit}" in
   record) BAND=$WT/Track_1/bands/k27_sigblend_lam0.5.npz; SB=$WT/Track_1/sigblend/band_k0_sigblend_lam0.5.json ;;
   fit)    BAND=$RUN/band/k0/band_k0_sigblend_lam0.5.npz; SB=$RUN/band/k0/band_k0_sigblend_lam0.5.json ;;
@@ -126,6 +141,63 @@ if has stream; then
       [ "${PIPESTATUS[0]}" = 0 ] || { say "FAILED: stream $v $m"; exit 1; }
     done
   done
+fi
+# i6dump (arm I6): what a band fit needs on this regime's HELD-OUT windows (ood_i6dump.py -> $RUN/i6/heldout.npz).
+# OOD_I6_IDCHECK=1 also dumps the regime's own static fit split and checks that the patched --from-dump path of fit_band.py
+# reproduces the static band this run fitted by running the models.
+if has i6dump; then
+  say "i6dump"
+  $PY "$HERE/ood_i6dump.py" --regime "$REGIME" --members $MEMBERS --band "$BAND" --out "$RUN/i6/heldout.npz" 2>&1 \
+    | tee "$RUN/log/i6dump.log" | grep -a "ood_i6dump\|Error" ; [ "${PIPESTATUS[0]}" = 0 ] || { say "FAILED: i6dump"; exit 1; }
+  if [ "${OOD_I6_IDCHECK:-0}" = 1 ] && [ -f "$RUN/band/band_static.npz" ]; then
+    CK=$RUN/i6/idcheck; mkdir -p "$CK"; rm -rf "$CK/src"; mkdir -p "$CK/src"
+    git -C "$REPO" archive "$COMMIT" Track_1 | tar -x -C "$CK/src" && patch -p1 -d "$CK/src" < "$HERE/../patches/fit_band_from_dump.patch" > /dev/null
+    $PY "$HERE/ood_i6dump.py" --regime "$REGIME" --members $MEMBERS --band "$RUN/band/band_static.npz" --windows static-fit \
+        --out "$CK/staticfit.npz" && \
+    $PY - "$CK/staticfit.npz" "$CK/fit.npz" <<'PYEOF'
+import sys, numpy as np
+d = np.load(sys.argv[1])
+R = np.clip(d["S"][0] / d["sref"][..., :2], 0.3, 3.0).astype(np.float32)
+np.savez(sys.argv[2], P=d["P"], C=d["F"][0], Y=d["y"], R=R)
+PYEOF
+    $PY "$CK/src/Track_1/submit_fno/fit_band.py" --from-dump "$CK/fit.npz" --sigma-ref-from "$RUN/band/band_static.npz" \
+        --alpha 0.80 --band-p 0.45 --centre-alpha 0 --fill-unscored --out "$CK/band_static_fromdump.npz" > "$CK/fit.log" 2>&1
+    $PY -c "
+import numpy as np, sys
+a, b = np.load('$RUN/band/band_static.npz'), np.load('$CK/band_static_fromdump.npz')
+d = np.abs(a['base'] - b['base']); r = d / np.maximum(np.abs(a['base']), 1e-12)
+print('[i6 idcheck] from-dump vs model-run static band: bit-identical', bool(np.array_equal(a['base'], b['base'])),
+      ' max |diff| %.3e  max rel %.3e  elements differing %d of %d' % (d.max(), r.max(), int((d > 0).sum()), d.size))
+" | tee "$CK/idcheck.txt"
+    rm -rf "$CK/src" "$CK/fit.npz"
+  fi
+fi
+# i7 (arm I7 screen): stream frozen and control once more with --dump, plain and under each OOD_I7_MASKS, then ood_i7.py.
+# The dumps (float32, ~1.3 MB per window and variant) stay in $RUN/dump unless OOD_I7_KEEP=0.
+if has i7; then
+  for m in "" ${OOD_I7_MASKS-m1 m2 m3}; do
+    for v in frozen control; do
+      suf=${m:+__$m}
+      say "i7 dump $v$suf"
+      $PY "$HERE/ood_stream.py" --pkg "$RUN/pkg/$v" --regime "$REGIME" ${m:+--reblank $m} --dump "$RUN/dump/$v$suf" \
+          --out "$RUN/json_i7/$v$suf.json" 2>&1 | tr -d '\000' | tee "$RUN/log/i7_$v$suf.log" | grep -a "^  \|dumped\|Error\|FAIL" | cut -c1-300
+      [ "${PIPESTATUS[0]}" = 0 ] || { say "FAILED: i7 dump $v$suf"; exit 1; }
+    done
+  done
+  $PY "$HERE/ood_i7.py" "$RUN" > "$RUN/log/i7.log" 2>&1 || { tail -30 "$RUN/log/i7.log"; say "FAILED: ood_i7.py"; exit 1; }
+  say "i7 report $RUN/i7.md"
+  [ "${OOD_I7_KEEP:-1}" = 0 ] && rm -rf "$RUN/dump"
+fi
+# idread: the in-distribution read of this regime ensemble (VAL_TRAJ minus the regime; the regime band is fitted on these
+# trajectories, so band-dependent numbers are in sample) -> $RUN/idread/{json,report.md}
+if has idread; then
+  for v in ${OOD_IDREAD_VARIANTS:-frozen base control}; do
+    say "idread $v"
+    $PY "$HERE/ood_stream.py" --pkg "$RUN/pkg/$v" --regime "${REGIME}ID" --out "$RUN/idread/json/$v.json" 2>&1 \
+      | tr -d '\000' | tee "$RUN/log/idread_$v.log" | grep -a "^  \|Error\|FAIL" | cut -c1-300
+    [ "${PIPESTATUS[0]}" = 0 ] || { say "FAILED: idread $v"; exit 1; }
+  done
+  $PY "$HERE/ood_report.py" "$RUN/idread" > "$RUN/log/idread_report.log" 2>&1 || { tail -20 "$RUN/log/idread_report.log"; exit 1; }
 fi
 if has report; then
   $PY "$HERE/ood_report.py" "$RUN" > "$RUN/log/report.log" 2>&1 || { cat "$RUN/log/report.log"; exit 1; }

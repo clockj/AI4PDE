@@ -103,6 +103,15 @@ refitted to each ensemble.
 | T3 | sim dose `--lam-sim` 1.0 (shipped 0.3) on the F-FNO members | the dose was never opened because sim at the held-out **cell** was a wash in distribution (−0.004); the regime effect it rests on (+1.12) was never dosed | `A20` ≥ +0.10 and the mean of `relo`, `rehi` ≥ +0.10; in distribution ≥ −0.03 |
 | T4 | Re-similarity augmentation: a real window resampled in time by a factor s and scaled in amplitude by s, s log-uniform in [0.8, 1.25] (every sample traces back to a released trajectory) | `--aug-scale` alone was null in distribution; it changes the amplitude without the time scale, so it never produced a physically consistent neighbour in Re | mean of `relo`, `rehi` ≥ +0.10; `A20`, `A10` ≥ −0.02; in distribution ≥ −0.03 |
 
+**Added 2026-09-28 11:20 EDT**, after T4's single-member screen on RE (+0.120 rein, +0.523 relo, +0.208 rehi, 4 of 4 seeds
+each, against seed spreads of 0.02 – 0.08) and before any read of what follows. T4's own criterion is unchanged.
+
+| id | change | why | ships if |
+|---|---|---|---|
+| T4 (continued) | the same arm on A20 and A10 (seeds 1 – 4), and three twins on `VAL_TRAJ` for the in-distribution read | required by T4's criterion | as registered above, at ensemble level on the full stream stack |
+| T4v | the two ViT recipes with `--aug-resim 0.25` (RE first: ViT-C s1, s3 and ViT-P s1) | the ViT family is the weak member out of distribution, worst where the amplitude is extrapolated (relo: 4.4 – 7.1 behind an F-FNO); the augmentation widens exactly that range | single-member screen on RE: each of the three ≥ +0.20 on the mean of relo and rehi against its seed-matched control, and rein ≥ −0.05. If it clears, A20, A10 and the two ViT twins are trained, and the read is the ensemble whose six members all carry the augmentation: OOD mean ≥ +0.10 over the control ensemble and ≥ +0.03 over the ensemble with only the F-FNO members augmented; in distribution ≥ −0.03 |
+| T4b | `--aug-resim 0.5` (s in [0.67, 1.5]) on the F-FNO members, RE seeds 1 – 4 | the dose of a lever that paid; one step, not a sweep | replaces 0.25 only if it beats 0.25 by ≥ +0.05 on the mean of relo and rehi with 4 of 4 seeds and rein is not worse by more than 0.02; otherwise 0.25 stands |
+
 T3 and T4 run only on the regimes their criterion names. An arm that does not move its own training loss or its
 single-member held-out read by more than the control's seed spread is closed without an ensemble read.
 

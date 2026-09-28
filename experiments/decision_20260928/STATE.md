@@ -9,7 +9,9 @@ Plan and criteria: `PLAN.md`. Update this file at every wave; keep job ids, path
 | 2026-09-28 | opened | 0 | 0 | 0 % |
 | 2026-09-28 05:15 | wave 1 moved to Ascend; smokes and the cancelled Pitzer start | 1.4 (Pitzer 1.1 cancelled, smokes 0.3) | 1.4 | 0.5 % |
 
-Committed, not yet spent (estimates, A100): wave 1 about 60, arms T3 + T4(RE) about 31. Read the ledger with
+| 2026-09-28 10:57 | every training finished (24 wave 1, 8 T3, 4 T4), instrument chunks 1 – 4 so far | wave 1 60.3 · T3 20.9 · T4 10.6 · instrument 5.7 · other 0.2 | **97.7** | 33 % |
+
+Estimates made at 05:15 (A100): wave 1 about 60, arms T3 + T4(RE) about 31; both held. Read the ledger with
 `sacct -M ascend,pitzer -X -n -S 2026-09-28 -o jobname%26,elapsed,state,alloctres%40 | grep -E 'rp_dp_|pz_dp_'`.
 
 ## Wave 1 — instrument
@@ -106,6 +108,34 @@ never runs more than 20 jobs. All on Ascend `nextgen`, `-c 8`, 6:00:00, desktop 
   in `gen_t34.py` before anything was submitted, scripts regenerated, `wt_t4`'s diff hash unchanged.
 * T4 on A20 and A10 (8 jobs in `later/`) is submitted only if the RE arm clears its single-member screen (`PLAN.md` §5).
 
+## Single-member reads (every training finished 2026-09-28 10:55 EDT, all 36 jobs COMPLETED)
+
+`wfinal` of one checkpoint with its own band, `aoa_holdout_eval.py` (A20, A10) and `re_split.py` (RE); json next to each
+checkpoint. **Signs before sizes: the decisions are taken on the ensemble reads of the instrument.**
+
+| | in distribution (fit split) | A20 | A10 | relo | rehi | rein |
+|---|---|---|---|---|---|---|
+| F-FNO + sim, 6 seeds, mean ± sd | 85.98 ± 0.03 (A20 run) | 81.06 ± 0.08 | 83.90 ± 0.08 | 85.58 ± 0.07 | 80.42 ± 0.04 | 85.14 ± 0.02 |
+| ViT-C + sim, s1 / s3 | 85.76 / 85.72 | 79.53 / 79.67 | 83.18 / 83.17 | 79.94 / 81.20 | 79.89 / 79.99 | 84.96 / 84.91 |
+| ViT-P, no sim, s1 | 85.54 | 78.30 | 83.05 | 78.51 | 79.50 | 84.70 |
+| T3 (`--lam-sim 1.0`) − control, seeds 1 – 4 | +0.022 | **+0.171** (+0.007, +0.289, +0.161, +0.228) | not trained | −0.031 (2/4) | −0.002 (2/4) | −0.022 (1/4) |
+
+* **The ViT family is the weak link out of distribution.** A single ViT is 0.2 – 0.4 behind a single F-FNO in
+  distribution, 0.7 – 0.9 behind at A10, 0.4 – 0.9 at rehi, **1.4 – 2.8 at A20 and 4.4 – 7.1 at relo** (rel error 0.146 –
+  0.192 against 0.086). Sim co-training is worth +1.2 … +2.7 to a ViT at A20 and relo; the ViT that ships without sim
+  is the worst member in every held-out regime. Ensemble layouts `vitc2`, `ffno4`, `ffno6`, `six_vitc2` and FAMW's
+  learned weights were added to the instrument's wave to price it.
+* **The seed spread of F-FNO + sim is small out of distribution too** (0.04 – 0.08), not the 12 – 58× of `ROADMAP.md`
+  §1.12, which was measured on the unseeded FNO w24 of August. Arm T1 has less to average away than its premise said.
+* **Low-Re extrapolation is not hard for F-FNO + sim** (relo 85.58, above rein's 85.14); high-Re extrapolation is
+  (rehi 80.42, rel error 0.112, sps 37).
+* **T3 cannot pass as registered**: its criterion needs the mean of relo and rehi at +0.10 and the single-member deltas
+  there are null, inside the seed spread. At A20 it moves a member by two seed spreads (+0.17, 4/4). The ensemble read at
+  A20 is taken for the record.
+* **T4's own read step failed** in all four jobs: `wt_t4` has no `val_{relo,rehi,rein}.npz` (they were copied into
+  `wt_base` only). The checkpoints are complete; job 7572732 (`rp_dp_t4_read`) redoes the four reads from `wt_base`,
+  whose `re_split.py` is identical.
+
 ## Instrument (gauge)
 
 Code in `ood/` (`README.md` has the commands), generated files in `R/ood/`, note `results/ood_instrument.md`. One run =
@@ -164,9 +194,29 @@ archive it gated: to be fixed before the closing gates.
 * **The zero set is not static**: 3 – 16 % of pixels are zero in some frames only (mean 8.5 %), against 1.2 – 6 % that
   are always zero. Arm I7 (added to `PLAN.md` before any read) asks what the members predict at blanked elements.
 
+### Chunk 3: the screen of arm I7, zero propagation (0.30 GPU-h; `results/ood_i7_screen.md`)
+
+Post hoc on dumps of the real package path (they reproduce the stream records exactly), rescored through the kit.
+
+* **On the real recordings there is nothing to remove.** Where the input is zero in all 20 frames the members already
+  predict 0.0001 – 0.0004 m/s against a flow of about 0.15 m/s; elements whose target is zero carry 0.01 – 0.06 % of the
+  squared error. Rule Z1 (zero where the input is zero in all 20 frames) reads **+0.0001 / +0.0002 / +0.0001** (in
+  distribution, A20, A10; 7/8, 16/16, 18/18), against a bar of +0.03. **I7 is closed as a score lever.**
+* **Under a synthetic re-blank it is large.** Z1 against the control on Track 2: in distribution +0.878 / +0.020 / +0.574
+  (border band, dilated zero set, near-wake rectangle), A20 +0.156 / +0.006 / +0.288, A10 +0.150 / +0.022 / +0.475,
+  every trajectory positive; on the frozen package (Track 1's case) +0.8 … +5.5. The members have learned where the
+  training recordings are blanked, not the rule; the stream stack relearns a new blank in about ten windows and
+  removes three quarters of its cost, Z1 removes it from the first window.
+* Rules that read only the last input frames lose in distribution (−0.011 at one frame, 0/8): transient zeros.
+  Zeroing only part of the output window creates a spurious fluctuation (tke −0.1 … −1.4).
+* **What is left is a question of insurance, not of score**: the same premise as the band fill that ships
+  (`--fill-unscored`, dev-board price −0.0016). Z1's measured price on our data is zero. Its cost is a new branch in the
+  one package that can be uploaded. Not built; the owner decides.
+
 ## Decisions
 
 * **2026-09-28:** `STATS_MASK` stays off (arm I2 closed by its own criterion; see above).
+* **2026-09-28:** arm I7 closed as a score lever (+0.0002 against +0.03). Open as insurance, for the owner.
 
 * **2026-09-28, owner:** Ascend first whenever it is idle (same price, faster); Pitzer is the overflow. `sbatch --test-only`
   is not evidence that Ascend is busy: it printed a start 24 h away while real jobs started in seconds. Probe with one
