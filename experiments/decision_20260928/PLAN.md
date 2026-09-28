@@ -82,6 +82,15 @@ Deltas are composite, against the mirror ensemble with the package of record's c
 | I5 | the stream constants (`D1C_N0`, `D1C_EB_N0`, `D1C_LEAD_N0`, `VC_N0`, `R1_N0`, `R1_BLK_N0`) chosen leave-one-regime-out | the constants picked on three regimes gain ≥ +0.03 on the fourth, in all four rotations, and in distribution ≥ −0.01 |
 | I6 | band base and SIGBLEND κ, q refitted on pooled held-out-condition errors, leave-one-regime-out | ΔC×100 ≥ +0.30 OOD mean with ≥ 3 of 4 regimes positive; in distribution `sps` ≥ −0.05. Stated in ΔC; local containment over-reads (§1.34), so the bar is twice the in-distribution one |
 
+**Added 2026-09-28 06:10 EDT, before any read of it:**
+
+| id | change | why it is new | ships if |
+|---|---|---|---|
+| I7 | zero propagation: an element that is the physical zero in every one of the 20 input frames is predicted as the physical zero in all 20 output frames. Uses the window's own input only, so it is legal on both tracks. A knob, bit-identical when off | the scorer's `rel`, `tke`, `mvpe` and the accuracy factor of `sps` are norms over the **whole** field, blanked elements included (`scoring.py` lines 87 – 91, 206 – 210); only the interval average and the coverage leave them out. The documents said blanked elements "are not scored", so nothing ever asked what the members predict there. A novel angle has a different blanked region | OOD mean ≥ +0.03 with ≥ 80 % of trajectories positive; in distribution ≥ 0.00 with ≥ 6 of 8 trajectories not negative; on the three synthetic re-blanks of arm I2, better than the control |
+
+I7 is screened first on dumped predictions (where the squared error sits, by the state of the input at that element),
+then, if the screen shows at least half of the bar, built as a knob and read on the real code path.
+
 ### Training side (about 75 GPU-h)
 
 Seed-matched to the control, read at ensemble level (the arm's four F-FNO members with the control's two ViTs), band

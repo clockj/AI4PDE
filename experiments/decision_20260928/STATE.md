@@ -108,10 +108,65 @@ never runs more than 20 jobs. All on Ascend `nextgen`, `-c 8`, 6:00:00, desktop 
 
 ## Instrument (gauge)
 
-Code in `ood/`, generated files in `R/ood/`. Validation on the stand-ins was still running at 05:15; its note will be
-`results/ood_instrument.md`.
+Code in `ood/` (`README.md` has the commands), generated files in `R/ood/`, note `results/ood_instrument.md`. One run =
+one Ascend job of 3 – 7 minutes: member check, band refit on `VAL_TRAJ` minus the regime, `build_final.sh` with the
+ensemble as members and twins, variants by rewriting the baked constants of the extracted package, streams through
+`stream_eval.run` with the revealed target normalised as the runner does, causal check, report. 0.35 GPU-h so far.
+
+**Validated 2026-09-28 on what existed** (composite, trajectories with a positive delta in brackets):
+
+| read | in distribution, 8 twins' trajectories | AoA 20 stand-in (3 members) | AoA 10 stand-in (4 members) |
+|---|---|---|---|
+| stream stack − asymmetric R1 alone | +0.0757 (8/8) | +0.453 (16/16) | +0.567 (18/18) |
+| the same, first 3 / first 14 windows | — | +0.067 / +0.305 | +0.091 / +0.407 |
+| `PREV_SPACE` target − input | +0.0064 (8/8) | +0.0023 (16/16) | +0.0064 (18/18) |
+| `STATS_MASK` on − off | −0.0012 (4/8) | −0.0006 (2/16) | −0.0001 (11/18) |
+| FAMW (`FW_N0` 20) on − off | −0.0007 (2/8) | +0.0088 (13/16) | +0.0141 (16/18) |
+
+* The in-distribution row equals `audit_20260927/refactor_pkg.md` to the printed digits; the held-out-angle rows are
+  within 0.015 of the sprint's CPU probes (+0.446, +0.553). Causal check: largest difference 0 in every run.
+* **These are not the reads of gate G0 or of any arm**: the stand-ins have 3 – 4 single-seed members and FNO w96 as the
+  second family. The decisions wait for the mirror ensembles of wave 1.
+* FAMW on top of the full stack reads +0.01 on the stand-ins, against the +0.15 it read on symmetric R1 without D1c.
+  It also breaks the first-window identity (its mix equals the mean algebraically, not in floating point).
+* A20's static band rests on one fit trajectory (`--fit-aoa 15 20` within `VAL_TRAJ` minus AoA 20); A10 and RE on three.
+
+**Hazard found by the instrument, open for the closing gates.** Two jobs on different nodes built in one scratch
+worktree behind a `flock`; `flock` does not serialise across nodes on scratch. One Track-2 archive was built from the
+unsubstituted defaults (`r1 False … sigpow None` in the gate's load line) **and the build still ended
+`BUILD_FINAL OK`**. Every build of this campaign therefore runs in its own tree (`git archive` of the commit) and checks
+the rewritten files before and after. `build_final.sh` itself does not verify that the constants it baked are in the
+archive it gated: to be fixed before the closing gates.
+
+### Chunk 2 of the instrument (dry runs on the stand-ins, 0.78 GPU-h; `results/ood_chunk2.md`)
+
+* **The shipped static band is fitted in sample.** `build_round13.sh:105` calls `fit_band.py` without `--fit-on`, whose
+  default is `seen` with `--fit-aoa 15 20`: the error field is the twins' error on the three AoA 15 – 20 trajectories of
+  `val_seen` (10125_20, 12675_20, 22875_15; 126 windows), **which the twins trained on**, times 1.39. `MANIFEST.md`
+  records the flag; `CLAUDE.md` rule 3 and the method report read as if the field were held out. The SIGBLEND constants
+  are fitted out of sample (8 trajectories, 336 windows). Measured on the stand-ins, a band fitted the shipping way and
+  one fitted out of sample differ by 0.002 – 0.012 composite, so this is a fact to state correctly, not a lever.
+* **Arm I2 (`STATS_MASK`) fails, and the mechanism reverses the audit's recommendation.** Plain data: −0.0012 / −0.0006
+  / −0.0001. Under a synthetic re-blank (border band, dilated zero set, near-wake rectangle) it loses on every
+  trajectory: in distribution −4.77 / −0.10 / −2.40, A20 −0.85 / −0.02 / −0.60, A10 −1.12 / −0.11 / −2.34. Containment
+  does not move; the loss is in rel, tke and mvpe, which the scorer takes over the whole field. Unmasked, D1c and
+  VARCAL learn the recording's own blanked region from the revealed targets and pull the prediction to zero there;
+  the mask switches that off. **`STATS_MASK` stays off.**
+* **Arm I1 holds on every read so far**, re-blanked streams included: `PREV_SPACE = "input"` loses on every trajectory
+  (−0.002 … −0.012).
+* **Arm I5, dry run:** every constant sits on a plateau within ±0.01 of the shipped point, except `VC_N0`, which wants
+  to be lower out of distribution (A10 +0.007 at 15) and higher in distribution (−0.021 at 15, 0/8). Decision on the
+  mirror ensembles, leave-one-regime-out; nothing here reaches the +0.03 bar.
+* **Arm I4, bound:** if windows with at most two revealed targets had the gain of windows 8 – 13, the full stream would
+  gain +0.026 (A20) and +0.035 (A10); on 14-window streams +0.075 and +0.104. That is the whole early deficit, of which
+  an interval prior can recover only the interval's part. Nothing is built for I4 unless the mirror ensembles' bound is
+  clearly above +0.03.
+* **The zero set is not static**: 3 – 16 % of pixels are zero in some frames only (mean 8.5 %), against 1.2 – 6 % that
+  are always zero. Arm I7 (added to `PLAN.md` before any read) asks what the members predict at blanked elements.
 
 ## Decisions
+
+* **2026-09-28:** `STATS_MASK` stays off (arm I2 closed by its own criterion; see above).
 
 * **2026-09-28, owner:** Ascend first whenever it is idle (same price, faster); Pitzer is the overflow. `sbatch --test-only`
   is not evidence that Ascend is busy: it printed a start 24 h away while real jobs started in seconds. Probe with one
