@@ -20,6 +20,449 @@ reached 163 k characters, and Claude Code loads that file into every session and
 * The archived part is not strictly chronological (reference sections sit between round 12 and
   round 13, as they did in the original). Search by heading.
 
+
+**2026-09-27, Main Development closed.** Three changes, made by the documentation wrap-up; the text
+above and every archived section below are unchanged.
+
+* **An index of every board round** follows this note. It gives the date, the lever, the board `final`
+  and the heading of the write-up. Search for the heading text; it survives edits that line numbers do not.
+* **The appendices now sit at the top of the file**, directly after the index. Appendix A is the
+  "CLAUDE.md detail moved here on 2026-09-15" section, moved up from the end of the file; a one-line
+  pointer marks its old place. Appendices B and C hold the old `CLAUDE.md` text that the 146-line
+  `CLAUDE.md` of 2026-09-27 no longer carries. Everything below them is, as before, the record in
+  upload order, and **the file again ends with the newest round.**
+* **The rounds of 2026-09-21 … 09-27 are appended** (R31–R37, T2R18–T2R24), followed by "Main
+  Development closed: what the last week overturned". Where `CLAUDE.md`, `ROADMAP.md` or an older
+  section below disagrees with the facts of record, those sections name the conflict. The current
+  manual is `CLAUDE.md` and the state is `STATUS.md`; `CLAUDE.md` no longer carries a *Current state*.
+
+The authority for every number is `Track_1/board_rounds.py` (`ROUNDS`, `ROUNDS_T2`, and `FINAL_ONLY`
+for the eight rounds of 09-21 … 09-24 whose subscores were not recorded) and `leaderboard/board.jsonl`
+(what each round was for, its registered prediction and its result).
+
+## Index of board rounds
+
+`final` is the board score, rounded to 3 decimals. R8 and R22 were never board rounds: the ids jump there.
+Two uploads of 08-09 and 08-11 were a collaborator's (X1 80.519, X2 80.372, `board_rounds.py`); no
+package for them is recorded. A write-up named in *italics* is a heading in `ROADMAP.md`, not here.
+
+| round | date | package / lever | `final` | write-up (heading) |
+|---|---|---|---|---|
+| R6 | 08-04 | the July-30 U-Net, 1 invocation, ALPHA 0.75 — first v9 upload | 79.733 | Round 6 (2026-08-05) |
+| R7 | 08-05 | FNO w24 ×3 seeds, 3 invocations | 79.985 | Round 7 (2026-08-05 evening) |
+| R9 | 08-06 | FNO ×8, mixed widths, 8 invocations | 80.115 | Round 8 (2026-08-06) for the package; Round 9 (2026-08-07) for the board read |
+| R10 | 08-08 | 7 members, 3 invocations, σ-scaled band (the band reopened) | 80.512 | Round 10 BOARD RESULT (2026-08-08) |
+| R11 | 08-10 | 8 members fused into 3 invocations, ALPHA 0.90 | 80.609 | Round 11 BOARD RESULT |
+| R12 | 08-31 | 11 members, 4 invocations (+ U-Net) | 80.516 | Round 12 BOARD RESULT (2026-08-31) |
+| R13 | 08-31 | 8 members, 1 invocation, ALPHA 0.60 | 80.644 | Round 13 BOARD RESULT (2026-09-01) |
+| T2R1 | 08-31 | R13's package on Track 2 | 80.653 | Round 13 BOARD RESULT (2026-09-01) |
+| R14 | 09-02 | R13 + the gated mean blend β 0.15 (fired on no window) | 80.631 | Round 14 BOARD RESULT (2026-09-02) |
+| T2R2 | 09-02 | 8 all-data dropout members | 80.853 | Round 14 BOARD RESULT (2026-09-02) |
+| R15 | 09-03 | T2R2's dropout members on Track 1 | 80.835 | Round 15 BOARD RESULT (2026-09-03) |
+| T2R3 | 09-03 | w96 ×8 | 81.019 | Round 15 BOARD RESULT (2026-09-03) |
+| R16 | 09-04 | w96 ×8 (T2R3's members) | 81.120 | Round 16 BOARD RESULT (2026-09-04) |
+| T2R4 | 09-04 | U-FNO ×3, 3 invocations (missed by −0.45) | 80.879 | Round 16 BOARD RESULT (2026-09-04) |
+| R17 | 09-04 | w96 L8 dropout 0.45 ×4, 1 invocation | 81.170 | Round 17 BOARD RESULT (2026-09-04 22:06) |
+| T2R5 | 09-04 | R17's package on Track 2 | 81.019 | Round 17 BOARD RESULT (2026-09-04 22:06) |
+| R18 | 09-06 | R17 through a faster host path (pure latency) | 81.177 | Rounds 18–23 (2026-09-06 → 09-11) |
+| T2R6 | 09-06 | R17's members, `bmm` spectral path (pure latency) | 81.017 | Rounds 18–23 |
+| R19 | 09-08 | sim co-training ×4 | 81.186 | Rounds 18–23 |
+| T2R7 | 09-08 | sim co-training ×4 | 81.087 | Rounds 18–23 |
+| R20 | 09-09 | cmb3sim ×4 | 81.240 | Rounds 18–23 |
+| T2R8 | 09-09 | cmb3sim ×4 | 81.106 | Rounds 18–23 |
+| R21 | 09-10 | xfam5 = cmb3sim ×4 + one ViT, 2 invocations | 81.331 | Rounds 18–23 |
+| T2R9 | 09-10 | xfam5 | 81.156 | Rounds 18–23 |
+| R23 | 09-11 | R20's package UNFUSED, 4 invocations (an instrument) | 81.015 | Rounds 18–23 |
+| T2R10 | 09-11 | R20's package unfused | 80.946 | Rounds 18–23 |
+| R24 | 09-12 | xfam6 = R21 + a second ViT | 81.312 | Round 24 BOARD RESULT (2026-09-12) |
+| T2R11 | 09-12 | x8v = R21 + FNO s5–s8 | 81.059 | Round 24 BOARD RESULT (2026-09-12) |
+| R25 | 09-13 | xfam6 fp16 | 81.345 | Round 25 BOARD RESULT (2026-09-14) |
+| T2R12 | 09-13 | xfam6 fp16 | 81.164 | Round 25 BOARD RESULT (2026-09-14) |
+| R26 | 09-16 | Swin ×4 + ViT ×2 | 81.218 | *§1.28 Rounds 26–27*; here only as reference rows in "Round 27 / T2R14" and in Appendix A ("Moved 2026-09-16") |
+| T2R13 | 09-16 | F-FNO w40 L8 ×4 + ViT ×2 | 81.315 | *§1.28*; reference rows in "Round 27 / T2R14" |
+| R27 | 09-17 | R25 + a CUDA graph on `predict` | 81.308 | Round 27 / T2R14 BOARD RESULT (2026-09-17) |
+| T2R14 | 09-17 | F-FNO depth L4 | 81.308 | Round 27 / T2R14 BOARD RESULT (2026-09-17) |
+| R28 | 09-18 | F-FNO w40 L8 ×4 + ViT ×2 (T2R13's package) | 81.401 | Round 28 / T2R15 BOARD RESULT (2026-09-18) |
+| T2R15 | 09-18 | F-FNO L8 ×4 without the ViT pair | 81.265 | Round 28 / T2R15 BOARD RESULT (2026-09-18) |
+| R29 | 09-19 | R28 on the tiled `_fno.py` | 81.400 | Round 29 / T2R16 BOARD RESULT (2026-09-19) |
+| T2R16 | 09-19 | T2R13 + the filled band | 81.324 | Round 29 / T2R16 BOARD RESULT (2026-09-19) |
+| R30 | 09-20 | r34: F-FNO + sim co-training, filled band | 81.419 | Round 30 / T2R17 BOARD RESULT (2026-09-20) |
+| T2R17 | 09-20 | r34 | 81.334 | Round 30 / T2R17 BOARD RESULT (2026-09-20) |
+| R31 | 09-21 | r35: interval centred on the alpha-0 field (centre0) | 81.596 | Round 31 / T2R18 (2026-09-21) |
+| T2R18 | 09-21 | r35 | 81.499 | Round 31 / T2R18 (2026-09-21) |
+| R32 | 09-22 | r37: band stretch 1.39 → 1.55 | 81.538 | Round 32 / T2R19 (2026-09-22) |
+| T2R19 | 09-22 | r35 resubmitted byte for byte | not recorded | Round 32 / T2R19 (2026-09-22) |
+| R33 | 09-23 | f4v1a060: one ViT dropped for latency | 81.560 | Round 33 / T2R20 (2026-09-23) |
+| T2R20 | 09-23 | f4v1a060 | 81.494 | Round 33 / T2R20 (2026-09-23) |
+| R34 | 09-24 | QD error-head band, ALPHA 0.80 | 81.577 | Round 34 / T2R21 (2026-09-24) |
+| T2R21 | 09-24 | QD error-head band, two CUDA streams | 81.618 | Round 34 / T2R21 (2026-09-24) |
+| R35 | 09-25 | r38 "A": static band, ALPHA 0.80, centre0 | 81.622 | Round 35 / T2R22 (2026-09-25) |
+| T2R22 | 09-25 | A + R1, online per-pixel band calibration | 81.716 | Round 35 / T2R22 (2026-09-25) |
+| R36 | 09-26 | "D": A on the D2 host path + batch fingerprint | 81.583 | Round 36 / T2R23 (2026-09-26) |
+| T2R23 | 09-26 | A + R1 at ALPHA 0.90 | 81.740 | Round 36 / T2R23 (2026-09-26) |
+| R37 | 09-27 | k27fin: SIGBLEND band, JOINT_GAIN, host latency knobs — **package of record** | **81.671** | Round 37 / T2R24 (2026-09-27) |
+| T2R24 | 09-27 | MRGP2: R37's levers + the causal stream stack — **package of record** | **82.056** | Round 37 / T2R24 (2026-09-27) |
+
+## CLAUDE.md detail moved here on 2026-09-15 (verbatim)
+
+*Appendix A. Moved here on 2026-09-27 from the end of this file, where it had followed the round-30
+section, so that the file ends with the newest round. Text unchanged.*
+
+`CLAUDE.md` was trimmed back under 30,000 characters on 2026-09-15, when the two 09-15 packages, the
+09-14 backbone closures, the Codabench UTC-day rule and the `debug-nextgen` note went in. The passages
+below left it word for word; `CLAUDE.md` keeps a shorter statement of each. The 09-14 closures
+themselves, with their evidence, are in `ROADMAP.md` Part 2.
+
+**Header note:**
+
+> `ROUNDS.md` opens with this file verbatim as of round 25
+> (163 k characters: every round's detail, superseded tables, struck-through claims), so older
+> pointers such as "CLAUDE.md round 14" or "Strategy item 6" resolve there.
+
+**Current state — 2026-09-14, the round-25 bullet:**
+
+* **R25 / T2R12 (read 09-14): fp16 ran on the board**; the error subscores moved by ≤ 3e-4
+  against R24, the fingerprint. Track 1 kept **37 %** of the local −21 % (5.570 → 5.076 board
+  ms, +0.033). Track 2's archive also added the second ViT: its containment (+0.041) landed, but
+  `time` 91.04 < 91.52, so fp16 did not pay for the ViT's FLOPs. Both estimates (81.356 /
+  81.223) missed only in `time`.
+
+**Scoring, the weight fit** (two sentences cut):
+
+* **The rule combining the subscores into `final_score` is unpublished. It is a free linear fit**
+  (no Σw = 1) over 32 rounds pooled across both tracks: **rel_l2 0.4775 · tke 0.1013 · mvpe
+  0.0920 · time 0.0965 · sps 0.2501** (Σw 1.018, max residual 0.0025). Five single-subscore A/Bs
+  read `w_time` directly at 0.0956–0.0962. `Track_1/final_v9.py` is the authority; work in deltas.
+  Every weight table in `ROUNDS.md` before round 17 is the superseded constrained fit.
+
+**Board latency** (provenance cut from two bullets):
+
+* **Invocation:** +1.151 board ms on Track 1, +0.866 on Track 2 (R23 shipped R20's package
+  unfused).
+* **FLOPs:** ≈ 1.75 board ms per 4060-equivalent local ms on Track 1 (R16→R17 1.76, R21→R24
+  1.74), 0.60 on Track 2 (one reading). A100 local ms × 1.850 = 4060-equivalent.
+
+**What ships, and why — inference items 3–4 and *Why this shape*:**
+
+3. `_fno.fuse()` folds same-architecture members into one invocation: `StackedFNO` (modes
+   zero-padded; `w2` pads at the FRONT) and `StackedViT`. Exact to ~1e-8 with TF32 off.
+4. Latency settings, each verified accuracy-neutral: `HOST_WRITE = "torch"` (threaded output
+   write, bit-identical, −17 % on Track 1); `SPEC_PATH = "bmm"` (real 2×2-block spectral matmul,
+   2e-6, −17 % of the Track-2 step); int8 packing (free for FNO and ViT); `AMP` (autocast checked
+   against fp32 at import, falling back on an exception, non-finite output or a diff above 2e-2;
+   `AMP_ACTIVE` records the outcome; fp16 cut compute −21 % / −46 % on R24's archive, and Track 1's board kept 37 % of it; bf16
+   crashes in `torch.complex`). TF32 is off (`RPDE_TF32` opts in for drivers only). `_pick_batch`
+   times batch sizes at import. Track 2 captures the whole device-side step in a CUDA graph at
+   load, verified bit-exact against eager.
+
+**Why this shape** (board evidence; detail in `ROADMAP.md` Part 1):
+* Regularized capacity pays through the error tail, not the rms: dropout +0.200, then w24 → w96
+  +0.166 while `rel_l2` got worse. **Attack the tail.** `rel_l2` alone would have called that a
+  regression.
+* Depth at equal FLOPs is a wash (4×L8 ≈ 8×L4), and the capacity ladder ends at w96 L8.
+* A second family *inside* an FNO package pays through containment (first ViT +0.15 of accuracy,
+  second +0.05), where U-FNO as a whole package missed by −0.45. A third ViT or AFNO does not pay
+  for its FLOPs. Member count is closed (4 → 8 FNOs with a ViT present: −0.020). Uniform member
+  averaging is optimal.
+* Sim co-training is real but small (≈ +0.01–0.02 of accuracy); the `cmb3sim` losses on top of it
+  added +0.031 / +0.049. Neither moved containment.
+* Velocity-gradient matching (`--lam-grad`, both invariants of ∇u) is the only physics loss that
+  works. In the FNO, the σ head must share the trunk and have an MLP readout (`--var-mlp`);
+  capacity at the boundaries (`--lift-mlp`) helps, and capacity in the trunk (`--point-mlp`) hurts.
+
+**Moved 2026-09-16, when the 09-16 results went in.** From *Current state*, the round-26 pair and the
+round-25 read, both compressed out of the manual:
+
+* **The round-26 pair, staged 09-14: upload status unknown.** Track 2 xfam5fp16 (T2R9 + fp16),
+  est. 81.166 vs T2R12 (81.113-81.210, likely a tie); Track 1 R25 + a CUDA graph on `predict`,
+  est. 81.428 vs R25 (81.345-81.527), fingerprinted by sps -1e-4.
+* **R25 / T2R12: fp16 ran on the board** (errors moved <= 3e-4 against R24). Track 1 kept 37 % of
+  the local cut; on Track 2 it did not pay for the second ViT's FLOPs. Both estimates missed only
+  in `time` (`ROUNDS.md`, round 25).
+
+From *Scoring*, the containment ledger, which `CLAUDE.md` now points here for:
+
+  Board steps that moved containment: band +1.41 . capacity w24->w96 +0.99 / +0.96 . members 3->8
+  +0.67 . U-FNO in/out +0.46 / -0.44 . first ViT +0.18 / +0.16 . second ViT +0.05 / +0.04.
+  Everything else (sim, depth at equal FLOPs, auxiliary losses, latency rebuilds, 4->8 members with
+  a ViT present) landed within +-0.05. 2026-09-16 adds Swin +0.128 (R26) and F-FNO +0.302 (T2R13).
+
+**Instruments — a sign, not a size** (examples cut from three bullets):
+
+* **Every local number is a sign.** The proxy over-reads error cuts about 2× (R24: rel −0.75 %
+  predicted, −0.30 % delivered). Board/proxy level ratios are ≈ rel 1.07, tke 1.14, mvpe 1.45, and
+  the delta residual is ~4 % of the error rms. Across model families the proxy has been wrong in
+  size and, for U-FNO, in sign.
+* **Screen at the ensemble size that ships.** `Track_1/compare_v9.py` scores single checkpoints,
+  each with its own band; `Track_1/ens_v9.py --aoa 15 20` scores member sets on the board-like
+  proxy; add the full split. Error that an arm removes independently per member vanishes in the
+  ensemble average (the oscillatory head: +3.84σ per model, −0.012 ensembled).
+* **Predict** with `Track_1/predict_board.py` (per-metric ratios, the 1.36 SPS tail, measured
+  latency constants; anchors named `t2*` select Track 2's), anchored on a recent round of the same
+  shape. Bracket `time` with the measured slopes, never a cross-day refit (both round-24 estimates
+  fell below their floors that way). For local `sps`, transfer through the per-sample factor is
+  the estimate and 1:1 transfer the optimistic end.
+
+
+## CLAUDE.md *Current state* as of 2026-09-20 (verbatim, superseded)
+
+*Appendix B. The* Current state *section of `CLAUDE.md` as it stood at commit 7b6ee8e (last edited
+2026-09-20), moved here on 2026-09-27 when `CLAUDE.md` was rewritten without a status section
+(state now lives in `STATUS.md`). Text unchanged; the dated note after it lists what the week
+after 09-20 contradicted.*
+
+
+| | `final` | package |
+|---|---|---|
+| Track 1 best | **81.418569** | **R30** = r34, F-FNO+sim ×4 + ViT ×2 (09-20) |
+| Track 2 best | **81.333776** | **T2R17** = the same archive contents (09-20) |
+| **method of record, BOTH tracks** | **r34** `p2ffnoL8sim_fill` | members `ffno_all_w40l8_sim_s1..s4` + the two ViTs · band `r34_p2ffnoL8sim_fill.npz` |
+| rank, read 09-20 | **T1 #23** (was #21) · **T2 #15** (was #14) | cut not reported this read; 09-18 it was T1 81.624 / T2 81.511 |
+
+* **09-20, sim co-training ships and is the best on both boards.** R30 **+0.017** over R28, hitting its
+  81.4179 estimate **to 0.0007**; T2R17 **+0.010** over T2R16 and **+0.052 at equal time** — its miss is
+  entirely a **+0.704 ms `time` draw**, the top of Track 2's drift range. Three readings. (a) **The mean
+  field transfers at ~1:1 and `rel`/`tke` do not**: `mvpe` **+0.056 / +0.068**, the *un-halved* twin
+  delta, while `rel` came back slightly worse on both and `tke` split (−0.069 T1, +0.026 T2). That is
+  the AoA-holdout mechanism (`plan_20260917.md` §11) confirmed on the board. (b) **`sps` beat its
+  a-factor: containment +0.134 / +0.160** from the band refit on the sim twins, reproduced on both
+  boards, so it is real. (c) **Every row except `tke` has the same sign across tracks.**
+* **The sim lever is small here and large out of distribution: +0.02 on the board against +1.12 mean at
+  a held-out AoA** (§11.4: AoA 10 +0.281, AoA 20 +1.251, seed 2 +0.981). **Shipped for the private set,
+  not for the board number.**
+* **We gained score on both boards and lost a place on both** (#21→#23, #14→#15): the field is moving
+  faster than we are, and **no lever ≥ +0.05 remains on the dev board** (distillation, ALPHA, a third
+  family, the ViT-pair drop, the tiling and the band fill are all closed — `ROADMAP.md` Part 2).
+* **09-21: HOLD on both tracks.** Nothing staged beats r34, and **a timing draw is not resubmitted** —
+  T2R17's own `time` row is what one costs.
+* **Calibration.** A **board** read of a family transfers across tracks at ≈ 0.85×; a **proxy** read
+  does not (R28). "Halve the local deltas" is for arms that REMOVE error — a member REMOVAL (T2R15) and
+  **a mean-field gain (R30) are charged in full**.
+* **THE RULES PIVOT (09-17):** slots are **learning** slots aimed at the **top-10 cut**; every shipped
+  checkpoint must be **re-creatable from the release** (`REPRODUCE.md`, `reproduce.sh`); the private set
+  is OOD in AoA and Re, so the **AoA-holdout screen** replaces R14's "hidden set in range" there.
+* **Packages of record — one package, both boards.** 4 all-data **sim-co-trained** F-FNO w40 L8 fused
+  **dense** + 2 ViTs · int8 `tensor` · band **`r34_p2ffnoL8sim_fill.npz`** (the `--fill-unscored` refit
+  on the sim twins) · ALPHA 0.60 · `BLEND_BETA 0` · fp16, bmm, tiled `_fno.py` (T1 adds HOST_WRITE
+  torch). Twins `p2_ffno_l8_sim_s1..s3` + the two ViT twins.
+* **Where the remaining score is.** Everything package-level is closed (`ROADMAP.md` Part 2); what is
+  left is **generalization, not score** — `reproduce.sh` end to end and Decision-phase release
+  readiness. Local evaluation and the board constants that correct it: `EVALUATION.md`.
+
+**Dated note, 2026-09-27.** Superseded point by point by the rounds of 09-21 … 09-27 at the end
+of this file: "09-21: HOLD on both tracks" was not followed (r35 was uploaded that day, R31 /
+T2R18); "no lever ≥ +0.05 remains on the dev board" was overturned the same day (+0.178 / +0.166)
+and again on 09-25 and 09-27; the package of record is no longer r34 but R37 / T2R24 (ALPHA 0.80,
+centre0, SIGBLEND band `k27_sigblend_lam0.5.npz`, JOINT_GAIN, and on Track 2 the causal stream
+stack); the final boards are 81.671149 / 82.055553. See "Main Development closed: what the last
+week overturned".
+
+
+## CLAUDE.md detail moved here on 2026-09-27 (verbatim)
+
+*Appendix C. Six sections of `CLAUDE.md` as they stood at commit 7b6ee8e (last edited 2026-09-20),
+moved here on 2026-09-27: the rewritten 146-line `CLAUDE.md` no longer carries them. Text
+unchanged; headings are demoted one level to sit under this one. Where the rewritten manual,
+`EVALUATION.md`, `REPRODUCE.md` or `Track_1/submit_fno/build_final.sh` disagree with them, those win.
+Known conflicts with the facts of record, as of 2026-09-27: ALPHA is 0.80, not 0.60; the band is
+centred on the alpha-0 field and is SIGBLEND; Track 2 ships a causal stream stack, not a frozen
+model; the `final` weights are `final_v9.W0` of the 48-round fit; the packages are built by
+`build_final.sh`, not by a bare `build_round13.sh 0.60`; the `submit_trick/` path is now
+`Track_1/archive/submit_trick/`.*
+
+### Scoring
+
+The official program is `RealPDE/official/t1_v9/.../scoring.py` (Track 2: `official/t2_v6/`). Our
+reconstruction, `RealPDE/realpde_t1_starting_kit_v9/realpde_t1_starting_kit_v9/scoring.py` (what
+`validate_strict.py` and `sps9.py` run), agrees with it to 2.4e-6
+(`Track_1/verify/diff_scoring_{official,real}.py`). Score locally before every submission.
+
+* `rel_l2`, `tke`, `mvpe` → `100/(1 + 0.5·e)`, on `u, v` only. rel-L2 is per window; TKE is the rel-L2
+  of `0.5·(var_t u + var_t v)` over the 20 output frames, so phase-free; MVPE is the rel-L2 of the
+  time-mean at probes x ∈ {13,21,29,37}, y ∈ {8,10,…,24}, per x-station, averaged.
+* `time` → `100/(1 + sqrt(t/0.72896))`, t the mean board **seconds** per step (5.570 ms → 91.96);
+  0 or non-finite ⇒ 0. **The private set is timed on 8× A800, so these constants need not carry.**
+* `sps` (kit v9) → `100·w`. Per scored element (target inside `[lower, upper]` and non-zero):
+  `(1−pm)·exp(−(upper−lower)/σ)`, `pm = e/(0.5+e)` per branch, branches DM 0.5 / TKE 0.3 / MVPE 0.2,
+  σ = 0.0563870259. Always ship a band (the default ±5 %·|pred| is poor). **Malformed bounds (shape,
+  non-finite, `lower > upper`) zero every subscore.**
+* **SPS factorizes:** `sps = 100·mean_i(a_i)·containment`, `a_i = 0.5g(rel) + 0.3g(tke) + 0.2g(mvpe)`,
+  `g(m) = 0.5/(0.5+m)`, so the optimal band is a sort (`Track_1/sps9.py`) and a round's `sps` follows
+  from its other three subscores, with containment the residual (two recent negatives: L8→L4 −0.310,
+  dropping the ViT pair −0.132). **No local instrument reads containment.**
+* **The rule combining the subscores into `final_score` is unpublished. It is a free linear fit**
+  (no Σw = 1) over **40** rounds pooled across both tracks: **rel_l2 0.4778 · tke 0.1010 · mvpe
+  0.0921 · time 0.0965 · sps 0.2498** (Σw 1.0173, max residual 0.0032). `Track_1/final_v9.py` is
+  the authority; work in deltas.
+* **Exchange rate**, containment fixed, per 10 % of error removed: rel_l2 **+0.346**, tke **+0.290**,
+  mvpe **+0.100**.
+* **Noise:** the four error subscores are deterministic per archive; only `time` varies (same-shape
+  drift 0.03–0.30 ms on T1, 0.4–0.7 ms on T2).
+* **Both boards are one test set and one rule.** The same package lands within ~0.4 % on `rel_l2` and
+  `sps` across tracks; T1's `mvpe` error is lower in every pair (~3–5 %) and, since w96, its `tke` by
+  ~1.5 %. **A board-measured DELTA transfers across tracks at ≈ 0.85×** (R28) — a proxy one does not.
+
+#### Board latency — measured; move in deltas, never predict a level
+
+Constants in `board_rounds.py` (`INV_MS_T1/T2`, `LOC_SLOPE_*`, `PREC_SLOPE_T1`, `board_ms`,
+`time_score`, `invocation_cost`) and `predict_board.py` (`LAT_*`); derivations in `EVALUATION.md` §5.
+
+* **Invocation:** +1.151 board ms on T1, +0.866 on T2 (R23, unfused); untested since.
+* **FLOPs:** **1.75** board ms per 4060-eq local ms on T1 *within* a kernel family, **0.89 across one**
+  (`LOC_SLOPE_T1_XFAM`, R28 — bracket [0, 1.75]). Track 2 has four readings (0.60 / 0.937 / 0.529 / ≈0.28)
+  and ships **0.60**; **bracket it with 0.3 and 0.9.** A100 local ms × 1.850 = 4060-equivalent.
+* **Precision** is charged less: fp16 kept 37 % on T1, ≈ 0.65 board ms per 4060-eq ms (`PREC_SLOPE_T1`).
+* **A local read transfers only for a FLOPs cut, within ~2×, and the two local instruments disagree:**
+  R28 vs R25 read **+0.797 ms** (kernel) and **+0.164** (package); the board gave **+0.404** — quote
+  both as the bracket. Swin measured 0.63× and the board returned +1.17; R27's graph measured −0.2 %
+  locally and cost +0.565 on the anchor's own kernels: **host-side launch accounting does not transfer**.
+* At ~4.5 board ms on T1, 1 board ms ≈ −0.072 `final`; T2 carries a fixed ~+0.86 ms per-step handicap at
+  one invocation. **The machine drifts by date — anchor on a recent round of the same shape.**
+
+### What ships, and why
+
+**Members.** Checkpoints in `Track_1/unet/` (untracked); read any recipe from
+`torch.load(ckpt)["config"]`. **Each must be re-creatable from the release** (rules pivot).
+* **The `cmb3sim` loss recipe**, shared by both families: `--stride 5 --epochs 400 --batch 32 --lr 2e-4
+  --var-head --var-mlp --lift-mlp --loss mse --lam-f 0.0 --lam-cov 2.0 --cov-c 0.25 --lam-grad 1.0
+  --lam-tgrad 0.3 --lam-v 0.15 --lam-t 0.15 --alpha-train 0.0 --sim <train_sim> --lam-sim 0.3
+  --sim-loss full --all-data`; `--lam-f 0.0 --lam-cov 2.0` swaps the MSE field term for a
+  curvature-matched Welsch "coverage" loss that bends only the tail. Twins drop `--all-data`, add
+  `--sim-exclude-held`. **FNO ×4** `fno_all_w96L8cmb3sim_s1..s4.pth` adds `--arch fno --width 96
+  --n-layers 8 --modes-y 8 --modes-x 12 --dropout 0.45` (jobs `r19e`/`r19f`).
+* **ViT ×2** (`ViT2d`, dim 384, 8 layers, 6 heads, dropout 0.3, no `--var-mlp`/`--lift-mlp`):
+  `arch_vit_all_s1.pth` (plain MSE field, `--lam-grad 1.0 --lam-v 0.3`, no sim) and
+  `arch_vit_all_cmb3sim_s3.pth` (cmb3sim losses and sim).
+* **The shipped members are F-FNO WITH SIM CO-TRAINING** (`ffno_all_w40l8_sim_s1..s4.pth`, w40 L8 modes
+  16×32, screen recipe + sim + `--all-data`) on BOTH tracks; the no-sim `ffno_all_w40l8_s*` are the
+  superseded R28/T2R13 members. **Held-out twins** (the band's error field): `p2_ffno_l8_sim_s1..s3.pth`,
+  plus `arch_vit_d384.pth` and `arch_vit_cmb3sim.pth`; `fno_r18_cmb3sim{,_s2,_s3}.pth` for FNO work.
+* **`train2.py`'s argparse defaults are NOT the recipe:** `--alpha-train` 1.0 (collapses the model),
+  `--sim-loss shape`, `--lam-f` 1.0, `--lam-v/--lam-t` 1.0/0.5, `--loss rel`, `--width` 64,
+  `--n-layers` 4, modes (12,16), `--epochs` 150.
+
+**Inference** (`Track_1/submit_fno/submission.py` + `_fno.py`; `Track_2/submit/_fno.py` symlinks it):
+1. Normalize → average the members' raw field and σ on the GPU → `compose`: rescale the fluctuation's
+   per-pixel temporal std toward the σ head at **ALPHA 0.60** (0.55–0.70 is flat) → denormalize.
+2. Band: `half = base · clip(σ/σ_ref, 0.3, 3.0)^p`, p 0.45. `base` is solved per element, box-smoothed
+   (k 3) and fitted by `fit_band.py` on AoA 15–20 at a 1.39× stretch (the board's measured tail is
+   1.36; refitting there buys 0.000).
+3. `_fno.fuse()` folds same-architecture members into one invocation: `StackedFNO` (modes zero-padded,
+   `w2` pads at the FRONT) and `StackedViT`, exact to ~1e-8 with TF32 off; `StackedSwin` and
+   `StackedFFNO` (`FFNO_PATH` dense or fft) within 2e-5 in fp32.
+4. Latency settings, each verified accuracy-neutral (sizes in `ROUNDS.md`): `HOST_WRITE = "torch"`
+   (threaded output write, bit-identical); `SPEC_PATH = "bmm"` (real 2×2-block spectral matmul, 2e-6);
+   int8 packing (free for FNO and ViT); `AMP` (autocast checked against fp32 at import, falling back on
+   an exception, non-finite output or a diff above 2e-2; `AMP_ACTIVE` records the outcome; bf16 crashes
+   in `torch.complex`). TF32 is off (`RPDE_TF32` opts in for drivers only). `_pick_batch` times batch
+   sizes at import. Track 2 captures the whole device-side step in a CUDA graph at load, bit-exact
+   against eager; **on Track 1 the same graph is closed** — R27 shipped it and paid +0.565 board ms.
+
+**Why this shape** — the seven board findings behind every choice above (capacity pays through the
+TAIL; depth at equal FLOPs is a wash; a second family pays through containment and a third does not;
+member count is closed; sim and `cmb3sim` are real but small; `--lam-grad` is the only physics loss
+that works; the σ head needs the shared trunk and `--var-mlp`) are stated with their sizes in
+`ROUNDS.md` and `ROADMAP.md` Part 1.
+
+### Instruments — a sign, not a size
+
+**Catalogue and calibration constants: `EVALUATION.md` §4–§5.** The rules:
+
+* **Every local number is a sign.** The proxy over-reads error CUTS ~2×; **a member REMOVAL is charged
+  in full** (T2R15). Board/proxy ratios ≈ rel 1.07, tke 1.14, mvpe 1.45. **Across FAMILIES the proxy
+  predicts neither size nor sign** (R16, R26); a *board* read of a family does, at 0.85× (R28).
+* **Instrument defaults are not the operating point:** `--alpha` is 0.75 in `compare_v9`, `ens_v9`,
+  `fit_band`, `predict_board` and 0.90 in `kfold`; `fit_band --band-p` is 0.5. **Pass `--alpha 0.60
+  --band-p 0.45`.**
+* **Screen at the ensemble size that ships** (`ens_v9.py --aoa 15 20` for member sets, `compare_v9.py`
+  for single checkpoints, each with its own band; add the full split). Error an arm removes per member
+  vanishes in the ensemble average.
+* **Confirm** with the interior Re-band k-fold (`kfold.py --split re`, bands 1–3, `--paired`) —
+  overstates `rel_l2` ~1 %, signs of tke/sps right. **For the PRIVATE set use the AoA-holdout screen
+  instead** (`aoa_holdout_eval.py`): it is the only OOD instrument we have.
+* **Predict** with `Track_1/predict_board.py`, anchored on a recent round of the same shape. Bracket
+  `time` with the measured slopes. For `sps`, the per-sample factor is the estimate and 1:1 the
+  optimistic end — and containment is board-only, so never bank it.
+* **Control and replicate.** `train2.py --seed` bit-matches a control to its arm; replicate in the first
+  job (single runs at 2–3σ have regressed). An arm that does not move its own training loss cannot move
+  the held-out metric.
+* **Refit everything downstream** (band, ALPHA) before comparing a changed member set. **Derive
+  held-out lists** (`re_split.excluded()`, `kfold.py --folds`) — the grid is incomplete, so a typed
+  `--exclude` leaks.
+* **If an arm scores worse than the worst case for its own hypothesis, suspect the harness.**
+
+### Closed — do not re-propose without new evidence
+
+Evidence and files: `ROADMAP.md` Part 2, the latest handoff, `ROUNDS.md`, and the per-script
+verdicts in `Track_1/closed/README.md` and `Track_2/closed/README.md`.
+* **Band width and shape**, eight times (exact per-element solver, trajectory CV, spread-adaptive,
+  asymmetric, online calibration) — but **not** the unscored-element fill, which is a different failure
+  (above). Member weights (uniform is optimal). ALPHA (a plateau).
+* **Architecture:** capacity past w96 L8 (L12, w128, modes (12,20)) and below it; ViT L12; member
+  count; a third family (AFNO) or a third ViT; U-FNO; CNO, Transolver (latency); DeepONet; GNNs; KANO;
+  DINOv2 init (no gain — and now **prohibited**).
+* **σ head:** readout width/depth/inputs; loss weights (`lam_v` U-shaped); a detached head; a separate
+  σ network; post-hoc calibration; FGN/CRPS generative σ. **σ-amplitude modelling is closed on PHYSICS**
+  too: the TKE target is a 20-sample variance, our 0.538 already beats the hindsight long-run variance
+  (0.570), and a 20 % cut would beat a 40-frame hindsight variance (0.456). No TKE-targeted arm.
+* **Losses and regularizers:** the scorer's functionals in the loss (`--lam-p`, `--lam-t` up,
+  `--lam-tail`, `--w-mean`, spectrum, Laplacian); ∇·u → 0 and momentum; `--wd`; SAM; `--aug-noise`;
+  `--aug-scale`; `--phases 4`; 800 epochs; `--chan-pow`; SWA; `--point-mlp`. `--mode-drop` and
+  `--aug-mask` sit at the seed floor.
+* **Representation:** `--norm self` (−0.50 ensembled); phase/advection re-registration; oscillatory
+  and temporal-basis heads; diffusion; analog forecasting; long context; denoise→predict→renoise.
+* **Sim:** pretraining (+0.00); `lam_sim` dose; stride; per-pixel maps; `--sim-loss shape`;
+  `--aux-fstride`; a pressure head. **New simulations are prohibited**; the release's sim is fine.
+* **Track 2 adaptation:** residual EMA; online band calibration; gradient TTT; closed-form readout
+  refit; trajectory history (worth nothing). Transductive pooled statistics are a leak.
+* **Test-set range:** the gated mean blend (`BLEND_BETA = 0`) — **for the PUBLIC set only**; it wins out
+  of distribution, so the private set re-opens it on the AoA-holdout reads.
+* **Latency (board-measured, 09-17):** the **Track-1 CUDA graph** (R27, +0.565 board ms) and
+  **F-FNO depth L4 on Track 2** (T2R14: errors a wash, containment −0.310).
+* **Backbones (09-14 screen; `ROADMAP.md` Part 2):** ConvNeXt U-Net (w40, w72), PDE-Arena U-Net and
+  SimVP; Swin capacity (w96); sim on Swin; Re/AoA oracle conditioning.
+* **Dropping the ViT pair** (T2R15: −0.155 accuracy+containment against +0.105 of `time`).
+
+### Build and gate a package
+
+```bash
+# Repo root. Builds and gates BOTH tracks from one member set; stages into ../sub_candidates/.
+RPDE_A="<all-data members>" RPDE_M="<held-out twins>" RPDE_BAND=Track_1/bands/<band>.npz \
+RPDE_INT8=1 RPDE_LINEAR=tensor RPDE_SHIP_AMP='"fp16"' RPDE_SPEC_PATH=bmm RPDE_HOST_WRITE=torch \
+RPDE_TAG=<tag>_a060 bash Track_1/submit_fno/build_round13.sh 0.60
+```
+
+* Without `RPDE_BAND` it refits the band (`fit_band.py --alpha ALPHA --band-p 0.45`). **Refit whenever
+  the member set or ALPHA changes; always take the error field from held-out twins** — a band fitted on
+  memorized errors scored sps 36.94 (R6).
+* **Pass every knob**: unset ones fall back to older behaviour (round-13 width-24 members, ALPHA 0.90,
+  fp32 packing, `AMP = None`). It `sed`s constants into both `submission.py` files and leaves them
+  there, so **commit before building** (a build job restores the tree with `git checkout`) and **never
+  edit `_fno.py`, `submission.py` or the build scripts while a build runs**.
+* It refuses while other `rp_*` jobs run (`validate_strict.py` times the package; `RPDE_FORCE=1` skips
+  that when timing is not recorded) and **does not propagate its gates' exit codes** — read the
+  `SUBMITTABLE` line per track.
+* **Gates, verifiers, provenance and the full checklist: `EVALUATION.md` §4/§6, `ROADMAP.md` Part 4.**
+  Always run: `submit_fno/validate_strict.py` (T1, GPU) and `Track_2/validate_t2.py`.
+
+### Engineering traps
+
+* Never train through `compose` (`--alpha-train 0.0`); compose at inference only.
+* Time `predict()` end to end, after warm-up, outside the loop; the forward pass is a small part of it,
+  and the kernel and package timers disagree by 5× (see *Board latency*).
+* `torch.amax(x, dim=())` reduces over all dims (it gave a whole Linear one int8 scale). Score the real
+  code path, never a re-implementation of it.
+* Preprocessing that reads real-data statistics (domain maps, masks, per-condition normalizers) must be
+  told the split: `--exclude` only filters the loss, and round 14's sim map leaked 26 trajectories.
+* A feature no local data exercises needs its own verifier (`verify/blend_path.py`): the strict
+  gate passes such a package as if the feature were absent.
+* Running jobs re-import the working tree per arm. Edit shared modules in a copy, install with an
+  atomic `mv` after `ast.parse`, keep the default path bit-identical.
+* Co-scheduled h5 readers need `HDF5_USE_FILE_LOCKING=FALSE` (`jobs/common.sh`); Slurm snapshots a
+  batch script at submit time.
+* A waiter's sentinel must be the job script's last line, and it must exit when the job leaves the queue.
+
+
 ---
 
 # AI4PDE — NeurIPS 2026 RealPDE Competition
@@ -2581,99 +3024,389 @@ a large one where the angle is novel. The pre-registered rule it passed is in RO
 
 ---
 
-## CLAUDE.md detail moved here on 2026-09-15 (verbatim)
+*The section "CLAUDE.md detail moved here on 2026-09-15 (verbatim)" stood here until 2026-09-27;
+it is now Appendix A, near the top of this file.*
 
-`CLAUDE.md` was trimmed back under 30,000 characters on 2026-09-15, when the two 09-15 packages, the
-09-14 backbone closures, the Codabench UTC-day rule and the `debug-nextgen` note went in. The passages
-below left it word for word; `CLAUDE.md` keeps a shorter statement of each. The 09-14 closures
-themselves, with their evidence, are in `ROADMAP.md` Part 2.
+---
 
-**Header note:**
+## 2026-09-21 … 09-27: the agent-team week and the final day
 
-> `ROUNDS.md` opens with this file verbatim as of round 25
-> (163 k characters: every round's detail, superseded tables, struck-through claims), so older
-> pointers such as "CLAUDE.md round 14" or "Strategy item 6" resolve there.
+From 09-21 to 09-27 04Z a team of 13 agents ran the project on a separate server, with the owner
+uploading. On the last afternoon (16:03 – 19:59 EDT) two Claude Code sessions ran a final sprint on
+OSC. The sections below follow the board, one per upload day. Sources, cited per claim:
+`Track_1/board_rounds.py` (every subscore on record); the team's report
+`../artifacts/progress_report_20260927.md` (Chinese; "PR §n"); commit messages on `qwu/agent`;
+`experiments/sprint_20260927/` for the last day; `../sub_candidates/HISTORY.md` for the final
+registrations.
 
-**Current state — 2026-09-14, the round-25 bullet:**
+**Gaps in the record.** The 09-21 … 09-24 uploads were staged and scored on the team's server, and
+only their `final` was carried back (`FINAL_ONLY` in `board_rounds.py`). The 09-23 and 09-24 finals
+are four-decimal numbers without Codabench ids, and the 09-22 Track-2 result is in no source (PR,
+board table, gaps 1–4).
 
-* **R25 / T2R12 (read 09-14): fp16 ran on the board**; the error subscores moved by ≤ 3e-4
-  against R24, the fingerprint. Track 1 kept **37 %** of the local −21 % (5.570 → 5.076 board
-  ms, +0.033). Track 2's archive also added the second ViT: its containment (+0.041) landed, but
-  `time` 91.04 < 91.52, so fp16 did not pay for the ViT's FLOPs. Both estimates (81.356 /
-  81.223) missed only in `time`.
+**How the rows below are read.** Every error subscore S is turned back into its error e = 2(100/S − 1).
+With g(m) = 0.5/(0.5 + m), the accuracy factor is ā = 0.5 g(rel) + 0.3 g(tke) + 0.2 g(mvpe) and the
+containment is C = sps/(100 ā). "Forced" `sps` is the `sps` move that ā alone implies at fixed C;
+the remainder of the `sps` move is containment. Board milliseconds are 1000 · 0.72896 · (100/time − 1)².
+Weighted deltas use the 48-round fit (`final_v9.W0`).
 
-**Scoring, the weight fit** (two sentences cut):
+| round | ā | C | board ms |
+|---|---|---|---|
+| R30 / T2R17 (09-20 anchors) | 0.71692 / 0.71593 | 0.58952 / 0.59002 | 5.573 / 6.596 |
+| R31 (r35; ā of R30, `sps` from commit 70064ee) | 0.71692 | ≈ 0.5996 | not recorded |
+| R35 / T2R22 | 0.71840 / 0.71743 | 0.59943 / 0.60711 | 5.697 / 5.881 |
+| R36 / T2R23 | 0.71837 / 0.71687 | 0.59941 / 0.60704 | 6.324 / 5.017 |
+| R37 / T2R24 | 0.71860 / 0.72587 | 0.60055 / 0.61143 | 5.393 / 6.713 |
 
-* **The rule combining the subscores into `final_score` is unpublished. It is a free linear fit**
-  (no Σw = 1) over 32 rounds pooled across both tracks: **rel_l2 0.4775 · tke 0.1013 · mvpe
-  0.0920 · time 0.0965 · sps 0.2501** (Σw 1.018, max residual 0.0025). Five single-subscore A/Bs
-  read `w_time` directly at 0.0956–0.0962. `Track_1/final_v9.py` is the authority; work in deltas.
-  Every weight table in `ROUNDS.md` before round 17 is the superseded constrained fit.
+### Round 31 / T2R18 (2026-09-21) — r35: the interval centre was a free lever, +0.72 `sps` on both boards
 
-**Board latency** (provenance cut from two bullets):
+The 09-20 plan was to hold both slots (Appendix B, "09-21: HOLD on both tracks"; `ROADMAP.md`, old
+Part 3). It was not followed: the team uploaded r35 on its first day.
 
-* **Invocation:** +1.151 board ms on Track 1, +0.866 on Track 2 (R23 shipped R20's package
-  unfused).
-* **FLOPs:** ≈ 1.75 board ms per 4060-equivalent local ms on Track 1 (R16→R17 1.76, R21→R24
-  1.74), 0.60 on Track 2 (one reading). A100 local ms × 1.850 = 4060-equivalent.
+**The package.** r35 is r34 (R30 / T2R17) with one change, the interval centre. The interval is
+centred on the pre-compose member mean c = y(α = 0) instead of the composed prediction P, and widened
+to contain P: `lower = min(c − h, P)`, `upper = max(c + h, P)`. The band is refit around that centre
+with `fit_band.py --centre-alpha 0 --fill-unscored` at ALPHA 0.60 (`r35_centre0_fill.npz`; archives
+`track1_r35_centre0_fill.zip` 86c38bc6…, `track2_r35_centre0_fill.zip` 1e0f7860…). The point
+prediction is unchanged, so the only subscore that can move is `sps`. The arm is Bram's; commit
+70064ee. No registered prediction for it survives in any source here.
 
-**What ships, and why — inference items 3–4 and *Why this shape*:**
+| | rel_l2 | tke | mvpe | time | sps | **final** | vs anchor |
+|---|---|---|---|---|---|---|---|
+| **T1 R31** | = R30 | = R30 | = R30 | not recorded | R30 + 0.72 | **81.596074** | **+0.177505** (rank 23 → 15) |
+| **T2 T2R18** | = T2R17 | = T2R17 | = T2R17 | not recorded | T2R17 + 0.73 | **81.499485** | **+0.165709** (rank 15 → 14) |
 
-3. `_fno.fuse()` folds same-architecture members into one invocation: `StackedFNO` (modes
-   zero-padded; `w2` pads at the FRONT) and `StackedViT`. Exact to ~1e-8 with TF32 off.
-4. Latency settings, each verified accuracy-neutral: `HOST_WRITE = "torch"` (threaded output
-   write, bit-identical, −17 % on Track 1); `SPEC_PATH = "bmm"` (real 2×2-block spectral matmul,
-   2e-6, −17 % of the Track-2 step); int8 packing (free for FNO and ViT); `AMP` (autocast checked
-   against fp32 at import, falling back on an exception, non-finite output or a diff above 2e-2;
-   `AMP_ACTIVE` records the outcome; fp16 cut compute −21 % / −46 % on R24's archive, and Track 1's board kept 37 % of it; bf16
-   crashes in `torch.complex`). TF32 is off (`RPDE_TF32` opts in for drivers only). `_pick_batch`
-   times batch sizes at import. Track 2 captures the whole device-side step in a CUDA graph at
-   load, verified bit-exact against eager.
+* **Bit-identical errors, +0.72 / +0.73 `sps` on the two boards.** At R30's ā this is containment
+  0.5895 → ≈ 0.5996, the C the team later used as its reference (PR §2 F). The +0.72 is rounded,
+  so the `time` draw of these rounds cannot be recovered from `final`.
+* **Out of sample it replicates.** Ilse's audit of 09-23 (commit 9cc28d3) priced the decoupled
+  centre at +0.641 `sps` = +0.160 `final` once the band is refit around it, "a third independent
+  confirmation of Bram's arm". P stays inside the interval by construction, so no element loses
+  containment to the move.
+* **What it changed.** The band had been closed eight times (Appendix C, *Closed*), but no closure
+  had moved the centre. R31 stood as the Track-1 best until R35. The Track-2 entry was created on
+  09-22 00:38Z after an evaluator hang, so it may have used 09-22's slot (PR, board table, gap 2).
 
-**Why this shape** (board evidence; detail in `ROADMAP.md` Part 1):
-* Regularized capacity pays through the error tail, not the rms: dropout +0.200, then w24 → w96
-  +0.166 while `rel_l2` got worse. **Attack the tail.** `rel_l2` alone would have called that a
-  regression.
-* Depth at equal FLOPs is a wash (4×L8 ≈ 8×L4), and the capacity ladder ends at w96 L8.
-* A second family *inside* an FNO package pays through containment (first ViT +0.15 of accuracy,
-  second +0.05), where U-FNO as a whole package missed by −0.45. A third ViT or AFNO does not pay
-  for its FLOPs. Member count is closed (4 → 8 FNOs with a ViT present: −0.020). Uniform member
-  averaging is optimal.
-* Sim co-training is real but small (≈ +0.01–0.02 of accuracy); the `cmb3sim` losses on top of it
-  added +0.031 / +0.049. Neither moved containment.
-* Velocity-gradient matching (`--lam-grad`, both invariants of ∇u) is the only physics loss that
-  works. In the FNO, the σ head must share the trunk and have an MLP readout (`--var-mlp`);
-  capacity at the boundaries (`--lift-mlp`) helps, and capacity in the trunk (`--point-mlp`) hurts.
+### Round 32 / T2R19 (2026-09-22) — widening the band to 1.55 lost; the Track-2 resubmission has no recorded result
 
-**Moved 2026-09-16, when the 09-16 results went in.** From *Current state*, the round-26 pair and the
-round-25 read, both compressed out of the manual:
+**T1 R32 = r37**: r35 with the band's error stretch raised from 1.39 to 1.55
+(band `r37_inflate155`, fcec17b2…, not in `Track_1/bands/`). **81.538194, −0.0579 against R31.**
+rel, tke and mvpe were bit-identical and `sps` fell −0.2335 (PR §2 B), which is containment −0.0033 at
+R31's ā. **A uniformly wider band loses on the board.** No registered prediction survives here.
 
-* **The round-26 pair, staged 09-14: upload status unknown.** Track 2 xfam5fp16 (T2R9 + fp16),
-  est. 81.166 vs T2R12 (81.113-81.210, likely a tie); Track 1 R25 + a CUDA graph on `predict`,
-  est. 81.428 vs R25 (81.345-81.527), fingerprinted by sps -1e-4.
-* **R25 / T2R12: fp16 ran on the board** (errors moved <= 3e-4 against R24). Track 1 kept 37 % of
-  the local cut; on Track 2 it did not pay for the second ViT's FLOPs. Both estimates missed only
-  in `time` (`ROUNDS.md`, round 25).
+**T2R19** was r35's Track-2 archive resubmitted byte for byte. The reason is not recorded, and so is the
+result: no source holds it (PR, board table, gap 4). A byte-for-byte resubmission can only re-draw
+`time`, which the standing rules forbid (Appendix B).
 
-From *Scoring*, the containment ledger, which `CLAUDE.md` now points here for:
+**The rest of the day** (PR §2 B). The team set marginal prices at the 09-22 operating point:
+rel error −1 % ≈ +0.034 `final`, tke −1 % ≈ +0.028, C +0.01 ≈ +0.18. Band-shape families, "r36",
+curriculum training, ConvNeXt and "E1" were closed against pre-written gates; the definitions of r36
+and E1 are not in any source here. The owner reopened the backbone swap and set a target of 81.9.
+Ilse retrained all 11 training stages on a foreign software stack: F-FNO stages within 0.0002 wfinal,
+the package 84.3051 against the shipped 84.3029 (commit edb7c71).
 
-  Board steps that moved containment: band +1.41 . capacity w24->w96 +0.99 / +0.96 . members 3->8
-  +0.67 . U-FNO in/out +0.46 / -0.44 . first ViT +0.18 / +0.16 . second ViT +0.05 / +0.04.
-  Everything else (sim, depth at equal FLOPs, auxiliary losses, latency rebuilds, 4->8 members with
-  a ViT present) landed within +-0.05. 2026-09-16 adds Swin +0.128 (R26) and F-FNO +0.302 (T2R13).
+### Round 33 / T2R20 (2026-09-23) — dropping one ViT for latency lost on both boards
 
-**Instruments — a sign, not a size** (examples cut from three bullets):
+**f4v1a060** is r35 with `arch_vit_all_s1` removed: four F-FNO plus one ViT, with the band refit on the
+matching twins (`f4v1a060_fill.npz`, 3327298f…, ALPHA 0.60, centre0; commit 40c909d). It was a latency
+bet: the time gain was to outweigh a small accuracy loss.
 
-* **Every local number is a sign.** The proxy over-reads error cuts about 2× (R24: rel −0.75 %
-  predicted, −0.30 % delivered). Board/proxy level ratios are ≈ rel 1.07, tke 1.14, mvpe 1.45, and
-  the delta residual is ~4 % of the error rms. Across model families the proxy has been wrong in
-  size and, for U-FNO, in sign.
-* **Screen at the ensemble size that ships.** `Track_1/compare_v9.py` scores single checkpoints,
-  each with its own band; `Track_1/ens_v9.py --aoa 15 20` scores member sets on the board-like
-  proxy; add the full split. Error that an arm removes independently per member vanishes in the
-  ensemble average (the oscillatory head: +3.84σ per model, −0.012 ensembled).
-* **Predict** with `Track_1/predict_board.py` (per-metric ratios, the 1.36 SPS tail, measured
-  latency constants; anchors named `t2*` select Track 2's), anchored on a recent round of the same
-  shape. Bracket `time` with the measured slopes, never a cross-day refit (both round-24 estimates
-  fell below their floors that way). For local `sps`, transfer through the per-sample factor is
-  the estimate and 1:1 transfer the optimistic end.
+| | **final** | vs R31 / T2R18 |
+|---|---|---|
+| **T1 R33** `track1_f4v1a060.zip` | **81.5600** | **−0.0361** |
+| **T2 T2R20** `track2_f4v1a060.zip` | **81.4940** | **−0.0055** |
+
+* **The time gain delivered 21 % of its prediction** (+0.150 against +0.715), and the accuracy loss
+  was about twice the prediction (PR §2 C). Only the finals, to four decimals, were carried back.
+* **Consistent with T2R15 (09-18)**, which dropped both ViTs and lost −0.050. The pair stays. Jonas's
+  later read on top of R1 prices dropping both at −0.18 … −0.20 accuracy against +0.09 time (PR §5.5).
+* **What the day closed without a slot** (PR §2 C). Seven zero-training routes on the containment
+  axis all read 0 or negative. A learned error head *replacing* σ in the band read ≈ −0.23 on the r38
+  construction (the first −0.112 was on an older construction and is void). An error head *stacked*
+  on σ was real on the band side (+0.016, 3 seeds), but its total of +0.028 missed a +0.03 gate.
+* **Three audits of 09-23 feed later rounds.** 9cc28d3 found ALPHA 0.80 better than 0.60 by +0.0425
+  out of sample, with the direction replicating 3/3; `band_p` 0.45, `centre_alpha` 0, smoothing 3 and
+  inflate 1.39 were at their optimum. 0befa7a found the second family's value to be 83 % in-sample
+  (+0.97 in sample, +0.17 … +0.19 held out). a50ee68 scoped the 0.116 band ceiling to the shipped
+  family only: the pointwise bound is +3.894 `final`.
+* The owner removed five agents that evening and rebuilt the channels (PR §2 D).
+
+### Round 34 / T2R21 (2026-09-24) — the QD error-head band: +0.11 locally, containment down on the board
+
+**The package.** The four F-FNO members were retrained with an error head trained on the QD interval
+loss. The band is `half = k·H`, with H the mean predicted |error| of the four heads and k = 1.1399
+chosen by nested selection on the twins. ALPHA moved from 0.60 to 0.80 in the same package, and on
+Track 2 the two member groups ran on two CUDA streams. QD passed five pre-registered local checks:
++0.086 at the conservative k 1.244 and +0.1105 at the shipped k 1.14 (PR §2 E). The three other
+error-head losses (MSE, pinball, NLL) read +0.0156 / +0.0149 / +0.0148 and all failed their gate.
+They differ by less than 0.001 because the loss sets only the scale constant.
+
+| | **final** | registered | vs R31 / T2R18 |
+|---|---|---|---|
+| **T1 R34** `track1_qd_direct.zip` (5aac4d2d) | **81.5766** | ~81.75 | −0.0195 |
+| **T2 T2R21** `track2_qd_direct.zip` (731e58e7) | **81.6177** | ~81.71 | +0.1182, the Track-2 best that day |
+
+* **Containment fell, 0.5996 → 0.5966, while ā rose 0.717 → 0.719** (PR §2 F). Track 1 missed its
+  prediction by −0.17 and Track 2 by −0.09. The stretch inverted from the board is f_QD ≈ 1.35
+  against f₀ ≈ 1.29 for the static band. That rules out "the shipped head differs from the validated
+  one" and "the band is uniformly too wide or too narrow", but not the three suspects the team named:
+  the QD band's relative structure, the retrained members, and ALPHA 0.80. R35 and T2R23 were spent
+  separating them.
+* **The lesson the team recorded** (PR §2, lesson 4): the local +0.111 `final` was only ΔC ≈ +0.006,
+  below what the board resolves. **Every band change is now stated in ΔC as well as in `final`.**
+* That evening the team read the top-10 rule as the objective: T1 #19, T2 #14, short by +0.17 /
+  +0.26 (PR §2 G). R1 was approved for Track 2 with a registered prediction. Three training arms went
+  to the GPU and were closed the same night against a shared t-gate (6 seeds, Bonferroni over 3 arms,
+  t_crit 3.534): covmap A −0.068 ± 0.014, covmap B −0.043 ± 0.014, fnll −0.024 ± 0.019 (PR §3.2,
+  commit c410e75).
+
+### Round 35 / T2R22 (2026-09-25) — recipe A clears ALPHA 0.80; online band calibration (R1) pays on the board
+
+**Track 1, R35 = r38 "A"** (`track1_r38_samecode.zip`, 61f05353, submission 945431): r34's members,
+ALPHA 0.80, centre0, and the static band refit at 0.80 (`r38_a080_c0_fill.npz`). This is the controlled
+read of R34: if containment returns to r35's level, ALPHA 0.80 is cleared and the QD band is what lost.
+Registered: `final` [81.47, 81.66] (PR §3.1); no point estimate is recorded.
+
+**Track 2, T2R22 = A + R1** (`track2_r38_r1.zip`, 0249944e, submission 945432). R1 calibrates the band
+width online, per pixel, from the realised errors of the windows already revealed in the same
+trajectory. It picks k in [0.5, 2] on a 9-point log grid, box-smoothed and shrunk, and leaves the
+prediction untouched (Ramesh's design, approved by Jonas; commits 8dfcc35 … 6ad0bf3). It passed three
+independent implementations, 8/8 trajectories positive and the causal check. It is bit-identical to A
+when no target has been revealed, and costs +0.225 ms/step (PR §3.1). Registered against T2's A:
+errors Δ 0, `sps` **+0.24 [+0.12, +0.48]**, `final` +0.051 [+0.016, +0.115]; T2 A itself was
+registered at [81.53, 81.69].
+
+| | rel_l2 | tke | mvpe | time | sps | **final** |
+|---|---|---|---|---|---|---|
+| **T1 R35** (945431) | 94.762531 | 79.589142 | 94.261277 | 91.877333 | 43.063080 | **81.6224** |
+| **T2 T2R22** (945432) | 94.770908 | 79.515595 | 94.131921 | 91.758300 | 43.556207 | **81.71555** |
+| R35 vs R30 | −0.116351 | +0.705745 | 0.000000 | −0.081760 | +0.799267 | +0.203831 |
+| T2R22 vs R35 (R1 + the track) | +0.008377 | −0.073547 | −0.129356 | −0.119033 | +0.493127 | +0.093150 |
+
+* **Both are new bests**: T1 +0.0263 over R31 (#20), inside its bracket; T2 +0.0978 over T2R21 (#15),
+  above the bracket registered for T2's A and inside that bracket plus R1's registered gain.
+* **ALPHA 0.80 is cleared.** R35's C is 0.59943, back at r35's ≈ 0.5996. The QD band, not ALPHA,
+  is what lost containment on 09-24. Against R30, ALPHA 0.60 → 0.80 moved rel −0.116 and tke
+  +0.706, and `sps` rose +0.799. About +0.72 of that `sps` is the centre (R31), which leaves ALPHA
+  and the refit near +0.08. Weighted, the ALPHA move is worth about +0.03 without `time`. That is
+  roughly 0.45× of the local proxy's reading (PR §4.2); the team filed ALPHA with QD as changes the
+  local proxy over-reads (PR §2, lesson 1).
+* **R1 works on the board: ΔC ≈ +0.0070 ≈ +0.125 `final`, above the top of its registered bracket.**
+  T2R22's C is 0.60711, R35's is 0.59943: +0.0077. The static band's own cross-track offset is +0.0005 …
+  +0.0007 (T2R17 − R30 +0.0005; T2R18 − R31 ≈ +0.0007 from the rounded `sps` gains), which leaves
+  +0.0070 … +0.0072 for R1. The team's figure is +0.0070 (PR §4.2). The forced part is −0.058 `sps`,
+  because T2's mvpe error is higher, as it has been on every pair.
+* **This overturned a closure.** `ROADMAP.md` Part 2 closed "online SPS band calibration" on 08-31,
+  because a *global* rescale of the shipped band read c = 1.00. R1 is per pixel and learns each
+  trajectory's own error scale. A cross-trajectory placebo reads −0.10 … −0.14 (PR §5.4).
+* **Also on 09-25.** Recipe A was retrained end to end from the tree (11 parallel stage jobs plus the
+  build). It reproduced the package within **+0.0006** against a ≤ 0.005 gate (commit 7ea07fb,
+  `REPRODUCE.md` §12). Same seed, code and card do not give the same weights: the F-FNO members differ
+  by about 0.5 %, the ViTs by about 10 %. The team also confirmed that the Decision phase allows **one
+  submission per person for the whole phase** (commit fb0cb6d). Audit 2 found about 2.6 ms of board
+  `time` with no local counterpart (PR §4.1), and fingerprints were added to read it (commit 90ce4b5).
+  D1c (a causal per-pixel bias correction) read −0.003 in distribution at n0 = 2 on symmetric R1
+  and was closed; it was reopened on 09-27 (below) and ships in T2R24.
+
+### Round 36 / T2R23 (2026-09-26) — a latency round: Track 1's faster host path drew slower, Track 2 drew faster, ALPHA 0.90 past the optimum
+
+**Track 1, R36 = "D"** (`track1_r38_n1e_a080.zip`, 850cdc21, submission 947197). This is R35's
+prediction on the D2 host path: the interval is finished on the GPU inside `predict_fno`, float64 input
+goes to the GPU unconverted, and the prediction is copied straight out (commits c868b3a, faff6a0). A
+batch fingerprint (`BATCH_FP`) encodes the evaluator's per-call window count N in the time-mean, where
+mvpe can read it. Devi's registered lower bound was 81.61 (PR §8); the rest of the registration is not
+in any source here.
+
+**Track 2, T2R23 = A + R1 at ALPHA 0.90** (`track2_r38_n1_a090.zip`, f90f92e4, submission 947196), with a
+graph-fallback fingerprint (`FALLBACK_FP`). It reads ALPHA on the board with R1 held fixed. Jonas
+registered tke and `sps` intervals; both results fell outside them (PR §8). The values are not recorded
+here.
+
+| | rel_l2 | tke | mvpe | time | sps | **final** |
+|---|---|---|---|---|---|---|
+| **T1 R36** (947197) | 94.760687 | 79.589142 | 94.261919 | 91.479685 | 43.060241 | **81.582555** |
+| **T2 T2R23** (947196) | 94.704404 | 79.608687 | 94.131921 | 92.339265 | 43.516808 | **81.739553** |
+| R36 vs R35 | −0.001844 | 0.000000 | +0.000642 | **−0.397648** | −0.002839 | −0.039845 |
+| T2R23 vs T2R22 | −0.066504 | +0.093092 | 0.000000 | **+0.580965** | −0.039399 | +0.024003 |
+
+* **Track 1: the whole −0.040 is `time`**, 5.70 → 6.32 board ms for the same prediction on a host path
+  built to be faster. The errors moved only by the fingerprint's own size. The fingerprint read the
+  evaluator calling `predict()` with **N = 14 … 99 windows**, where each window costs more than at N =
+  336: locally about 4.1 ms per window at N = 14 against 2.7 at N = 336 (PR §4.3).
+* **Track 2: +0.024, a new best that `time` carries alone**: 5.88 → 5.02 board ms, +0.056 `final`,
+  unexplained and not banked. The log showed `graph CAPTURED`, 5.0 ms per step. **ALPHA 0.80 → 0.90
+  is past the optimum**: rel −0.067, tke +0.093, `sps` −0.039, a net −0.032 without `time`. The final
+  packages went back to 0.80.
+* **Board `time` drifts more than the ledger assumed.** A host path built to be faster drew +0.63 ms on
+  Track 1, and one compute path moved −0.86 ms on Track 2 on the same day. The team's same-path drift
+  figures, T1 0.04 and T2 0.055 `final`, are lower bounds, and board `time` stopped counting as evidence
+  of significance (PR §4.2). Two structural terms were found and neither can be controlled: T2 spends
+  about 2.3 ms per step moving data between processes, and torch 2.2.2 costs T1 about +0.4 ms per window
+  against 2.7.1 (PR §4.3). The evaluation GPU is an A800 (`REPRODUCE.md` §0).
+* **Six lines of 09-26, all closed against pre-written gates** (PR §4.4). An error-scale predictor
+  was negative on 5/6 folds. Variant B read −0.004. The G0 probe gave median R² 0.110 against a
+  0.15 gate, which saved 22 GPU-h. Uncertainty transport gave R² ≈ 0.005 – 0.01. An R1 kernel-shape
+  variant read −0.012. Pixel-weighted training ("candidate 2", 20 GPU jobs) moved ΔC by +0.00007
+  against a +0.003 gate. A high-variance training shot (F-FNO w64 or dropout 0.45) waited for the
+  owner's consent and never ran. Both arms had been screened negative on 09-14/15 (PR §6.6).
+* **09-27 00–04Z, on the team's server.** The team reopened D1c on an out-of-distribution cell. On the
+  AoA-20 holdout D1c read **+0.382 / +0.372** and family weights +0.158 / +0.151, both 16/16
+  trajectories. Corin and Ramesh computed them independently (PR §4.6). This is an upper-bound reading,
+  since it was stacked on symmetric R1. In distribution, on asymmetric R1, D1c read +0.028 (7/8). D1c
+  was committed with n0 = 30 (c246e71), and asymmetric R1 (4a95a46) and the numpy return (9fe87f7)
+  went into the planned packages. Registered: T1 "27lz" 81.603 [81.562, 81.668], T2 asnp 81.776
+  [81.705, 81.849] or asnp + D1c 81.783 [81.71, 81.86]. By those registrations neither reached the
+  top-10 cut (PR §0). Neither was uploaded.
+
+### Round 37 / T2R24 (2026-09-27) — the packages of record: SIGBLEND, JOINT_GAIN and the Track-2 stream stack
+
+**The final-day sprint** (`experiments/sprint_20260927/README.md`). Two Claude Code sessions worked on
+OSC Ascend from 16:03 to 19:59 EDT. The F-sprint had a commander, 3 design agents and 6 executors
+(148 jobs, 40.9 GPU-h). The K-sprint had a commander, 4 designs and 6 executors (143 jobs, 26.6 GPU-h).
+The brief named the gap, containment 0.5994 against 0.612 – 0.624 for every Track-1 team above us, and
+called the day a free roll: the board keeps each team's best, so it asked for upside, not expected
+value. Every criterion was written before its result:
+
+| id | lever | held-out result | verdict |
+|---|---|---|---|
+| A | `ffvit`: cross-stitched F-FNO × ViT hybrid, warm-started | best row −0.004 on AoA 15–20 (bar +0.20); training loss −7…−15 % while held-out rel-L2 rose 0.1036 → 0.1059 | killed |
+| B | band base cross-fitted on ~30 out-of-fold trajectories | ΔC×100 +0.180 with 1/3 trajectories (bar +0.20, 3/3) | killed |
+| B2 | R1 table smoothing (TSM) + lead-time-block table (BLK) | +0.023 in distribution (8/8), +0.051…+0.062 AoA-20 (16/16); QA measured +0.23 ms/step against a ≤ 0.1 rule | shipped, latency rule overridden |
+| C | D1c 30 + VARCAL 50 (T2); FAMW; SIGEMA | +0.052 in distribution, +0.268 AoA-20, +0.333 AoA-10; FAMW −0.004 on AoA 15–20; SIGEMA −0.553 | D1c + VARCAL shipped; FAMW, SIGEMA off |
+| C2 | D1c with an empirical-Bayes shrink and a rank-1 lead-time profile | +0.062 in distribution, +0.401 AoA-20, +0.521 AoA-10 (18/18) against asymmetric R1 | shipped |
+| T1 probe | stacking / tree-gating the six members per window | hindsight ceiling −0.67 % rel error; leave-one-out −0.06…−0.11 % | closed |
+| K0 | SIGBLEND: per-element band blended with a σ power law, λ 0.5 | ΔC×100 +0.48 (7/8) leave-one-out; with R1 `sps` +0.218 (8/8) | shipped, both tracks |
+| K1 | host latency: WARM_TAILS, PIN_OUT, BATCH_CAP (T1); output arena (T2) | outputs md5-identical; T1 cold −0.65…−0.98 ms/window; T2 −0.40 ms/step for the first 1 024 steps | shipped |
+| K2 | JOINT_GAIN: one amplitude gain for u and v | rel error −0.462 % (8/8), tke and mvpe unchanged | shipped |
+| K3 | warm-start polish: AoA 15/20 specialists, over-sampling, dropout off | best arm +0.0125; specialists −0.22…−0.42 on the full split | closed |
+| merge | K tree + F's C2/B2 = MRGP2 | vs T2_P2: +0.057 / +0.029 / +0.034 (in distribution / AoA 15–20 / AoA-20) | shipped |
+
+The composites are the fitted `final` without `time`, read on held-out twins. "AoA-20" and "AoA-10"
+are ensembles trained without that angle of attack. The two sessions merged under a bit-identity
+contract: each proved that "the other side's knobs off" reproduces the other side's package
+(`result_mrg.md`, `result_c.md` §T2_MRG_P2).
+
+**The packages.** Both carry R35's members, ALPHA 0.80, centre0, JOINT_GAIN and the SIGBLEND band
+`k27_sigblend_lam0.5.npz` (e8309d9f). SIGBLEND needs its two literals from
+`Track_1/sigblend/band_k0_sigblend_lam0.5.json`: `EBAND` on Track 1, `SIGPOW` (0.2423, 0.2454) on Track 2.
+Track 1 adds WARM_TAILS, PIN_OUT 128 and BATCH_CAP 56, with SMALL_GRAPH off because EBAND needs the
+GPU band path at every N. Track 2 adds the causal stream stack: asymmetric R1 with TSM 3 and BLK;
+D1c with `D1C_N0` 30, the empirical-Bayes shrink and the lead profile; VARCAL `VC_N0` 30; and
+ARENA_STEPS 1024. FAMW and SIGEMA stay off. Both archives rebuild byte for byte, file by file, from
+`bash Track_1/submit_fno/build_final.sh` (job 7569053; job 7569179 from a clean worktree of
+fdac00b).
+
+**Registered before upload.** T1: K-sprint `FINAL_README.md`, 17:50 EDT, anchored on R35. T2: executor
+EC's registration, 19:07 EDT (`result_c.md`). EC anchored on the 09-25 rows and placed the board at
+"board-likeness" λ = 0.5, bracket [0.25, 1.0], between the in-distribution read and the held-out-AoA
+read. The commander's line was 81.99 [81.87, 82.21].
+
+| | rel_l2 | tke | mvpe | time | sps | **final** |
+|---|---|---|---|---|---|---|
+| T1 registered | 94.786 [94.772, 94.798] | 79.589 [79.58, 79.60] | 94.261 [94.25, 94.27] | 92.01 [91.44, 92.35] | 43.18 [43.04, 43.48] | 81.67 [81.58, 81.79] |
+| **T1 R37** `track1_k27fin_a080.zip` (438cd3ff) | 94.776302 | 79.589142 | 94.261277 | 92.080105 | 43.155698 | **81.671149** |
+| R37 vs R35 | +0.013771 | 0.000000 | 0.000000 | +0.202772 | +0.092618 | +0.048749 |
+| T2 registered | 94.845 [94.79, 94.955] | 80.045 [79.93, 80.26] | 94.509 [94.335, 94.859] | 91.925 [91.86, 91.99] | 44.130 [43.90, 44.55] | 82.000 [81.885, 82.219] |
+| **T2 T2R24** `T2_MRGP2_track2_MRGP2.zip` (1aa2896f) | 94.871355 | 80.665340 | 94.394560 | 91.243742 | 44.381923 | **82.055553** |
+| T2R24 vs T2R22 | +0.100447 | +1.149745 | +0.262639 | −0.514558 | +0.825716 | +0.340003 |
+
+* **Track 1: every subscore inside its bracket, `final` +0.001 from the estimate.** tke and mvpe are
+  bit-identical to R35, as JOINT_GAIN promises; rel +0.014 is JOINT_GAIN. `sps` +0.093 is forced
+  +0.012 plus **containment +0.080** (ΔC +0.0011, C 0.60055), which is SIGBLEND. `time` +0.203 is
+  5.70 → 5.39 board ms: the host knobs transferred in sign.
+* **Track 2: inside its bracket, by two misses that cancel.** tke came in +0.62 above its bracket, and
+  `time` −0.68 below it: 6.71 board ms against 5.63 registered, the slowest Track-2 draw on record.
+  Weighted with `W0`, tke +0.063 and `sps` +0.063 against `time` −0.066 and mvpe −0.011. Without `time`,
+  T2R24 is **+0.390 over T2R22**. Of the `sps` +0.826, +0.513 is forced by the accuracy gain and +0.313
+  is containment (ΔC +0.0043, C 0.61143).
+* **The board moved like the held-out-AoA reads, not like the in-distribution one.** Board error changes
+  against the 09-25 Track-2 row (T2R22): rel −2.0 %, tke **−7.0 %**, mvpe −4.7 %. The twins on AoA 15–20
+  read +0.8 / −2.1 / −0.7 %, the AoA-20 holdout −3.4 / −4.6 / −13.3 %. The tke cut exceeded even the
+  out-of-distribution read. The implied board-likeness is 0.6 – 0.8 against the registered 0.5.
+  Reconstructed from the registered line final(λ) = 81.787 + 0.426·λ and the per-subscore reads in
+  `result_c.md`: 0.63 from the raw `final`, 0.78 with the `time` miss added back, 0.80 from the
+  composite; per subscore rel 0.62, tke 1.91, mvpe 0.34, `sps` 0.80. The board's mvpe/rel error ratio
+  (1.13) was already closer to the AoA-10 holdout's (1.16) than to in distribution (0.87)
+  (`ood_aoa10.md`).
+* **Local latency did not bank on Track 2.** MRGP2 read 3.35 ms/step locally against 3.44 for T2_P2
+  (job 7568361), and the arena speeds up only the first 1 024 steps (QA X3). On Track 1 the latency
+  levers transferred in sign.
+* **The top-10 cut read at 21:39Z** was T1 81.885 / T2 81.988. Track 2 finished +0.068 above that read
+  and Track 1 −0.214 below it. Final ranks are not known.
+* **Track 2 against Track 1 on the same members:** T2R24 − R37 is rel +0.095, tke +1.076, mvpe +0.133,
+  `sps` +1.226 (ΔC +0.0109), `time` −0.836; `final` **+0.384**, and **+0.469 without `time`**. That is
+  what the revealed targets are worth on the development board.
+* **Known defects carried into the Decision phase** (`experiments/sprint_20260927/README.md`). The
+  official Track-2 runner normalises `prev_target` with the TARGET statistics, but R1's unscored-element
+  test assumes the input statistics, so the test never fires: about −0.0015 `final`
+  (`f_sprint/qa/qa_normcheck.py`). The online statistics include masked pixels. The output arena
+  holds 1 024 steps. The SIGBLEND constants are fitted on the eight validation trajectories.
+
+**The `final` rule, refit at the close on 48 rounds** (`final_v9.W0`, commit fdac00b): rel 0.4819 ·
+tke 0.0981 · mvpe 0.0911 · time 0.0961 · sps 0.2491, Σw 1.0164, max residual 0.0058 (R6, recorded to
+three decimals). The 42-round fit of 09-20 reads the six closing rounds high by +0.005 … +0.013:
+R35 +0.0049, T2R22 +0.0081, R36 +0.0049, T2R23 +0.0080, R37 +0.0055, T2R24 +0.0129. Those figures
+use the exact 42-round least-squares vector. The four-decimal vector quoted in the docs
+(0.4778 / 0.1010 / 0.0921 / 0.0965 / 0.2498) reads them within ±0.002 except T2R24 (+0.0065), which is
+one more reason to use `W0` and never the prose. The three adaptive Track-2 rows miss the refit by
+**0.0026 – 0.0049** (T2R23, T2R22, T2R24), more than any Track-1 row of the same period (≤ 0.0007). The
+rule is not exactly linear: a round whose containment moves without its errors moving is where it
+bends. The fit's gate is 0.0060.
+
+---
+
+## Main Development closed: what the last week overturned
+
+Statements written into `CLAUDE.md` (Appendices B and C), `ROADMAP.md` and the sections above, and the
+evidence of 09-21 … 09-27 against each. The old text is left as it was.
+
+1. **"Track 2 is Track 1's model, streamed … Ship frozen"; "Track 2 adaptation: residual EMA; online
+   band calibration; gradient TTT; closed-form readout refit; trajectory history … closed"**
+   (`CLAUDE.md` *The problem* and *Closed*; `ROADMAP.md` Part 2, "Closed with held-out TRACK 2
+   evidence"). **Overturned for band calibration and bias correction in their per-pixel causal
+   forms.** R1 gave ΔC ≈ +0.0070 ≈ +0.125 `final` on the board (T2R22), above its registered bracket.
+   The full stack (R1 asym + TSM + BLK, D1c with EB + lead profile, VARCAL) gave T2R24 +0.390 without
+   `time` over T2R22. On identical members, Track 2 finished +0.384 above Track 1 (+0.469 without
+   `time`). The 08-31 closures measured *global* estimators: a band rescale (best c = 1.00) and a lag-1
+   residual correlation (+0.051). The per-pixel, per-trajectory versions were never tested then.
+   Gradient TTT, closed-form readout refit and trajectory history remain closed.
+2. **"ALPHA 0.60 (0.55–0.70 is flat)"; "ALPHA (a plateau)"** (`CLAUDE.md` *What ships* and *Closed*;
+   `ROADMAP.md` §1.17). **Overturned.** Out of sample, ALPHA 0.80 beat 0.60 by +0.0425, with the
+   direction replicating 3/3 (9cc28d3). On the board, R35 against R30 and R31 puts the move at about
+   +0.03 without `time`, and T2R23 put 0.90 past the optimum (−0.032). Both packages of record ship
+   0.80; the tree's default is still 0.60.
+3. **"Band width and shape [closed], eight times … asymmetric, online calibration"** (`CLAUDE.md`
+   *Closed*; `ROADMAP.md` Part 2). **Qualified.** The *static* family is closed for width, p,
+   smoothing and inflate: 9cc28d3 found them at their optimum, r37's wider band lost −0.058, and the
+   cross-fitted base (design B) was killed. Three levers outside that family paid on the board. The
+   centre (R31: +0.72 `sps` on both boards, +0.18 `final`). The σ dependence (SIGBLEND, R37:
+   containment +0.080 `sps`). Online per-pixel calibration (R1, T2R22). The learned error-head band
+   (QD, R34) did not pay: containment −0.003.
+4. **"No lever ≥ +0.05 remains on the dev board"** (`CLAUDE.md` *Current state*, Appendix B;
+   `ROADMAP.md` old Part 3). **Overturned within the week.** Centre0 was +0.178 / +0.166 on 09-21. R1
+   was ≈ +0.125 on 09-25. The final day added +0.049 on Track 1 over R35 and +0.340 on Track 2 over
+   T2R22. From 09-20 to the close, Track 1 rose 81.419 → 81.671 (+0.253) and Track 2 81.334 → 82.056
+   (+0.722).
+5. **"Same-shape drift 0.03–0.30 ms on T1, 0.4–0.7 ms on T2"; "±0.07 `final` single-draw noise"**
+   (`CLAUDE.md` *Scoring*; `ROADMAP.md` §1.7). **Superseded.** A host path built to be faster drew +0.63
+   ms on Track 1 (R35 → R36), one compute path moved −0.86 ms on Track 2 (T2R22 → T2R23), and MRGP2 drew
+   6.71 ms against a 5.63 registration. Board `time` has a component with no local counterpart: an
+   intercept of about 2.6 ms, per-call batches of 14 – 99 windows, and T2 data transfer between
+   processes. It is no longer read as evidence of significance.
+6. **"Halve the local deltas" for error-removing arms** (`CLAUDE.md` *Current state*, *Instruments*).
+   **Does not hold for online corrections, and holds too weakly for band-tightening changes.** T2R24's
+   tke error fell −7.0 % on the board against −2.1 % on the in-distribution twins. The board sat
+   between the in-distribution and the held-out-AoA reads (board-likeness 0.6 – 0.8). In the other
+   direction, QD's local +0.11 bought ΔC −0.003, and ALPHA delivered about 0.45× of its local read.
+7. **"The PUBLIC hidden set lies inside the training speed range"** (`CLAUDE.md` *Data*; R14).
+   **Qualified, not overturned.** R14 measured the speed range, and nothing contradicts it. But on the
+   metrics the stream stack changes, the board's error pattern resembles a held-out angle more than
+   our in-distribution validation (mvpe/rel 1.13 against 1.16 AoA-10 and 0.87 in distribution). The
+   trust in that reading is low: an in-distribution error stretch of 1.29× explains the level
+   equally well.
+
+What held: all-data checkpoints give no evidence; Track 1 may use only window k's own input; the second
+family (the ViT pair) stays, since dropping one lost on 09-23 and dropping both would cost −0.18 …
+−0.20 against +0.09; training-side levers at this data scale are exhausted, and the final day's hybrid
+backbone, cross-fitted band and polish all failed their gates; reproducibility holds to +0.0006
+(7ea07fb).

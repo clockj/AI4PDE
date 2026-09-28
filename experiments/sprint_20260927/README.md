@@ -56,3 +56,9 @@ Reads are on the held-out twins; "AoA-20" and "AoA-10" are models trained withou
   the input statistics, so the test never fires (about −0.0015 `final`). `f_sprint/qa/qa_normcheck.py`.
 * The output arena holds 1 024 steps. A longer run falls back to fresh copies, which is correct and slower.
 * The SIGBLEND constants were fitted on the eight validation trajectories; their leave-one-out read is the evidence.
+
+## Verifiers of the sprint
+
+`k_sprint/verify/` holds the one-off verifiers the K-sprint wrote (`joint_gain.py`, `k0a_edge.py`, `k0a_lat.py`,
+`k0a_score.py`). They rebuild their variants by patching the tree of `55f0e88`, so they run against that tree, not
+against the current one. The two that stay useful, `k0a_dump.py` and `sigblend.py`, are in `Track_1/verify/`.

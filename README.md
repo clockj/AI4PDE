@@ -1,102 +1,77 @@
 # AI4PDE — RealPDE Competition (NeurIPS 2026)
 
-Our code for the [RealPDE competition](https://realpdecompetition.github.io/): forecast the next
-20 frames of real PIV velocity around a NACA4418 airfoil from the previous 20, on a 32×64 grid.
-CFD simulations of the same airfoil are available for training, never at test time.
+Our code for the [RealPDE competition](https://realpdecompetition.github.io/): forecast the next 20 frames of real PIV
+velocity behind a NACA4418 airfoil from the previous 20, on a 32×64 grid, with a lower and an upper bound for every
+element. CFD simulations of the same airfoil are available for training, never at test time.
 
-| track | protocol | entry point | best board score |
+| track | protocol | entry point | board score at the close of Main Development |
 |---|---|---|---|
-| [1 — Sim2Real](https://www.codabench.org/competitions/17363/) | one batched call over every test window, raw physical units | `predict(input_array, metadata)` | 81.401 |
-| [2 — LTTTA](https://www.codabench.org/competitions/17385/) | streaming at batch 1, normalized units, the previous window's truth revealed | `get_ttt_model(dir, device)` → `ttt_step(...)` | 81.324 |
+| [1 — Sim2Real](https://www.codabench.org/competitions/17363/) | batched calls over the test windows, raw physical units | `predict(input_array, metadata)` | **81.671** |
+| [2 — LTTTA](https://www.codabench.org/competitions/17385/) | streaming at batch 1, normalized units, the previous window's target revealed at every step | `get_ttt_model(dir, device)` → `ttt_step(...)` | **82.056** |
 
-Board scores as of 2026-09-19; the live record is `Track_1/board_rounds.py`, rendered by
-`python leaderboard/lb.py --html`. A board score blends five subscores: relative L2 error,
-turbulent kinetic energy, mean velocity at wake probes, latency, and an interval-coverage score
-(SPS).
+Main Development closed on 2026-09-27. The state is in [`STATUS.md`](STATUS.md); every scored round is in
+`Track_1/board_rounds.py`.
 
-## Approach
+## The method
 
-Both tracks ship the same frozen model. Test-time adaptation was measured on Track 2, and it does
-not pay for its latency.
+Both tracks ship the same six trained networks. Track 2 adds three corrections that learn from the targets the stream
+reveals; they train nothing.
 
-* **Ensemble.** Four width-96, 8-layer Fourier neural operators with heavy channel dropout, plus
-  two ViTs. The second architecture family earns its place through interval coverage rather than
-  rms error.
-* **Training.** A tail-robust (Welsch) field loss, matching of the target's velocity-gradient
-  tensor and temporal derivative, a per-pixel log-std head, and co-training on CFD mapped into
-  the PIV measurement space.
-* **Inference.** Members are averaged on the GPU, the predicted fluctuation is rescaled toward
-  the variance head, and per-element prediction intervals are fitted on held-out twins of the
-  shipped members. Same-architecture members are fused into one batched invocation; weights ship
-  as int8, with fp16 autocast verified against fp32 at load.
+* **Members.** Four factorized Fourier neural operators (width 40, 8 layers, 1.3 M parameters each) and two vision
+  transformers (dimension 384, 8 layers, 14.7 M each). Every member also predicts, per pixel, the temporal standard
+  deviation σ of the target window.
+* **Training.** A bounded (Welsch) field loss, matching of the velocity gradient and of the time difference, a
+  log-σ loss and a turbulent-kinetic-energy loss; co-training on CFD mapped into the units of the measurement.
+* **Prediction.** The mean of the six fields, with the amplitude of its fluctuation pulled toward σ (one gain for
+  `u` and `v`).
+* **Interval.** Centred on the mean before that adjustment and widened to contain the prediction. The half-width is a
+  per-element base, solved exactly on the errors of held-out twins of the members, scaled per window by σ.
+* **Track 2, online.** From the revealed targets of the current trajectory, strictly causally: the interval's lower
+  and upper width are recalibrated per pixel; the time-mean bias of the prediction is removed; the fluctuation
+  amplitude is recalibrated. On held-out angles of attack these corrections are worth ten times what they are worth in
+  distribution.
+* **Latency.** Members of a family are fused into one invocation; half precision, int8 weights, a dense spectral
+  operator, and on Track 2 one CUDA graph for the whole step.
 
-The measured reasons for each choice, and the long list of things that did not work, are in
-`ROADMAP.md` and `ROUNDS.md`.
+`REPRODUCE.md` specifies the method completely. The measured reason for each choice, and the list of what did not work,
+are in `ROADMAP.md` and `ROUNDS.md`.
+
+## Reproduce
+
+```bash
+conda env create -f environment.yml && conda activate realpde     # Python 3.10, torch 2.2.2+cu121, numpy 1.26.4
+RPDE_REPRODUCE_GO=1 RPDE_REPRO_OUT=<dir> bash reproduce.sh final   # 5 twins + 6 members + band + both archives, ~37 A100-hours
+bash Track_1/submit_fno/build_final.sh <outdir>                    # the two archives from existing checkpoints
+```
+
+The data is the competition release (`AI4Science-WestlakeU/RealPDE-Competition-Data` on Hugging Face); the official
+starting kits with the scoring program come from the Codabench pages. Paths default to our cluster: set `RPDE` for
+`reproduce.sh`, or pass `--data` and `--sim` to `Track_1/unet/train2.py`. No external data, no new simulations and no
+outside pretrained weights are used.
 
 ## Repository
 
 | path | contents |
 |---|---|
-| `Track_1/` | models, training, evaluation instruments and the package code — see `Track_1/README.md` |
-| `Track_1/unet/` | data pipeline (`model.py`), architectures (`models_alt.py`), training (`train2.py`), sim → real map (`simreal.py`) |
-| `Track_1/submit_fno/` | the shipped `submission.py` and `_fno.py`, band fitting, build and gates — see its `README.md` |
-| `Track_2/` | the streaming submission, its gate and evaluator, and the closed adaptation studies — see `Track_2/README.md` |
-| `leaderboard/` | submission and experiment ledgers, and the calibration-log page — see `leaderboard/README.md` |
-| `Track_1/closed/`, `Track_2/closed/` | one-off experiments whose question is closed, each with a one-line verdict in the directory's `README.md` |
-| `CLAUDE.md` | the working manual: contracts, scoring, the current package, standing rules |
-| **`EVALUATION.md`** | **how we evaluate locally and how each board result corrects it**: the scorer and its verifiers, the held-out splits, the instrument catalogue, every calibration constant with the rounds it came from, and the before-upload / after-a-result checklists |
-| `ROADMAP.md` | what the board says, what is closed, what is next |
-| `ROUNDS.md` | the detailed record, round by round |
+| `REPRODUCE.md`, `reproduce.sh` | the method, stage by stage, and the script that runs it end to end |
+| `Track_1/unet/` | data pipeline (`model.py`), architectures (`models_alt.py`), training (`train2.py`), the sim → real map (`simreal.py`) |
+| `Track_1/submit_fno/` | the shipped `submission.py` and `_fno.py`, band fitting, the build (`build_final.sh`) and the gate |
+| `Track_1/sigblend/`, `Track_1/bands/` | the σ power law of the band and its constants; every band that has scored |
+| `Track_2/` | the streaming `submission.py`, its gates (`validate_t2.py`, `stream_eval.py`) |
+| `Track_1/*.py` | the local instruments; `opoint.py` holds the operating point they default to |
+| `EVALUATION.md` | how local evaluation works and how each board result corrected it |
+| `ROADMAP.md`, `ROUNDS.md` | what the board taught us, what is closed, and the record round by round |
+| `experiments/`, `Track_1/closed/`, `Track_2/closed/`, `Track_1/archive/` | every experiment that did not ship: scripts, criteria, verdicts |
+| `leaderboard/` | the ledgers of uploads and experiments |
+| `CLAUDE.md`, `.claude/` | instructions for coding agents: rules, path-scoped notes, procedures |
 
-Not in git: the data and official kits (`~/RealPDE/`), checkpoints (`*.pth`), validation caches
-(`val_*.npz`) and built archives. Uploaded archives, with the predictions recorded before each
-upload, are kept next to the repository in `../sub_candidates/`.
-
-## Setup
-
-```bash
-conda env create -f environment.yml   # Python 3.10, torch 2.2.2+cu121, numpy 1.26.4: the evaluators' stack
-conda activate realpde                # on OSC: source .pyenv.sh
-```
-
-The data is the competition release, mirrored on Hugging Face as
-`AI4Science-WestlakeU/RealPDE-Competition-Data` (`train_real/`, `train_sim/`,
-`baseline_checkpoints/`). The official starting kits, with the scoring program and smoke tests,
-come from the Codabench pages. Paths default to the OSC machine; elsewhere, pass `--data` and
-`--sim` to `Track_1/unet/train2.py`.
-
-## Typical workflow
-
-```bash
-# 1. train a held-out twin with the shipped FNO recipe (swap --sim-exclude-held for --all-data to train a shipped member)
-cd Track_1/unet
-python train2.py --arch fno --width 96 --modes-y 8 --modes-x 12 --n-layers 8 --stride 5 --epochs 400 \
-  --batch 32 --lr 2e-4 --dropout 0.45 --var-head --var-mlp --lift-mlp --loss mse \
-  --lam-f 0.0 --lam-cov 2.0 --cov-c 0.25 --lam-grad 1.0 --lam-tgrad 0.3 --lam-v 0.15 --lam-t 0.15 \
-  --alpha-train 0.0 --sim ~/RealPDE/train_sim/train_sim --lam-sim 0.3 --sim-loss full \
-  --sim-exclude-held --seed 1 --out my_twin.pth
-
-# 2. score it alone, then as part of an ensemble, on the board-like AoA 15-20 subset
-cd ..
-python compare_v9.py --ckpt unet/my_twin.pth --alpha 0.60 --aoa 15 20
-python ens_v9.py --sets "unet/a.pth,unet/b.pth,unet/c.pth" --alpha 0.60 --aoa 15 20
-
-# 3. build and gate both tracks' archives from the repo root; the member lists and packing
-#    knobs are required (see Track_1/submit_fno/README.md)
-cd ..
-RPDE_A="..." RPDE_M="..." RPDE_INT8=1 RPDE_TAG=... bash Track_1/submit_fno/build_round13.sh 0.60
-```
-
-Every submission's five subscores are predicted and written down before it is uploaded (in
-`../sub_candidates/README.md`, then ledgered in `leaderboard/board.jsonl`). That record is what
-turns the leaderboard into a measurement instrument. **`EVALUATION.md` is the full account** —
-what each instrument reads, how far its number carries, and which measured constant corrects it.
+Not in git: the data and official kits, checkpoints (`*.pth`), validation caches (`val_*.npz`) and built archives.
 
 ## Two things that shaped the code
 
-* **Track 1's test windows tile**: window *k*'s target is window *k+1*'s input, so `predict()`
-  could read the answers out of its own argument. We disclosed this to the organizers
-  (`Track_1/submit_trick/DISCLOSURE.md`), and every package forecasts each window from that
-  window's own input only.
-* **The evaluation images lack `scipy`, `h5py`, `matplotlib` and `pandas`**, so the archives
-  import only `torch` and `numpy`, and the model code is vendored into a single `_fno.py`.
+* **The test windows tile**: window *k*'s target is window *k*+1's input, so a Track-1 `predict()` could read the
+  answers out of its own argument. We disclosed this to the organizers
+  (`Track_1/archive/submit_trick/DISCLOSURE.md`), and every Track-1 package forecasts each window from that window's
+  own input only. The online corrections of Track 2 use targets the protocol has already revealed, and only those.
+* **The evaluation images lack `scipy`, `h5py`, `matplotlib` and `pandas`**, so the archives import only `torch` and
+  `numpy`, and the model code is vendored into a single `_fno.py`.

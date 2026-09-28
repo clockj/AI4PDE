@@ -7,10 +7,35 @@ parameter regimes; the resulting private-test scores decide the top 3."* A third
 the released data to the uploaded archive with nothing of ours but this repository. §6 lists every place that
 is not yet true.
 
-## FINAL_RECIPE_T1 = <TO BE DECIDED after the 09-25 / 09-26 boards>   (A | QD | QD_STATIC; never R1)
-## FINAL_RECIPE_T2 = <TO BE DECIDED after the 09-25 / 09-26 boards>   (A | QD | QD_STATIC, each optionally + R1, §11)
+## FINAL_RECIPE_T1 = FINAL   — `track1_k27fin_a080.zip`, board 81.671149 (R37, 2026-09-27)
+## FINAL_RECIPE_T2 = FINAL   — `T2_MRGP2_track2_MRGP2.zip`, board 82.055553 (T2R24, 2026-09-27)
 
-**Rule for the final recipe (Ilse / audit 2 N7, 2026-09-26):** FINAL_RECIPE = the members AND every baked inference constant AND the
+```bash
+RPDE_REPRODUCE_GO=1 RPDE_REPRO_OUT=<checkpoint dir> bash reproduce.sh final     # from the released data, ~37 A100-hours
+bash Track_1/submit_fno/build_final.sh <outdir>                                  # from existing checkpoints, minutes
+```
+
+**One method, two entry points.** Both tracks ship recipe A's six members (§1.2, §1.4), fitted against recipe A's five
+held-out twins (§1.3, §1.5), at ALPHA 0.80 with the interval centred on the alpha-0 field. On top of recipe A the final
+packages carry the SIGBLEND band, JOINT_GAIN and the host-side latency constants on both tracks, and on Track 2 the causal
+stream stack. **§13 specifies all of it**; `Track_1/submit_fno/build_final.sh` lists every baked constant, and nothing in
+the final packages is trained beyond recipe A. Both rows are the best of their track at the 09-27 23:59Z snapshot, which
+is what the rule below asked for.
+
+| verified | how | result |
+|---|---|---|
+| the build is bit-reproducible | `build_final.sh` from a clean worktree of commit `fdac00b`, compared member by member with the uploaded archives (job 7569179; first run 7569053) | all 9 files of each archive byte-identical |
+| the current tree returns the same numbers | `Track_1/verify/final_identity.py`, uploaded against rebuilt, tolerance 0 (jobs 7569409, 7569482) | Track 1 at N = 14, 56, 99, 336 and Track 2 over a full stream with revealed targets: every array identical; `band.npz` and the six members byte-identical. The code files differ: guards against non-finite values, dead knobs removed (§13.5) |
+| the members retrain | recipe A end to end at 400 epochs (§12) | package score +0.0006 against a gate of 0.005 |
+| the SIGBLEND constants re-derive | fresh twin dump → `make_k0_band.py` (job 7569179) | q within 0.0008, `base′` within 0.4 %, the leave-one-trajectory-out table reproduced to the printed digit |
+| `reproduce.sh final` runs end to end from existing checkpoints | with the committed band, and with `RPDE_REPRO_FITBAND=1` (job 7569482) | both `BUILD_FINAL OK`; the refitted static band is bit-equal to the committed one |
+
+**What a reproduction must not expect:** identical weights (§7), or identical archive bytes (zip timestamps). Acceptance
+is by score (§7, §12).
+
+---
+
+**The rule the final recipe was chosen by (Ilse / audit 2 N7, 2026-09-26), kept as written:** FINAL_RECIPE = the members AND every baked inference constant AND the
 qwu/agent commit of the row that is best on the leaderboard at the 09-27 23:59Z snapshot, reproduced AS UPLOADED. That includes the
 measurement constants if that row carries them -- `DIAG`, T1 `BATCH_FP` / `WARM_TAILS` / `GPU_BAND` / `D2_DIRECT_PRED` / `SMALL_GRAPH`,
 T2 `R1` / `R1_ASYM` / `FALLBACK_FP` / `GRAPH_TOL` / `NUMPY_OUT`, `ALPHA` -- because the organisers must retrain the row that qualified. They move
@@ -22,6 +47,7 @@ Command for such a row: `RPDE_FINAL_ALPHA=<row alpha> RPDE_SHIP_<NAME>=<value>..
 present in the unpacked 0.90 packages, band arrays of the 0.90 packages == the 0.80 fit's (T1 and T2).
 (The only two lines to change. Per track because the tracks may end on different candidates -- Jonas 09-24; structure: Ilse.)
 
+**The three candidates of 09-24, kept as written. None of them is the final recipe; A's members and twins are.**
 Three candidates, each written in full; everything below this block is history (older packages of record) and the stages both
 candidates share (§1–§3). Both use ALPHA 0.80, centre-0 band, the same two ViT members, the same twins for the band fit, and
 the same precision knobs. They differ in the four F-FNO members, the band, and (QD_STATIC) the twins the static band is fit on.
@@ -67,7 +93,8 @@ read §9.1 (items 4 and 5: `RPDE_KIT`, `RPDE_SIMCACHE`). Known open gaps are lis
 
 ---
 
-**ONE method of record on both tracks, as of 2026-09-20** — the same six members, the same band, the
+**Superseded on 2026-09-27 by FINAL (top of this file and §13). As of 2026-09-20 there was ONE method of record on both
+tracks** — the same six members, the same band, the
 same baked constants; the two archives differ only in the entry point (`predict` vs `ttt_step`) and in
 `HOST_WRITE`, which Track 2 does not use:
 
@@ -81,7 +108,9 @@ Built and gated 2026-09-20 (job `rp_pkg_r34`, 7412354) and **scored the same day
 **one** change, the sim co-training of the four F-FNO members and their three twins: the AoA-holdout
 screen prices that at **+0.281 at a held-out AoA 10 and +1.12 at a held-out AoA 20** (two seeds), which
 is the private set's regime, against **+0.02** on the dev board (`Track_1/plan/plan_20260917.md` §11.3,
-§11.4). Superseded, and kept here because they are what the board actually scored:
+§11.4). Superseded, and kept here because they are what the board actually scored. **The archives named in the two tables
+were deleted on 2026-09-27** when `../sub_candidates/` was reduced to the final packages; their sizes and hashes are in
+`../sub_candidates/MANIFEST.md`, and each rebuilds from its members and its band in `Track_1/bands/`:
 
 | | superseded package | archive |
 |---|---|---|
@@ -835,3 +864,96 @@ default training path unchanged by the err-head commits since 09-22 (no extra mo
 Wall time: all-data F-FNO ~4:41, twin F-FNO ~4:41, ViT `cmb3sim` 4:47 (twin) / 5:21 (all-data), ViT no-sim 2:28-2:45 on a V100S (training time from the logs; set limits >= 330 min for
 the sim runs). Example of why log lines are not evidence (Devi): `me_vitc`'s printed epoch-399 loss differs from 09-21 by 2e-5 while its
 single-model AoA 15-20 wfinal differs by −0.019.
+
+
+## 13. FINAL (2026-09-27): what the packages of record add to recipe A
+
+Nothing in this section is trained. Members: §1.2 and §1.4. Twins: §1.3 and §1.5. Everything below is fitted on the twins
+or is inference code, and `Track_1/submit_fno/build_final.sh` bakes it.
+
+### 13.1 The band
+
+1. **Static band** (recipe A's, §3): `fit_band.py --ckpt <6 members> --err-ckpt <5 twins> --alpha 0.80 --band-p 0.45
+   --centre-alpha 0 --fill-unscored`, inflate 1.39 by default → `Track_1/bands/r38_a080_c0_fill.npz` (md5 `0cb37d82`).
+2. **Twin dump**: `python Track_1/sigblend/dump_twins.py <dump.npz>` runs the five twins at alpha 0 on the eight
+   `val_unseen` trajectories and stores each member's field and σ.
+3. **SIGBLEND**: `cd Track_1/sigblend && B_DUMP=<dump.npz> K0_BAND=<static band> K0_INFL=1.29 K0_NB=16 PYTHONPATH=..
+   python make_k0_band.py <outdir>`. Per channel and lead frame it bins the elements by log σ (16 quantile bins), solves
+   the optimal half-width of each bin exactly on the twins' errors stretched by 1.29, and fits
+   `log h* = log κ_{t,c} + q_c · log σ` with one slope per channel and one intercept per frame. It writes
+
+   ```
+   base′ = base^(1−λ) · κ^λ        p′ = (1−λ) · 0.45        λ = 0.5        q = (0.4847, 0.4907)
+   half  = base′ · clip(σ/σ_ref, 0.3, 3)^p′ · (σ + 1e-8)^(λ q_c)
+   ```
+
+   as `band_k0_sigblend_lam0.5.npz` (committed as `Track_1/bands/k27_sigblend_lam0.5.npz`, md5 `e8309d9f`) and a json with
+   the two literals the packages bake: `EBAND` (Track 1) and `T2_sigpow` (Track 2), both equal to λ·q.
+
+`reproduce.sh final` reuses the committed npz and json. `RPDE_REPRO_FITBAND=1` runs steps 1–3 on the twins the run trained.
+**The constants are fitted on all eight validation trajectories.** Their evidence is the leave-one-trajectory-out table
+`make_k0_band.py` prints: ΔC×100 +0.48 on all eight (7 of 8 positive) and +0.03 on AoA 15–20 (2 of 3) at stretch 1.29.
+
+### 13.2 Constants of both tracks
+
+| constant | value | what it does |
+|---|---|---|
+| `ALPHA` | 0.80 | compose: the fluctuation's temporal std is moved toward `α·σ + (1−α)·s` |
+| `JOINT_GAIN` | True | one compose gain per pixel for `u` and `v`, the channels weighted by their physical variance |
+| `CENTRE_ALPHA` (in `band.npz`) | 0 | the interval is centred on the alpha-0 field y₀: `lower = min(y₀ − h, P)`, `upper = max(y₀ + h, P)` |
+| `AMP` | `"fp16"` | autocast, verified against fp32 at load; falls back on a difference above 2e-2 or a non-finite value |
+| `FFNO_PATH` | `"dense"` | the F-FNO's 1-D transforms as matrix products on a precomputed basis |
+| packing | int8, `--linear tensor` | `build_zip.py` / `build_t2.py` |
+| Track 1 `EBAND` | `((λq_u,0,0,0,0,0),(λq_v,0,0,0,0,0)), "mult", None` | the σ-power factor of the band, on the GPU-band path |
+| Track 1 `DIRECT_PRED`, `WARM_TAILS`, `PIN_OUT`, `BATCH_CAP` | True, True, 128, 56 | host-side latency; outputs unchanged |
+| Track 1 `SMALL_GRAPH` | False | `EBAND` needs the GPU-band path at every batch size |
+| Track 2 `SIGPOW` | `(λq_u, λq_v)` | the same σ-power factor |
+| Track 2 `NUMPY_OUT`, `ARENA_STEPS` | True, 1024 | host-side latency; outputs unchanged |
+
+### 13.3 The Track-2 stream stack
+
+State is per trajectory, cleared by `reset_ttt_state`, updated only from targets the runner has revealed, and the whole
+step runs inside the CUDA graph. With every knob off the package is bit-identical to recipe A's Track-2 package.
+
+| knob | value | definition |
+|---|---|---|
+| `R1`, `R1_ASYM` | True, True | per pixel and channel, a running table over a 9 × 9 grid of multipliers (0.5 … 2, geometric) for the lower and the upper half-width, accumulating the scorer's own interval term on revealed windows; this window uses the arg-max pair, 3 × 3 box-smoothed, shrunk to 1 by n/(n+2) (`R1_N0`) |
+| `R1_TSM` | 3 | the table is 3 × 3 box-smoothed before the arg-max |
+| `R1_BLK`, `R1_BLK_N0` | 4, 20.0 | a second table per block of 4 lead frames; the multiplier moves to the block's own by n/(n+20), clipped to [0.5, 2] |
+| `D1C_N0` | 30.0 | the running mean over revealed windows of `mean_t(y₀ − y)`, per pixel and channel, is subtracted from the prediction and from the interval centre, shrunk by n/(n+30) |
+| `D1C_EB`, `D1C_EB_N0` | True, 1.0 | the shrink becomes `max(n/(n+30), n/(n+1) · τ²/(τ² + se²))` from the second window: τ² the mean square of the bias field, se² the mean over pixels of its window-to-window variance divided by n, per channel |
+| `D1C_LEAD_N0` | 5.0 | the shift is multiplied per lead frame by `clip(1 + (a(t) − 1) · n/(n+5), 0, 3)`, `a(t)` the projection of the per-frame mean error onto the bias field |
+| `VC_N0`, `VC_CLIP` | 30.0, (0.25, 4) | the ratio of the revealed targets' temporal variance to the composed prediction's, both summed over revealed windows and 3 × 3 box-smoothed, clipped, shrunk to 1 by n/(n+30); its square root multiplies the compose gain |
+| `FW_N0` (FAMW), `HIST_BETA` | 0.0, 0.0 | off |
+
+Held-out reads of the stack against asymmetric R1 alone, twins, score without `time`: +0.085 on all eight trajectories
+(8 of 8), +0.025 on AoA 15–20 (3 of 3), +0.446 at a held-out AoA 20 (16 of 16), +0.553 at a held-out AoA 10 (18 of 18).
+Notes, criteria and job scripts: `experiments/sprint_20260927/`.
+
+### 13.4 Gates
+
+`build_final.sh` exits 0 only if Track 1 passes `validate_strict.py`, Track 2 passes `validate_t2.py --adaptive`, and
+`stream_eval.py --causal-check` finds every step before a cut bit-identical when all later windows are replaced by noise
+(176 steps, maximum difference 0).
+
+### 13.5 The uploaded packages and the current tree
+
+**To rebuild the uploads byte for byte, check out `fdac00b`.** The tree after it returns the same numbers on finite
+inputs and differs in three ways, none of which changes the method:
+
+* **Guards.** Non-finite values in an input or in a revealed target no longer propagate: the affected window's
+  prediction is zeroed and its bounds collapse onto it; on Track 2 a non-finite revealed target is treated as withheld.
+* **Two knobs, both off**, so the default build is the uploaded behaviour: `PREV_SPACE` (`"target"` makes the package
+  read the revealed target in the normalisation the official runner uses) and `STATS_MASK` (the online statistics skip
+  unscored elements). Their measured reads are in `experiments/audit_20260927/refactor_pkg.md`.
+* **Fewer knobs.** Code paths that no package of record and no recipe of `reproduce.sh` uses were removed;
+  `build_round13.sh` refuses their variables.
+
+`STATUS.md` lists what is open before a Decision-phase upload.
+
+### 13.6 Files this document cites that are not in the repository
+
+`h5py_fix.sh` (§0), `qd_FINAL_verdict.txt` (§10) and `repro_score.py` (§12) were written on the agent team's server
+(09-21 … 09-27) and were not brought over. None of them is needed to reproduce FINAL: the environment is
+`environment.yml`, the QD candidate is not the final recipe, and the acceptance read of §12 is reproduced by building
+the package from the retrained twins and scoring it with `Track_1/ens_v9.py --aoa 15 20`.

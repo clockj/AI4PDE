@@ -7,7 +7,7 @@ an instrument. Each item is kept because it records **how an experiment was run*
 **Paths.** These directories were moved here on 2026-09-27. `ROUNDS.md`, `../report/` and `../plan/` were written
 before that and name them at their old places: `Track_1/submit/` is `submit_unet_0730/`, and `Track_1/submit_trick/`,
 `Track_1/fno_deeponet/`, `Track_1/deeponet/`, `Track_1/diffusion/` are the directories of the same name here.
-The shipped `submit_fno/submission.py` also says `../submit_trick/` in its docstring; it is left as uploaded.
+The docstring of `submit_fno/submission.py` named `../submit_trick/` until 2026-09-28; it now names this directory.
 
 **Runnable today?** Most scripts load the kit-v7 scorer by absolute path, and that kit was removed when v9 replaced it
 (2026-08-05). They are records, not tools. The two that still run are marked.
