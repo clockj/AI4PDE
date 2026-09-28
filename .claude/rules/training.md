@@ -21,6 +21,11 @@ paths:
 * **Twins** drop `--all-data` and add `--sim-exclude-held`. `--exclude` filters the loss only: preprocessing that reads
   real-data statistics (the sim map, masks) must be told the split through `real_exclude`, or it leaks.
 * **Never train through `compose`** (`--alpha-train 0.0`).
+* **`--aug-resim S`** (the Decision-phase candidate, REPRODUCE.md §14): a real window resampled in time by s and scaled by s,
+  s log-uniform in [1/(1+S), 1+S]. At 0 (the default) nothing runs and nothing is drawn; above 0 its draws come from a
+  generator of its own, so the default random stream keeps its order and only the data differ.
+* It refuses `--hist`, `--ctx` ≠ 20, `--teacher`, `--subpix`, `--mixup`, `--norm self` and `--aug-scale`. Its verifier is
+  `experiments/decision_20260928/patches/t4_aug_resim_check.py`.
 * Real data is in m/s, sim is non-dimensional. `simreal.py` maps sim onto the real statistics; its cache
   (`RPDE_SIMCACHE`) is keyed without the data path, so use a cache directory per data release.
 * A retrain with the same seed is not bit-identical (F-FNO about 0.5 % apart in weights, ViT about 10 %). Judge a

@@ -252,3 +252,24 @@ trajectories; the evidence for them is the leave-one-trajectory-out read that sc
 
 **Not in this directory:** the bands of R31 – R34 and T2R18 – T2R21 (r35 is `r35_centre0_fill.npz`; r37's widened band and
 the two QD bands stayed on the agent team's server). None of them is on the path to the packages of record.
+
+## 2026-09-28: the Decision-phase candidate's band (`reproduce.sh decision`) — to be completed when the band exists
+
+| band file | md5 (12) | rounds that shipped it | ids |
+|---|---|---|---|
+| `dp_resim_sigblend_lam0.5.npz` + `.json` | to be completed | none (a candidate, not uploaded) | — |
+
+Members `ffno_all_w40l8_sim_resim_s1..s4`, `arch_vit_all_resim_s1`, `arch_vit_all_cmb3sim_resim_s3`; twins
+`p2_ffno_l8_sim_resim_s1..s3`, `arch_vit_d384_resim`, `arch_vit_cmb3sim_resim` (REPRODUCE.md §14). Made by `reproduce.sh`
+stage `dp_band`, the record's construction on the new twins:
+
+```
+fit_band.py --ckpt <6 members> --err-ckpt <5 twins> --alpha 0.80 --band-p 0.45 --fit-on seen --fit-aoa 15 20 \
+    --inflate 1.39 --fill-unscored --centre-alpha 0 --out band_dp_resim_static.npz
+dump_twins.py dump_unseen.npz --val Track_1/val_unseen.npz --twins <5 twins>
+cd Track_1/sigblend && B_DUMP=dump_unseen.npz K0_BAND=band_dp_resim_static.npz K0_INFL=1.29 K0_NB=16 PYTHONPATH=.. \
+    python make_k0_band.py k0
+```
+
+The npz and its json (`EBAND`, `T2_sigpow`) are one object. To be completed when the band exists: md5 of both files,
+q, the leave-one-trajectory-out ΔC, the job that made it; then `git add -f` both under the name above.

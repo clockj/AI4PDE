@@ -11,6 +11,7 @@ Plan and criteria: `PLAN.md`. Update this file at every wave; keep job ids, path
 
 | 2026-09-28 10:57 | every training finished (24 wave 1, 8 T3, 4 T4), instrument chunks 1 – 4 so far | wave 1 60.3 · T3 20.9 · T4 10.6 · instrument 5.7 · other 0.2 | **97.7** | 33 % |
 | 2026-09-28 15:08 | wave 3 (T4 on A20 / A10, twins, T4v on RE done; T4b, T4v second stage running) and instrument chunks 4 – 5 | sacct over `rp_dp_*` / `pz_dp_*`, running jobs counted to 15:08 | **156.5** | 52 % |
+| 2026-09-28 18:02 | every training of wave 3 finished (24 jobs COMPLETED); instrument chunk 5 | sacct, 170 GPU jobs | **171.6** | 57 % |
 
 Estimates made at 05:15 (A100): wave 1 about 60, arms T3 + T4(RE) about 31; both held. Read the ledger with
 `sacct -M ascend,pitzer -X -n -S 2026-09-28 -o jobname%26,elapsed,state,alloctres%40 | grep -E 'rp_dp_|pz_dp_'`.
@@ -180,6 +181,23 @@ running T4 job): the mirror's two ViTs with the augmentation on A20 and A10 (757
 `VAL_TRAJ` (7575508, 7575509; recipes checked against the stored config of `arch_vit_d384` and `arch_vit_cmb3sim`).
 About 15 GPU-h.
 
+### T4b, the dose (`--aug-resim 0.5` against 0.25), single-member screen on RE (read 16:57 EDT)
+
+| seed | rein | relo | rehi | mean of relo, rehi |
+|---|---|---|---|---|
+| 1 | +0.010 | +0.094 | +0.004 | +0.049 |
+| 2 | +0.002 | +0.110 | −0.070 | +0.020 |
+| 3 | +0.000 | +0.073 | −0.066 | +0.004 |
+| 4 | +0.008 | +0.103 | −0.040 | +0.032 |
+| mean | +0.005 | +0.095 | −0.043 | **+0.026** |
+
+**T4b fails its criterion** (+0.05 on the mean of relo and rehi with 4 of 4 seeds; none reaches it). The wider range
+buys low Re (+0.095, 4/4) and pays at high Re (−0.043, 3 of 4 negative). **0.25 stands.** No ensemble read is taken.
+
+Single-member reads of wave 3 on the held-out angles, against the seed-matched control: F-FNO with the augmentation
+A20 +0.152 (+0.095 +0.213 +0.163 +0.137), A10 +0.259 (+0.219 +0.289 +0.349 +0.178), fit split +0.12 in both; ViT-P with
+the augmentation A20 −0.061, A10 +0.113, fit split +0.097 in both (one seed).
+
 ## Instrument (gauge)
 
 Code in `ood/` (`README.md` has the commands), generated files in `R/ood/`, note `results/ood_instrument.md`. One run =
@@ -327,11 +345,62 @@ control of the same regime; each ensemble with its own refitted band; real packa
   12.4 → 1.0 % (A20); what remains is 72 – 76 % fluctuation and 23 – 34 % mean error that changes from window to window.
   rehi gains least from everything because it had little persistent error to begin with.
 
+### Chunk 5, second part: the decision table (0.25 GPU-h; `results/ood_chunk5.md`, `ood/ood_decision.py`)
+
+Delta composite to the control (trajectories with a positive delta); the control row is absolute. Real package path,
+every ensemble with its own refitted band; the twins columns are the 8 `VAL_TRAJ` trajectories with the band refitted
+the shipping way. "T4 F-FNO only" = four augmented F-FNO with the control's two ViTs; "T4 all" = all six augmented.
+
+**Stream (Track 2)**
+
+| | twins, all 8 | twins, AoA 15 – 20 | A20 | A10 | relo | rehi | rein | OOD mean |
+|---|---|---|---|---|---|---|---|---|
+| control | 77.2506 | 74.7712 | 73.6581 | 76.1447 | 78.3785 | 72.9806 | 77.1478 | 75.2905 |
+| T4 F-FNO only | +0.0332 (8/8) | +0.0459 (3/3) | +0.0516 (16/16) | +0.0395 (17/18) | +0.3335 (9/9) | +0.0458 (6/7) | +0.0245 (9/10) | **+0.1176** |
+| T4 all | +0.0315 (7/8) | +0.0514 (3/3) | +0.0527 (14/16) | +0.0362 (14/18) | +0.7090 (9/9) | +0.0247 (5/7) | +0.0195 (8/10) | **+0.2056** |
+
+**Frozen (Track 1's case)**
+
+| | twins, all 8 | twins, AoA 15 – 20 | A20 | A10 | relo | rehi | rein | OOD mean |
+|---|---|---|---|---|---|---|---|---|
+| control | 76.8516 | 74.6041 | 72.4290 | 75.1865 | 76.4400 | 72.3811 | 76.7728 | 74.1092 |
+| T4 F-FNO only | +0.0272 (7/8) | +0.0405 (3/3) | +0.0947 (15/16) | +0.1247 (18/18) | +0.5049 (9/9) | +0.1743 (6/7) | +0.0246 (9/10) | +0.2246 |
+| T4 all | +0.0077 (5/8) | +0.0411 (3/3) | +0.1050 (14/16) | +0.1354 (17/18) | +1.8724 (9/9) | +0.1339 (4/7) | +0.0204 (9/10) | +0.5617 |
+
+* **T4v passes every term of its criterion** (OOD mean +0.206 over the control; +0.088 over T4 F-FNO only; in
+  distribution +0.032), **and its whole margin over T4 F-FNO only is one regime.** "T4 all" minus "T4 F-FNO only":
+  relo **+0.376 (9/9)**, rehi **−0.021 (2/7)**, both outside the reseeding spread; rein −0.005, twins −0.002, A20 +0.001,
+  A10 −0.003, all inside it. The augmented ViTs lose at rehi through tke (−0.12) and mvpe (−0.03), and they cost mvpe
+  in distribution (−0.020).
+* **The two recipes cannot be told apart in distribution.** Translated with the project's correction rules (an error
+  cut halved, containment never banked, time unchanged): about **+0.013 … +0.019 composite on a board-like set**,
+  brackets [+0.006, +0.051], for either. This is an expectation from the rules, not a board read: nothing can be
+  uploaded to the development board any more.
+* **So the choice is a bet on the private set's Reynolds numbers.** Below the training range the augmented ViTs are
+  worth +0.38; above it they cost 0.02; at a novel angle and in distribution they change nothing. The release's own
+  hints point both ways: the Track-2 example file is Re 2968 (below), the sim-only Reynolds numbers are 15225 (inside)
+  and 27975 (above).
+* Each recipe is one ensemble per regime; "T4 all" rests on one seed per augmented ViT; the reseeding spread was
+  measured at RE and in distribution only.
+
+## The candidate (2026-09-28)
+
+| | value |
+|---|---|
+| recipe | the method of record, every member and twin trained with `--aug-resim 0.25` (p 0.5); **the planner's recommendation is "T4 all"**, on the asymmetry of the bet; "T4 F-FNO only" is the conservative alternative and needs no further training once "T4 all" is trained (it reuses the ViTs of record) |
+| constants | those of `build_final.sh`, plus `PREV_SPACE = "target"` |
+| unchanged | member composition, ALPHA, JOINT_GAIN, the band's construction, every stream constant, `STATS_MASK` off, FAMW off |
+| code | `patches/candidate_release.patch` applied to the tree: `train2.py` (the flag, inert at 0), `reproduce.sh decision`, `build_final.sh` (lock, constant check), `Track_1/verify/baked_constants.py`, documents. `results/candidate_release.md` |
+| verified | the candidate code rebuilds both packages of record, data byte for byte and outputs bit for bit (job 7575926); the constant check passes 41 of 41 and fails when it should; `reproduce.sh decision` runs end to end at 2 epochs (job 7575939) |
+| not verified | the 400-epoch run from a clean clone (about 43 GPU-h); the candidate band does not exist yet; `decision` refits the band on every run, where `final` reuses the committed one: to be aligned once the band is committed |
+
 ## Decisions
 
 * **2026-09-28:** `STATS_MASK` stays off (arm I2 closed by its own criterion; see above).
 * **2026-09-28:** arms I3, I5, I6, T1, T2, T3 closed by their criteria on the mirror ensembles. I1 passes.
 * **2026-09-28:** the member composition (4 F-FNO + ViT-P + ViT-C) stays.
+* **2026-09-28:** T4 passes; T4b fails (0.25 stands); T4v passes. The recipe is the owner's choice between "T4 all"
+  and "T4 F-FNO only"; the from-scratch run trains what both need.
 * **2026-09-28:** arm I7 closed as a score lever (+0.0002 against +0.03). Open as insurance, for the owner.
 
 * **2026-09-28, owner:** Ascend first whenever it is idle (same price, faster); Pitzer is the overflow. `sbatch --test-only`

@@ -76,9 +76,19 @@ but the whole margin is relo.
 
 ## T4b, `--aug-resim 0.5` (item d)
 
-**Not read yet.** The four members were at the end of training at 15:05, with no json yet. The poller screens them and
-submits the ensemble read only if the screen clears. It goes into the second hand-back with items f-h.
+**Screened out at 16:55: 0 of 4 seeds clear**, so there is no ensemble read (as the criterion prescribes). Single members,
+0.5 against 0.25 seed-matched, `wfinal` from the trainings' own `re_split.py` reads; criterion ≥ +0.05 on the mean of
+relo and rehi in 4 of 4 seeds, rein ≥ −0.02:
 
+| seed | relo Δ | rehi Δ | mean(relo, rehi) Δ | rein Δ | clears |
+|---|---|---|---|---|---|
+| s1 | +0.094 | +0.004 | +0.049 | +0.010 | no |
+| s2 | +0.110 | −0.070 | +0.020 | +0.002 | no |
+| s3 | +0.073 | −0.066 | +0.004 | +0.000 | no |
+| s4 | +0.103 | −0.040 | +0.032 | +0.008 | no |
+
+Doubling the dose adds about +0.1 at relo on every seed, but gives up up to 0.07 at rehi. The mean stays under the bar on
+all four seeds (the best is s1, at +0.049). `--aug-resim 0.25` stays the T4 setting.
 
 ## Part 1: property of the arm or of one seed set?  (no new training)
 
@@ -184,5 +194,121 @@ Composite by subscore at rehi (scores; errors in brackets):
 * The T4v ensemble is read at RE only, with one seed per augmented ViT; its gain is carried by relo.
 * The RE in-distribution split (REID) is in sample for the regime band. The twins read (item b) is the clean
   in-distribution read.
-* T4b and items f-h are pending.
+* Items f-h are pending (the augmented A20 / A10 ViTs and ViT twins land 17:00-18:30).
 
+
+
+## Second part (18:01-18:10): items f, g, h
+
+Three new runs, all ending `BUILD_FINAL OK` with causality passing:
+* `a20_t4v` and `a10_t4v`, "T4 all": four augmented F-FNO + augmented ViT-C s3 + augmented ViT-P s1, each with its own
+  refitted band;
+* `id_t4all_ship`: all five twins augmented, band refitted the shipping way.
+
+The other cells reuse `re_t4v`, the mirror runs, the T4 runs and `id_twins_ship` / `id_t4_ship`. The script is
+`ood/ood_decision.py`. Rows: control = the mirror (package-of-record recipe); T4 F-FNO only = augmented F-FNO + the
+control's ViTs; T4 all = all six members augmented. "Twins" columns: the in-distribution read, 8 `VAL_TRAJ` trajectories,
+bands refitted the shipping way.
+
+#### Decision table, stream (Track 2): Δ composite to control (trajectories positive); control row = absolute
+
+| row | twins, all 8 | twins, AoA 15-20 | A20 | A10 | relo | rehi | rein | OOD mean |
+|---|---|---|---|---|---|---|---|---|
+| control (absolute) | 77.2506 | 74.7712 | 73.6581 | 76.1447 | 78.3785 | 72.9806 | 77.1478 | 75.2905 |
+| T4 F-FNO only | +0.0332 (8/8) | +0.0459 (3/3) | +0.0516 (16/16) | +0.0395 (17/18) | +0.3335 (9/9) | +0.0458 (6/7) | +0.0245 (9/10) | +0.1176 |
+| T4 all | +0.0315 (7/8) | +0.0514 (3/3) | +0.0527 (14/16) | +0.0362 (14/18) | +0.7090 (9/9) | +0.0247 (5/7) | +0.0195 (8/10) | +0.2056 |
+
+#### Decision table, frozen (Track 1's case): Δ composite to control (trajectories positive); control row = absolute
+
+| row | twins, all 8 | twins, AoA 15-20 | A20 | A10 | relo | rehi | rein | OOD mean |
+|---|---|---|---|---|---|---|---|---|
+| control (absolute) | 76.8516 | 74.6041 | 72.4290 | 75.1865 | 76.4400 | 72.3811 | 76.7728 | 74.1092 |
+| T4 F-FNO only | +0.0272 (7/8) | +0.0405 (3/3) | +0.0947 (15/16) | +0.1247 (18/18) | +0.5049 (9/9) | +0.1743 (6/7) | +0.0246 (9/10) | +0.2246 |
+| T4 all | +0.0077 (5/8) | +0.0411 (3/3) | +0.1050 (14/16) | +0.1354 (17/18) | +1.8724 (9/9) | +0.1339 (4/7) | +0.0204 (9/10) | +0.5617 |
+
+#### T4 all − T4 F-FNO only (stream), against the control-to-control reseeding spread
+
+| column | Δ (n+) | rel / tke / mvpe / sps / C | reseeding spread (max) | outside the spread |
+|---|---|---|---|---|
+| twins, all 8 | -0.0017 (3/8) | +0.002 / -0.009 / -0.020 / -0.000 / +0.004 | 0.012 | no |
+| twins, AoA 15-20 | +0.0056 (1/3) | +0.003 / +0.024 / -0.023 / +0.015 / +0.013 | 0.012 | no |
+| A20 | +0.0011 (8/16) | +0.007 / -0.021 / -0.006 / +0.002 / +0.002 | not measured | n/a |
+| A10 | -0.0033 (7/18) | +0.000 / -0.064 / -0.003 / +0.013 / +0.042 | not measured | n/a |
+| relo | +0.3755 (9/9) | +0.199 / +0.234 / +0.125 / +0.984 / +0.687 | 0.034 | yes, gain |
+| rehi | -0.0211 (2/7) | -0.001 / -0.120 / -0.031 / -0.024 / +0.027 | 0.011 | yes, loss |
+| rein | -0.0049 (4/10) | -0.001 / -0.028 / -0.013 / -0.002 / +0.019 | 0.010 | no |
+
+#### Development board, translated from the in-distribution twins (stream; evaluate-change skill, section 4)
+
+Rules: an error cut read locally is halved; containment C is never banked, so the part of Δsps that comes from C is set to 0 and only the accuracy-factor part (Δā) is kept, halved like any error cut. Bracket: low = the accuracy parts at a quarter, high = the local read in full (C included). Composite = W0 without time; time does not move (same members, same architectures, same package code).
+
+| recipe | slice | local Δ rel / tke / mvpe / sps (C part of sps) | expected Δ rel / tke / mvpe / sps | expected Δ composite [low, high] |
+|---|---|---|---|---|
+| T4 F-FNO only | all 8 | +0.015 / +0.080 / +0.006 / +0.071 (+0.022) | +0.007 / +0.040 / +0.003 / +0.025 | **+0.0139** [+0.0070, +0.0332] |
+| T4 F-FNO only | AoA 15-20 | +0.021 / +0.106 / +0.007 / +0.099 (+0.040) | +0.011 / +0.053 / +0.004 / +0.029 | **+0.0179** [+0.0090, +0.0459] |
+| T4 all | all 8 | +0.017 / +0.071 / -0.014 / +0.071 (+0.026) | +0.008 / +0.035 / -0.007 / +0.023 | **+0.0125** [+0.0063, +0.0315] |
+| T4 all | AoA 15-20 | +0.024 / +0.129 / -0.015 / +0.114 (+0.052) | +0.012 / +0.065 / -0.008 / +0.031 | **+0.0193** [+0.0096, +0.0514] |
+
+
+
+### Verdicts
+
+**T4v (PLAN.md): PASS on every term, but the margin over "T4 F-FNO only" is one regime.**
+
+| term | read | verdict |
+|---|---|---|
+| OOD mean of T4 all over the control ≥ +0.10 | +0.206 | pass |
+| OOD mean of T4 all over T4 F-FNO only ≥ +0.03 | +0.088 = (+0.001 A20, −0.003 A10, +0.376 relo, −0.021 rehi) / 4 | pass (relo alone) |
+| in distribution (twins, all 8) ≥ −0.03 | +0.032 over the control (−0.002 against T4 F-FNO only) | pass |
+
+**Which recipe for a private set we cannot see.** "T4 all" − "T4 F-FNO only", stream:
+* **relo +0.376 (9/9), far outside the reseeding spread (0.034).** This is a real gain, and the only one. It is also
+  the regime whose Re lies below every training recording, like the Track-2 example file (Re 2968).
+* **rehi −0.021 (2/7), outside the spread (0.011): a real loss.** It is carried by tke −0.12 and mvpe −0.03, i.e. the
+  fluctuation amplitude at the highest Re.
+* A20 +0.001 (8/16), A10 −0.003 (7/18), rein −0.005 (4/10), in distribution −0.002 (3/8) and +0.006 on AoA 15-20: all
+  inside the spread, i.e. no difference. The jackknife spread was measured at RE and in distribution only; A20 and A10
+  have no measured spread, but these reads are an order of magnitude below the RE spread.
+* Frozen (Track 1's case), the same picture, sharper: relo +1.37, rehi −0.04, in distribution −0.020 (5/8 against the
+  control).
+
+**So the ViT augmentation buys one large, clean gain (extrapolation below the training Re) and pays a small, real loss
+(extrapolation above it), and is neutral everywhere else.** Which recipe is better for the private set turns on whether it
+extrapolates downwards in Re, which the data cannot tell.
+* On the four regimes we have, T4 all has the higher OOD mean (+0.206 against +0.118).
+* T4 F-FNO only is positive on every trajectory group at a smaller size, and has no regime where it loses to the control
+  or to the alternative outside the spread.
+* **It is a trade, not a dominance.**
+
+### Development board, translated from the in-distribution twins (not a registered prediction)
+
+Rules applied (`.claude/skills/evaluate-change/SKILL.md` §4):
+* the local error cuts are halved;
+* the containment part of Δsps is set to 0 (never banked); it is separated from the accuracy part as
+  Δsps − sps·Δā/ā;
+* time is unchanged (same members, architectures and code);
+* composite = W0 without time;
+* bracket: low = accuracy parts at a quarter, high = the local read in full.
+
+| recipe | slice | Δ rel | Δ tke | Δ mvpe | Δ sps (accuracy part, halved) | Δ composite, expected [bracket] |
+|---|---|---|---|---|---|---|
+| T4 F-FNO only | all 8 | +0.007 | +0.040 | +0.003 | +0.025 | **+0.014** [+0.007, +0.033] |
+| T4 F-FNO only | AoA 15-20 (board-like) | +0.011 | +0.053 | +0.004 | +0.029 | **+0.018** [+0.009, +0.046] |
+| T4 all | all 8 | +0.008 | +0.035 | −0.007 | +0.023 | **+0.013** [+0.006, +0.032] |
+| T4 all | AoA 15-20 (board-like) | +0.012 | +0.065 | −0.008 | +0.031 | **+0.019** [+0.010, +0.051] |
+
+Both recipes read about +0.013 to +0.019 composite on a development-board-like set, with every bracket above 0. They
+cannot be told apart there. The one difference is that T4 all costs mvpe (−0.007 to −0.008 expected) where T4 F-FNO only
+gains.
+
+### Ledger for this part
+
+* **GPU:** 0.25 GPU-h (3 jobs). Chunk 5 total 1.72 GPU-h. All of the gauge's jobs in the campaign: 88 Ascend jobs,
+  9.57 GPU-h, plus two Pitzer CPU jobs of 2.5 and 0.25 minutes.
+* **Verified:** every cell is on the real package code with each ensemble's own refitted band; every build passed its
+  gates and causality; the control row reuses the same runs as chunks 4-5.
+* **Not verified:**
+  * one ensemble per recipe per regime;
+  * the reseeding spread is measured at RE and in distribution only, not at A20 or A10;
+  * T4 all rests on one seed per augmented ViT;
+  * the development-board translation is a rule-based expectation, not a board read.

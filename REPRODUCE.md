@@ -957,3 +957,54 @@ inputs and differs in three ways, none of which changes the method:
 (09-21 … 09-27) and were not brought over. None of them is needed to reproduce FINAL: the environment is
 `environment.yml`, the QD candidate is not the final recipe, and the acceptance read of §12 is reproduced by building
 the package from the retrained twins and scoring it with `Track_1/ens_v9.py --aoa 15 20`.
+
+## 14. DECISION (2026-09-28): the candidate — FINAL plus the Re-similarity augmentation
+
+`RPDE_REPRODUCE_GO=1 bash reproduce.sh decision`. Not the default (that stays `final`) and not a package of record: the
+Decision-phase candidate of arm T4 (`experiments/decision_20260928/STATE.md`), made buildable so the owner can decide on
+a real package. Everything that is not named below is §13.
+
+**Training.** The eleven runs of `final` (§1.2–1.5) with `--aug-resim S` appended, under new names so nothing of the record
+is overwritten. `train2.py --aug-resim S` (default 0 = off, bit-identical to a run without the flag) replaces a real
+window, with probability `--aug-resim-p` (0.5), by the same trajectory resampled in time by a factor s from the window's
+own start, every velocity multiplied by s, s log-uniform in [1/(1+S), 1+S]: to first order the recording at Re·s. Its
+draws come from a generator of its own, so the default random stream keeps its order; the verifier is
+`experiments/decision_20260928/patches/t4_aug_resim_check.py`.
+
+| variable | default | applies to | names |
+|---|---|---|---|
+| `RPDE_DP_RESIM_FFNO` | 0.25 | the four F-FNO members, the three F-FNO twins | `ffno_all_w40l8_sim_resim_s1..4`, `p2_ffno_l8_sim_resim_s1..3` |
+| `RPDE_DP_RESIM_VIT` | 0.25 | the two ViT members, the two ViT twins | `arch_vit_all_resim_s1`, `arch_vit_all_cmb3sim_resim_s3`, `arch_vit_d384_resim`, `arch_vit_cmb3sim_resim` |
+
+Empty means the record's recipe and the record's file name (reused if it exists); another S gives `_resim<S without the
+dot>`. Stage functions for `RPDE_REPRO_STAGE`: `dp_twins_vit_p`, `dp_twins_vit_c`, `dp_twins_ffno`, `dp_members_vit_p`,
+`dp_members_vit_c`, `dp_members_ffno` (narrow the seed loops with `RPDE_REPRO_SEEDS`), then `dp_band`, `dp_build`.
+
+**Band: always refitted** (the members changed), exactly as the record's was made (§13.1), into `RPDE_DP_BAND_DIR`
+(default `$RPDE_REPRO_LOG/decision/band`):
+
+```
+fit_band.py --ckpt <6 members> --err-ckpt <5 twins> --alpha 0.80 --band-p 0.45 --fit-on seen --fit-aoa 15 20 \
+    --inflate 1.39 --fill-unscored --centre-alpha 0 --out band_<tag>_static.npz
+dump_twins.py dump_unseen.npz --val Track_1/val_unseen.npz --twins <5 twins>
+cd Track_1/sigblend && B_DUMP=dump_unseen.npz K0_BAND=band_<tag>_static.npz K0_INFL=1.29 K0_NB=16 PYTHONPATH=.. \
+    python make_k0_band.py k0            # -> k0/band_k0_sigblend_lam0.5.{npz,json}
+```
+
+`--fit-on seen --fit-aoa 15 20 --inflate 1.39` are `fit_band.py`'s defaults, written out. The static error field comes
+from the twins on the SEEN AoA 15–20 windows, which the twins trained on (as for the record,
+`experiments/decision_20260928/results/ood_chunk2.md` part A); κ and q come from `val_unseen`.
+
+**Build.** `build_final.sh` with the refitted npz and json, the record's constants and `RPDE_SHIP_PREV_SPACE=target`
+(arm I1), tag `dp_resim` (`_SMOKE` appended at any epoch count but 400). Archives go to `RPDE_REPRO_PKG` (default
+`$RPDE_REPRO_LOG/decision/pkg`), never to `../sub_candidates`.
+
+**Gates.** Those of §13.4, plus two that `build_final.sh` gained on 2026-09-28 for every build: `Track_1/verify/baked_constants.py`
+reads back ALPHA, every `RPDE_SHIP_*` knob (passed, or the tree's default), `AMP`, `SPEC_PATH`, `HOST_WRITE`, `FFNO_PATH`
+and the band's md5 from both archives and fails the build on any mismatch; and a lock file refuses a second build in the
+same tree.
+
+**Accepting a from-scratch rebuild.** Retraining is not bit-identical (§7), so acceptance is a score test: the rebuilt
+package's composite (the fitted `final` without `time`, `W0`, read on `Track_2/stream_eval.py` with the revealed target
+normalised as the official runner does) within **0.005** of the package built from the campaign's checkpoints. The job plan of the full run, one job per training and one build job after them
+(about 40 A100 GPU-hours), is `experiments/decision_20260928/results/candidate_release.md`.

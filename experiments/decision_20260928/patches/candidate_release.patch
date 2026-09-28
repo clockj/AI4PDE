@@ -1,0 +1,650 @@
+diff --git a/.claude/rules/training.md b/.claude/rules/training.md
+index a00dd21..3a41282 100644
+--- a/.claude/rules/training.md
++++ b/.claude/rules/training.md
+@@ -21,6 +21,11 @@ paths:
+ * **Twins** drop `--all-data` and add `--sim-exclude-held`. `--exclude` filters the loss only: preprocessing that reads
+   real-data statistics (the sim map, masks) must be told the split through `real_exclude`, or it leaks.
+ * **Never train through `compose`** (`--alpha-train 0.0`).
++* **`--aug-resim S`** (the Decision-phase candidate, REPRODUCE.md §14): a real window resampled in time by s and scaled by s,
++  s log-uniform in [1/(1+S), 1+S]. At 0 (the default) nothing runs and nothing is drawn; above 0 its draws come from a
++  generator of its own, so the default random stream keeps its order and only the data differ.
++* It refuses `--hist`, `--ctx` ≠ 20, `--teacher`, `--subpix`, `--mixup`, `--norm self` and `--aug-scale`. Its verifier is
++  `experiments/decision_20260928/patches/t4_aug_resim_check.py`.
+ * Real data is in m/s, sim is non-dimensional. `simreal.py` maps sim onto the real statistics; its cache
+   (`RPDE_SIMCACHE`) is keyed without the data path, so use a cache directory per data release.
+ * A retrain with the same seed is not bit-identical (F-FNO about 0.5 % apart in weights, ViT about 10 %). Judge a
+diff --git a/REPRODUCE.md b/REPRODUCE.md
+index d587ff1..6256966 100644
+--- a/REPRODUCE.md
++++ b/REPRODUCE.md
+@@ -957,3 +957,54 @@ inputs and differs in three ways, none of which changes the method:
+ (09-21 … 09-27) and were not brought over. None of them is needed to reproduce FINAL: the environment is
+ `environment.yml`, the QD candidate is not the final recipe, and the acceptance read of §12 is reproduced by building
+ the package from the retrained twins and scoring it with `Track_1/ens_v9.py --aoa 15 20`.
++
++## 14. DECISION (2026-09-28): the candidate — FINAL plus the Re-similarity augmentation
++
++`RPDE_REPRODUCE_GO=1 bash reproduce.sh decision`. Not the default (that stays `final`) and not a package of record: the
++Decision-phase candidate of arm T4 (`experiments/decision_20260928/STATE.md`), made buildable so the owner can decide on
++a real package. Everything that is not named below is §13.
++
++**Training.** The eleven runs of `final` (§1.2–1.5) with `--aug-resim S` appended, under new names so nothing of the record
++is overwritten. `train2.py --aug-resim S` (default 0 = off, bit-identical to a run without the flag) replaces a real
++window, with probability `--aug-resim-p` (0.5), by the same trajectory resampled in time by a factor s from the window's
++own start, every velocity multiplied by s, s log-uniform in [1/(1+S), 1+S]: to first order the recording at Re·s. Its
++draws come from a generator of its own, so the default random stream keeps its order; the verifier is
++`experiments/decision_20260928/patches/t4_aug_resim_check.py`.
++
++| variable | default | applies to | names |
++|---|---|---|---|
++| `RPDE_DP_RESIM_FFNO` | 0.25 | the four F-FNO members, the three F-FNO twins | `ffno_all_w40l8_sim_resim_s1..4`, `p2_ffno_l8_sim_resim_s1..3` |
++| `RPDE_DP_RESIM_VIT` | 0.25 | the two ViT members, the two ViT twins | `arch_vit_all_resim_s1`, `arch_vit_all_cmb3sim_resim_s3`, `arch_vit_d384_resim`, `arch_vit_cmb3sim_resim` |
++
++Empty means the record's recipe and the record's file name (reused if it exists); another S gives `_resim<S without the
++dot>`. Stage functions for `RPDE_REPRO_STAGE`: `dp_twins_vit_p`, `dp_twins_vit_c`, `dp_twins_ffno`, `dp_members_vit_p`,
++`dp_members_vit_c`, `dp_members_ffno` (narrow the seed loops with `RPDE_REPRO_SEEDS`), then `dp_band`, `dp_build`.
++
++**Band: always refitted** (the members changed), exactly as the record's was made (§13.1), into `RPDE_DP_BAND_DIR`
++(default `$RPDE_REPRO_LOG/decision/band`):
++
++```
++fit_band.py --ckpt <6 members> --err-ckpt <5 twins> --alpha 0.80 --band-p 0.45 --fit-on seen --fit-aoa 15 20 \
++    --inflate 1.39 --fill-unscored --centre-alpha 0 --out band_<tag>_static.npz
++dump_twins.py dump_unseen.npz --val Track_1/val_unseen.npz --twins <5 twins>
++cd Track_1/sigblend && B_DUMP=dump_unseen.npz K0_BAND=band_<tag>_static.npz K0_INFL=1.29 K0_NB=16 PYTHONPATH=.. \
++    python make_k0_band.py k0            # -> k0/band_k0_sigblend_lam0.5.{npz,json}
++```
++
++`--fit-on seen --fit-aoa 15 20 --inflate 1.39` are `fit_band.py`'s defaults, written out. The static error field comes
++from the twins on the SEEN AoA 15–20 windows, which the twins trained on (as for the record,
++`experiments/decision_20260928/results/ood_chunk2.md` part A); κ and q come from `val_unseen`.
++
++**Build.** `build_final.sh` with the refitted npz and json, the record's constants and `RPDE_SHIP_PREV_SPACE=target`
++(arm I1), tag `dp_resim` (`_SMOKE` appended at any epoch count but 400). Archives go to `RPDE_REPRO_PKG` (default
++`$RPDE_REPRO_LOG/decision/pkg`), never to `../sub_candidates`.
++
++**Gates.** Those of §13.4, plus two that `build_final.sh` gained on 2026-09-28 for every build: `Track_1/verify/baked_constants.py`
++reads back ALPHA, every `RPDE_SHIP_*` knob (passed, or the tree's default), `AMP`, `SPEC_PATH`, `HOST_WRITE`, `FFNO_PATH`
++and the band's md5 from both archives and fails the build on any mismatch; and a lock file refuses a second build in the
++same tree.
++
++**Accepting a from-scratch rebuild.** Retraining is not bit-identical (§7), so acceptance is a score test: the rebuilt
++package's composite (the fitted `final` without `time`, `W0`, read on `Track_2/stream_eval.py` with the revealed target
++normalised as the official runner does) within **0.005** of the package built from the campaign's checkpoints. The job plan of the full run, one job per training and one build job after them
++(about 40 A100 GPU-hours), is `experiments/decision_20260928/results/candidate_release.md`.
+diff --git a/Track_1/bands/MANIFEST.md b/Track_1/bands/MANIFEST.md
+index 3c4b836..9fc00f4 100644
+--- a/Track_1/bands/MANIFEST.md
++++ b/Track_1/bands/MANIFEST.md
+@@ -252,3 +252,24 @@ trajectories; the evidence for them is the leave-one-trajectory-out read that sc
+ 
+ **Not in this directory:** the bands of R31 – R34 and T2R18 – T2R21 (r35 is `r35_centre0_fill.npz`; r37's widened band and
+ the two QD bands stayed on the agent team's server). None of them is on the path to the packages of record.
++
++## 2026-09-28: the Decision-phase candidate's band (`reproduce.sh decision`) — to be completed when the band exists
++
++| band file | md5 (12) | rounds that shipped it | ids |
++|---|---|---|---|
++| `dp_resim_sigblend_lam0.5.npz` + `.json` | to be completed | none (a candidate, not uploaded) | — |
++
++Members `ffno_all_w40l8_sim_resim_s1..s4`, `arch_vit_all_resim_s1`, `arch_vit_all_cmb3sim_resim_s3`; twins
++`p2_ffno_l8_sim_resim_s1..s3`, `arch_vit_d384_resim`, `arch_vit_cmb3sim_resim` (REPRODUCE.md §14). Made by `reproduce.sh`
++stage `dp_band`, the record's construction on the new twins:
++
++```
++fit_band.py --ckpt <6 members> --err-ckpt <5 twins> --alpha 0.80 --band-p 0.45 --fit-on seen --fit-aoa 15 20 \
++    --inflate 1.39 --fill-unscored --centre-alpha 0 --out band_dp_resim_static.npz
++dump_twins.py dump_unseen.npz --val Track_1/val_unseen.npz --twins <5 twins>
++cd Track_1/sigblend && B_DUMP=dump_unseen.npz K0_BAND=band_dp_resim_static.npz K0_INFL=1.29 K0_NB=16 PYTHONPATH=.. \
++    python make_k0_band.py k0
++```
++
++The npz and its json (`EBAND`, `T2_sigpow`) are one object. To be completed when the band exists: md5 of both files,
++q, the leave-one-trajectory-out ΔC, the job that made it; then `git add -f` both under the name above.
+diff --git a/Track_1/submit_fno/build_final.sh b/Track_1/submit_fno/build_final.sh
+index 1edf387..cb32bbe 100755
+--- a/Track_1/submit_fno/build_final.sh
++++ b/Track_1/submit_fno/build_final.sh
+@@ -20,7 +20,13 @@
+ # snapshots the three files and puts them back, so the tree is unchanged when it returns.
+ #
+ # Exit 0 only if Track 1 is SUBMITTABLE, Track 2 is SUBMITTABLE as an adaptive package, no Track-2 step reads a window
+-# it has not been shown, and the identity checks (when asked for) pass.
++# it has not been shown, both archives carry exactly the constants and the band this call asked for
++# (Track_1/verify/baked_constants.py), and the identity checks (when asked for) pass.
++#
++# Knobs of build_round13.sh that this script does not set (e.g. RPDE_SHIP_PREV_SPACE=target, RPDE_SHIP_STATS_MASK) pass
++# through from the caller's environment and are checked like the rest. One build per tree at a time: a lock file
++# (host, pid) refuses a second one, because the `sed` edits and the restore below are not safe to share -- a restore by
++# one build under another once shipped an archive of the unsubstituted defaults (decision_20260928/results/ood_instrument.md).
+ set -uo pipefail
+ cd "$(dirname "$0")/../.."
+ _PY=/users/PAS1187/qwu/.conda/envs/realpde/bin/python
+@@ -44,29 +50,45 @@ EBAND=$($PY -c "import json;print(json.load(open('$SB'))['EBAND'])") || exit 1
+ SIGPOW=$($PY -c "import json;q=json.load(open('$SB'))['T2_sigpow'];print('(%r, %r)' % (float(q[0]), float(q[1])))") || exit 1
+ echo "band $BAND  md5 $(md5sum < "$BAND" | cut -c1-8)  EBAND $EBAND  SIGPOW $SIGPOW"
+ 
++# One build per tree. noclobber makes the creation atomic on any filesystem, scratch included (flock does not serialise
++# across nodes there). A lock left by a killed job names its host and pid: check that it is gone, then delete the file.
++LOCK=Track_1/submit_fno/.build_final.lock
++if ! ( set -o noclobber; echo "$(hostname) pid $$ job ${SLURM_JOB_ID:-none} $(date '+%F %T') $OUT" > "$LOCK" ) 2>/dev/null; then
++  echo "REFUSING: another build holds $PWD/$LOCK: $(cat "$LOCK" 2>/dev/null)"
++  echo "Two builds in one tree overwrite each other's baked constants. Wait for it, or delete the lock if its job is gone."
++  exit 1
++fi
+ KEEP=$(mktemp -d); LOG="$OUT/build_$TAG.log"
+ FILES="Track_1/submit_fno/submission.py Track_1/submit_fno/_fno.py Track_2/submit/submission.py"
+ for f in $FILES; do mkdir -p "$KEEP/$(dirname $f)"; cp -p $f "$KEEP/$f"; done
+-restore() { for f in $FILES; do cp -p "$KEEP/$f" $f; done; rm -rf "$KEEP"; }
++restore() { for f in $FILES; do cp -p "$KEEP/$f" $f; done; rm -rf "$KEEP"; rm -f "$LOCK"; }
+ trap restore EXIT
+ 
+-env RPDE_FORCE=${RPDE_FORCE:-0} RPDE_SUB="$OUT" RPDE_TAG="$TAG" RPDE_A="$A" RPDE_M="$M" RPDE_BAND="$BAND" \
+-    RPDE_CENTRE_ALPHA=0 RPDE_INT8=1 RPDE_LINEAR=tensor RPDE_SHIP_AMP='"fp16"' \
+-    RPDE_SPEC_PATH=bmm RPDE_HOST_WRITE=torch RPDE_FFNO_PATH=dense \
+-    RPDE_SHIP_JOINT_GAIN=True "RPDE_SHIP_EBAND=$EBAND" "RPDE_SHIP_SIGPOW=$SIGPOW" \
+-    RPDE_SHIP_DIRECT_PRED=True RPDE_SHIP_SMALL_GRAPH=False RPDE_SHIP_SMALL_GRAPH_LAZY=False \
+-    RPDE_SHIP_WARM_TAILS=True RPDE_SHIP_PIN_OUT=128 RPDE_SHIP_BATCH_CAP=56 RPDE_SHIP_ARENA_STEPS=1024 \
+-    RPDE_SHIP_R1=True RPDE_SHIP_R1_ASYM=True RPDE_SHIP_NUMPY_OUT=True \
+-    RPDE_SHIP_R1_TSM=3 RPDE_SHIP_R1_BLK_N0=20.0 RPDE_SHIP_R1_BLK=4 \
+-    RPDE_SHIP_D1C_N0=30.0 RPDE_SHIP_D1C_EB=True RPDE_SHIP_D1C_EB_N0=1.0 RPDE_SHIP_D1C_LEAD_N0=5.0 \
+-    RPDE_SHIP_VC_N0=30.0 RPDE_T2_ADAPTIVE=1 \
+-    bash Track_1/submit_fno/build_round13.sh 0.80 2>&1 | tee "$LOG"
++# The constants of record, one list: passed to the build and, after it, checked against the archives.
++SHIP=(RPDE_FORCE=${RPDE_FORCE:-0} RPDE_SUB="$OUT" RPDE_TAG="$TAG" RPDE_A="$A" RPDE_M="$M" RPDE_BAND="$BAND"
++    RPDE_CENTRE_ALPHA=0 RPDE_INT8=1 RPDE_LINEAR=tensor RPDE_SHIP_AMP='"fp16"'
++    RPDE_SPEC_PATH=bmm RPDE_HOST_WRITE=torch RPDE_FFNO_PATH=dense
++    RPDE_SHIP_JOINT_GAIN=True "RPDE_SHIP_EBAND=$EBAND" "RPDE_SHIP_SIGPOW=$SIGPOW"
++    RPDE_SHIP_DIRECT_PRED=True RPDE_SHIP_SMALL_GRAPH=False RPDE_SHIP_SMALL_GRAPH_LAZY=False
++    RPDE_SHIP_WARM_TAILS=True RPDE_SHIP_PIN_OUT=128 RPDE_SHIP_BATCH_CAP=56 RPDE_SHIP_ARENA_STEPS=1024
++    RPDE_SHIP_R1=True RPDE_SHIP_R1_ASYM=True RPDE_SHIP_NUMPY_OUT=True
++    RPDE_SHIP_R1_TSM=3 RPDE_SHIP_R1_BLK_N0=20.0 RPDE_SHIP_R1_BLK=4
++    RPDE_SHIP_D1C_N0=30.0 RPDE_SHIP_D1C_EB=True RPDE_SHIP_D1C_EB_N0=1.0 RPDE_SHIP_D1C_LEAD_N0=5.0
++    RPDE_SHIP_VC_N0=30.0 RPDE_T2_ADAPTIVE=1)
++ALPHA_SHIP=0.80
++env "${SHIP[@]}" bash Track_1/submit_fno/build_round13.sh $ALPHA_SHIP 2>&1 | tee "$LOG"
+ 
+ RC=0
+ N=$(grep -ac '^SUBMITTABLE$' "$LOG")
+ echo "gates: $N/2 SUBMITTABLE   (log $LOG)"
+ [ "$N" = "2" ] || { echo "FAILED: a gate did not pass"; RC=1; }
+ 
++# The archives must carry what was asked for: every constant above (and any knob passed through), ALPHA, the band.
++env "${SHIP[@]}" $PY Track_1/verify/baked_constants.py --t1 "$OUT/track1_$TAG.zip" --t2 "$OUT/track2_$TAG.zip" \
++    --alpha $ALPHA_SHIP --band "$BAND" --tree-t1 "$KEEP/Track_1/submit_fno/submission.py" \
++    --tree-fno "$KEEP/Track_1/submit_fno/_fno.py" --tree-t2 "$KEEP/Track_2/submit/submission.py" 2>&1 | tee -a "$LOG"
++[ "${PIPESTATUS[0]}" = "0" ] || { echo "FAILED: the archives do not carry the constants this build asked for"; RC=1; }
++
+ X=$(mktemp -d)
+ $PY -m zipfile -e "$OUT/track2_$TAG.zip" "$X" \
+   && $PY Track_2/stream_eval.py --submission "$X" --causal-check 2>&1 | tr -d '\000' | grep -a "CAUSAL\|scores" | tee -a "$LOG"
+diff --git a/Track_1/unet/train2.py b/Track_1/unet/train2.py
+index 2bf7cf1..cb86662 100644
+--- a/Track_1/unet/train2.py
++++ b/Track_1/unet/train2.py
+@@ -127,6 +127,68 @@ def aug_mask(x: torch.Tensor, y: torch.Tensor, p: float,
+     return torch.where(m, zconst, x), torch.where(m, zconst, y)
+ 
+ 
++def resim_frames(d: torch.Tensor, t0: int, s: float) -> torch.Tensor:
++    """The T_IN+T_OUT frames of `--aug-resim` for one window, in PHYSICAL units, times `s`.
++
++    d  : (T, H, W, C) one raw physical trajectory (train2 keeps `trajs` un-normalized)
++    t0 : the window's own start frame
++    s  : the Reynolds factor; the caller guarantees t0 + s*(T_IN+T_OUT-1) <= T-1
++
++    Frame j sits at source time t0 + s*j, LINEAR in time between the two neighbouring frames
++    (`a + w*(b - a)`, which returns `a` bit for bit when w = 0 or a = b), then every velocity is
++    multiplied by s. An element that is the physical zero in a neighbour that carries weight is
++    set to the physical zero, so the PIV mask can never be smeared into a small non-zero value.
++    Multiplying in physical units keeps that zero exactly zero; the same map applied in
++    normalized units (`--aug-scale`'s `a*x + (a-1)*MEAN/STD`) is equal only up to rounding.
++    """
++    n = T_IN + T_OUT
++    tt = t0 + s * torch.arange(n, dtype=torch.float64)
++    k0 = tt.floor().long()
++    w = tt - k0.double()
++    k1 = (k0 + 1).clamp(max=d.shape[0] - 1)
++    a, b = d[k0], d[k1]
++    wv = w.float().view(n, 1, 1, 1)
++    f = a + wv * (b - a)
++    z = (a == 0) | ((b == 0) & (wv > 0))
++    return torch.where(z, torch.zeros((), dtype=f.dtype), f) * s
++
++
++def aug_resim(trajs_t: list, sel: torch.Tensor, S: float, p: float,
++              gen: torch.Generator) -> tuple[list[int], torch.Tensor | None, torch.Tensor, int]:
++    """`--aug-resim`: Reynolds-similar neighbours of the real windows in `sel`.
++
++    At fixed geometry and angle, u/U as a function of t*U/c changes slowly with Re, so the
++    recording at Re' = s*Re is, to first order, the recording at Re with every velocity times s
++    AND time running s times faster. `--aug-scale` did only the amplitude half.
++
++    Per sample, exactly two uniforms are drawn from `gen` (a dedicated generator, never the
++    default one): whether it is augmented (prob. p) and its log-uniform s in [1/(1+S), 1+S].
++    A sample whose resampled window would run past the trajectory's last frame is left as it
++    is (s = 1): nothing is padded or extrapolated. Returns the batch rows that were replaced,
++    their (n, T_IN+T_OUT, H, W, C) physical frames (None when no row), s per row (1 where not
++    replaced), and how many rows drew s != 1 but did not fit before the trajectory's end.
++    """
++    b = len(sel)
++    u_hit = torch.rand(b, generator=gen, dtype=torch.float64)
++    u_s = torch.rand(b, generator=gen, dtype=torch.float64)
++    lo = float(np.log(1.0 + S))
++    s_all = torch.where(u_hit < p, torch.exp((2.0 * u_s - 1.0) * lo),
++                        torch.ones((), dtype=torch.float64))
++    last = T_IN + T_OUT - 1
++    rows, frames, n_short = [], [], 0
++    for r, (i, t0) in enumerate(sel.tolist()):
++        s = float(s_all[r])
++        if s == 1.0:
++            continue
++        if t0 + s * last > trajs_t[i].shape[0] - 1:
++            s_all[r] = 1.0
++            n_short += 1
++            continue
++        rows.append(r)
++        frames.append(resim_frames(trajs_t[i], t0, s))
++    return rows, (torch.stack(frames) if frames else None), s_all, n_short
++
++
+ def _sam_ascent(model: torch.nn.Module, rho: float) -> list:
+     """Move every parameter to `w + rho * g / ||g||` in place; return `(param, w)` pairs.
+ 
+@@ -379,6 +441,17 @@ def main() -> None:
+                          "(the --sim term keeps its own mapped mask), adds no parameters, and "
+                          "is inert at 0 -- no random number is drawn, so a p=0 run is "
+                          "byte-identical to one without the flag.")
++    ap.add_argument("--aug-resim", type=float, default=0.0,
++                    help="Reynolds-similarity augmentation (Decision-phase arm T4). A real "
++                         "window is replaced by the same trajectory resampled in time by a "
++                         "factor s from its own start (frame j at t0 + s*j, linear in time) "
++                         "with every velocity times s: to first order the recording at "
++                         "Re*s. s is log-uniform in [1/(1+S), 1+S]; a window that would run "
++                         "past the trajectory's end is left as it is. REAL batch only. Draws "
++                         "come from a dedicated generator, so the default RNG stream keeps "
++                         "its order. 0 disables it: nothing is built and nothing is drawn.")
++    ap.add_argument("--aug-resim-p", type=float, default=0.5,
++                    help="per-sample probability that --aug-resim augments a real window.")
+     ap.add_argument("--norm", choices=["real", "sim", "self"], default="real",
+                     help="'real'/'sim' = fixed global GaussianNormalizer statistics for that "
+                          "dataset. 'self' = WP-C, divide each window by its own mean streamwise "
+@@ -787,6 +860,19 @@ def main() -> None:
+     # (_fno.load_any refuses them). Refuse rather than mask an inconsistent input.
+     if args.aug_mask > 0.0 and (args.hist or args.ctx != T_IN):
+         raise SystemExit("--aug-mask is not implemented for --hist / --ctx != 20")
++    if args.aug_resim != 0.0:
++        # A resampled window has no consistent history / context frames, no teacher label, no
++        # sub-pixel twin, and would be undone by a per-window self scale; mixing it with a
++        # second amplitude scale or a mixed partner has no physical reading. Refuse them all.
++        bad = [f for f, on in (("--hist", args.hist), ("--ctx != 20", args.ctx != T_IN),
++                               ("--teacher", bool(args.teacher)),
++                               ("--subpix", args.subpix > 0.0), ("--mixup", args.mixup > 0.0),
++                               ("--norm self", args.norm == "self"),
++                               ("--aug-scale", args.aug_scale > 0.0)) if on]
++        if bad:
++            raise SystemExit(f"--aug-resim refuses {bad}")
++        if args.aug_resim < 0.0 or not 0.0 < args.aug_resim_p <= 1.0:
++            raise SystemExit("--aug-resim needs S > 0 and 0 < --aug-resim-p <= 1")
+     if args.subpix > 0.0:
+         if args.arch != "fno":
+             raise SystemExit(f"--subpix is implemented on --arch fno (got {args.arch})")
+@@ -833,6 +919,15 @@ def main() -> None:
+         torch.manual_seed(args.seed)
+         torch.cuda.manual_seed_all(args.seed)
+         np.random.seed(args.seed)
++    if args.aug_resim > 0.0:
++        # Its OWN CPU generator: the default CPU stream (randperm, the sim / aux randint), the
++        # CUDA stream (dropout) and numpy keep exactly the draws they would make without the
++        # flag. Seeded from --seed with a fixed offset so a seeded run stays reproducible.
++        resim_gen = torch.Generator()
++        if args.seed >= 0:
++            resim_gen.manual_seed(args.seed + 7_000_003)
++        else:
++            resim_gen.seed()
+ 
+     dev = "cuda"
+     # Self-normalization needs raw physical trajectories: the per-window scale is only
+@@ -1109,6 +1204,10 @@ def main() -> None:
+         if ck.get("rng_cuda") is not None and torch.cuda.is_available():
+             torch.cuda.set_rng_state_all([t.cpu() for t in ck["rng_cuda"]])
+         np.random.set_state(ck["rng_np"])
++        if args.aug_resim > 0.0:
++            if ck.get("rng_resim") is None:
++                raise SystemExit(f"--resume: {RESUME} has no --aug-resim generator state")
++            resim_gen.set_state(ck["rng_resim"].cpu().to(torch.uint8))
+         start_ep, elapsed0 = int(ck["epoch"]), float(ck.get("elapsed", 0.0))
+         print(f"resume: {RESUME} -> epoch {start_ep}/{args.epochs}, "
+               f"{elapsed0:.0f}s already spent, sched step {sched.last_epoch}", flush=True)
+@@ -1120,14 +1219,17 @@ def main() -> None:
+     def save_resume(ep_done):
+         """Atomic, because a preemption during the write would otherwise poison the restart."""
+         tmp = RESUME + ".tmp"
+-        torch.save({"model": model.state_dict(), "opt": opt.state_dict(),
+-                    "sched": sched.state_dict(), "epoch": ep_done, "epochs": args.epochs,
+-                    "swa_state": swa_state, "swa_n": swa_n,
+-                    "rng_cpu": torch.get_rng_state(),
+-                    "rng_cuda": (torch.cuda.get_rng_state_all()
+-                                 if torch.cuda.is_available() else None),
+-                    "rng_np": np.random.get_state(),
+-                    "elapsed": elapsed0 + time.time() - t0}, tmp)
++        ck_out = {"model": model.state_dict(), "opt": opt.state_dict(),
++                  "sched": sched.state_dict(), "epoch": ep_done, "epochs": args.epochs,
++                  "swa_state": swa_state, "swa_n": swa_n,
++                  "rng_cpu": torch.get_rng_state(),
++                  "rng_cuda": (torch.cuda.get_rng_state_all()
++                               if torch.cuda.is_available() else None),
++                  "rng_np": np.random.get_state(),
++                  "elapsed": elapsed0 + time.time() - t0}
++        if args.aug_resim > 0.0:
++            ck_out["rng_resim"] = resim_gen.get_state()
++        torch.save(ck_out, tmp)
+         os.replace(tmp, RESUME)
+ 
+     t0 = time.time()
+@@ -1139,11 +1241,28 @@ def main() -> None:
+                 torch.multinomial(w_samp, len(idx_t), replacement=True))
+         acc = np.zeros(17)          # 16 loss terms + `err` (--err-head), appended last
+         n = 0
++        if args.aug_resim > 0.0:
++            rs_hit = rs_short = 0     # windows replaced / drawn s != 1 but too close to the end
++            rs_s = []
+         for i in range(0, len(idx_t), args.batch):
+             pos = perm[i:i + args.batch]
+             sel = idx_t[pos]
+             x, y, ctx = fetch(sel)
+             b = len(sel)
++            if args.aug_resim > 0.0:
++                # BEFORE self_norm: `fetch` returns raw physical frames, so the resampled window
++                # goes through the SAME normalizer as every real one, and everything the loss
++                # derives from `y` -- std_t(y) for the log-std head, tke(y) -- is computed from
++                # the augmented target. Only rows that were drawn AND fit are replaced.
++                rs_rows, rs_fr, rs_sv, rs_ns = aug_resim(trajs_t, sel, args.aug_resim,
++                                                         args.aug_resim_p, resim_gen)
++                if rs_fr is not None:
++                    rs_fr = rs_fr.to(dev, non_blocking=True)
++                    x[rs_rows] = rs_fr[:, :T_IN]
++                    y[rs_rows] = rs_fr[:, T_IN:]
++                rs_hit += len(rs_rows)
++                rs_short += rs_ns
++                rs_s += rs_sv[rs_rows].tolist()
+             hist = hist_t[pos].to(dev, non_blocking=True) if args.hist else None
+ 
+             # `mul` converts a normalized difference or std to physical units; `off` completes
+@@ -1611,6 +1730,11 @@ def main() -> None:
+                   f"aux {a[11]:.5f}  psim {a[12]:.5f}  cov {a[13]:.5f}  "
+                   f"sub {a[14]:.5f}  kd {a[15]:.5f}  err {a[16]:.5f}  "
+                   f"({elapsed0 + time.time() - t0:.0f}s)", flush=True)
++            if args.aug_resim > 0.0:
++                ls = np.log(np.asarray(rs_s)) if rs_s else np.zeros(1)
++                print(f"  resim: {rs_hit}/{n} windows replaced ({rs_hit / max(n, 1):.3f}), "
++                      f"{rs_short} drawn but too close to the end; log s mean {ls.mean():+.4f} "
++                      f"range [{ls.min():+.4f}, {ls.max():+.4f}]", flush=True)
+ 
+         if RESUME and args.ckpt_every and (ep + 1) % args.ckpt_every == 0:
+             save_resume(ep + 1)
+diff --git a/Track_1/verify/baked_constants.py b/Track_1/verify/baked_constants.py
+new file mode 100644
+index 0000000..6976194
+--- /dev/null
++++ b/Track_1/verify/baked_constants.py
+@@ -0,0 +1,158 @@
++"""Build gate: do the two archives carry the constants the build was asked to bake?
++
++    python Track_1/verify/baked_constants.py --t1 track1.zip --t2 track2.zip --alpha 0.80 --band band.npz \
++        --tree-t1 <submission.py> --tree-fno <_fno.py> --tree-t2 <submission.py>
++
++Called by `build_final.sh` after the gates, in the environment `build_round13.sh` ran in (the RPDE_* knobs). Why it
++exists: two builds sharing one worktree once restored each other's files mid-build, and an archive of the UNSUBSTITUTED
++defaults still ended `BUILD_FINAL OK` (experiments/decision_20260928/results/ood_instrument.md, "Build isolation"). The
++gates score a package; nothing checked that it was the package asked for.
++
++For every constant `build_round13.sh` can write, the expected value is what it writes: the knob's value when the knob
++is set, otherwise the value the script falls back to (ALPHA, FUSE, AMP, BLEND_BETA, SPEC_PATH, HOST_WRITE are always
++written) or the tree's own default (the `[ -n ... ] && sed` knobs; pass the tree's files as they were BEFORE the
++build). Values are compared as Python literals read from the module-level assignment of the extracted file. Also checks
++that band.npz in both archives is the band asked for, byte for byte. Prints the table; exits 1 on any mismatch.
++"""
++from __future__ import annotations
++
++import argparse
++import ast
++import hashlib
++import os
++import sys
++import tempfile
++import zipfile
++
++# knob -> (constant, files, kind). kind "lit": the knob's value is a Python literal; "str": a bare word the build quotes.
++# Files: t1s / t1f = Track 1 submission.py / _fno.py, t2s / t2f = the same for Track 2 (t2f is the same _fno.py).
++KNOBS = [
++    ("RPDE_SHIP_JOINT_GAIN", "JOINT_GAIN", ("t1f", "t1s", "t2s", "t2f"), "lit"),
++    ("RPDE_SHIP_DIRECT_PRED", "D2_DIRECT_PRED", ("t1f", "t2f"), "lit"),
++    ("RPDE_SHIP_EBAND", "EBAND", ("t1s",), "lit"),
++    ("RPDE_SHIP_WARM_TAILS", "WARM_TAILS", ("t1s",), "lit"),
++    ("RPDE_SHIP_PIN_OUT", "PIN_OUT", ("t1s",), "lit"),
++    ("RPDE_SHIP_BATCH_CAP", "BATCH_CAP", ("t1s",), "lit"),
++    ("RPDE_SHIP_SIGPOW", "SIGPOW", ("t2s",), "lit"),
++    ("RPDE_SHIP_GRAPH_TOL", "GRAPH_TOL", ("t2s",), "lit"),
++    ("RPDE_SHIP_ARENA_STEPS", "ARENA_STEPS", ("t2s",), "lit"),
++    ("RPDE_SHIP_NUMPY_OUT", "NUMPY_OUT", ("t2s",), "lit"),
++    ("RPDE_SHIP_R1", "R1", ("t2s",), "lit"),
++    ("RPDE_SHIP_R1_ASYM", "R1_ASYM", ("t2s",), "lit"),
++    ("RPDE_SHIP_R1_TSM", "R1_TSM", ("t2s",), "lit"),
++    ("RPDE_SHIP_R1_BLK_N0", "R1_BLK_N0", ("t2s",), "lit"),
++    ("RPDE_SHIP_R1_BLK", "R1_BLK", ("t2s",), "lit"),
++    ("RPDE_SHIP_D1C_N0", "D1C_N0", ("t2s",), "lit"),
++    ("RPDE_SHIP_D1C_EB", "D1C_EB", ("t2s",), "lit"),
++    ("RPDE_SHIP_D1C_EB_N0", "D1C_EB_N0", ("t2s",), "lit"),
++    ("RPDE_SHIP_D1C_LEAD_N0", "D1C_LEAD_N0", ("t2s",), "lit"),
++    ("RPDE_SHIP_VC_N0", "VC_N0", ("t2s",), "lit"),
++    ("RPDE_SHIP_FW_N0", "FW_N0", ("t2s",), "lit"),
++    ("RPDE_SHIP_STATS_MASK", "STATS_MASK", ("t2s",), "lit"),
++    ("RPDE_SHIP_PREV_SPACE", "PREV_SPACE", ("t2s",), "str"),
++]
++# Always written by build_round13.sh, with these fallbacks when the knob is unset.
++ALWAYS = [
++    ("RPDE_FUSE", "FUSE", ("t1s", "t2s"), "lit", "True"),
++    ("RPDE_SHIP_AMP", "AMP", ("t1s", "t2s"), "lit", "None"),
++    ("RPDE_BETA", "BLEND_BETA", ("t1s",), "lit", "0.0"),
++    ("RPDE_SPEC_PATH", "SPEC_PATH", ("t1s", "t2s"), "str", ""),
++    ("RPDE_HOST_WRITE", "HOST_WRITE", ("t1s",), "str", ""),
++]
++# Knobs removed on 2026-09-28: build_round13.sh refuses any value but the old default, and there is nothing to bake.
++REMOVED = ("RPDE_SHIP_SMALL_GRAPH", "RPDE_SHIP_SMALL_GRAPH_LAZY")
++
++MISSING = object()
++
++
++def consts(path: str) -> dict:
++    out = {}
++    for node in ast.parse(open(path).read()).body:
++        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
++            try:
++                out[node.targets[0].id] = ast.literal_eval(node.value)
++            except ValueError:
++                pass
++    return out
++
++
++def main() -> int:
++    ap = argparse.ArgumentParser()
++    ap.add_argument("--t1", required=True)
++    ap.add_argument("--t2", required=True)
++    ap.add_argument("--alpha", required=True)
++    ap.add_argument("--band", required=True)
++    ap.add_argument("--tree-t1", required=True, help="Track_1/submit_fno/submission.py as it was before the build")
++    ap.add_argument("--tree-fno", required=True, help="Track_1/submit_fno/_fno.py as it was before the build")
++    ap.add_argument("--tree-t2", required=True, help="Track_2/submit/submission.py as it was before the build")
++    a = ap.parse_args()
++    env = os.environ
++
++    tmp = tempfile.mkdtemp()
++    got, band_md5 = {}, {}
++    for tr, z in (("t1", a.t1), ("t2", a.t2)):
++        zf = zipfile.ZipFile(z)
++        names = {os.path.basename(n): n for n in zf.namelist()}
++        for short, base in ((tr + "s", "submission.py"), (tr + "f", "_fno.py")):
++            p = os.path.join(tmp, short + ".py")
++            open(p, "wb").write(zf.read(names[base]))
++            got[short] = consts(p)
++        band_md5[tr] = hashlib.md5(zf.read(names["band.npz"])).hexdigest()
++    tree = {"t1s": consts(a.tree_t1), "t1f": consts(a.tree_fno), "t2s": consts(a.tree_t2), "t2f": consts(a.tree_fno)}
++
++    rows, bad = [], 0
++
++    def row(name, files, exp, src):
++        nonlocal bad
++        for f in files:
++            v = got[f].get(name, MISSING)
++            ok = (v is not MISSING and v == exp and type(v) is type(exp)) or (v is MISSING and exp is MISSING)
++            bad += not ok
++            rows.append((name, f, "(absent)" if exp is MISSING else repr(exp),
++                         "(absent)" if v is MISSING else repr(v), src, "OK" if ok else "MISMATCH"))
++
++    def parse(raw, kind):
++        return raw if kind == "str" else ast.literal_eval(raw)
++
++    row("ALPHA", ("t1s", "t2s"), ast.literal_eval(a.alpha), "argument")
++    for var, name, files, kind, fb in ALWAYS:
++        raw = env.get(var)
++        row(name, files, parse(raw if raw is not None else fb, kind), f"{var}" if raw is not None else "fallback")
++    for var, name, files, kind in KNOBS:
++        raw = env.get(var, "")
++        if raw:
++            row(name, files, parse(raw, kind), var)
++        else:
++            for f in files:
++                row(name, (f,), tree[f].get(name, MISSING), "tree default")
++    ffno = env.get("RPDE_FFNO_PATH", "")
++    if ffno:
++        p = ffno.split()
++        for f, v in (("t1s", p[0]), ("t2s", p[1] if len(p) > 1 else p[0])):
++            row("FFNO_PATH", (f,), None if v == "none" else v, "RPDE_FFNO_PATH")
++    else:
++        for f in ("t1s", "t2s"):
++            row("FFNO_PATH", (f,), tree[f].get("FFNO_PATH", MISSING), "tree default")
++
++    want = hashlib.md5(open(a.band, "rb").read()).hexdigest()
++    for tr in ("t1", "t2"):
++        ok = band_md5[tr] == want
++        bad += not ok
++        rows.append(("band.npz md5", tr, want[:12], band_md5[tr][:12], "RPDE_BAND", "OK" if ok else "MISMATCH"))
++
++    w = [max(len(str(r[i])) for r in rows + [("constant", "file", "expected", "found", "source", "")]) for i in range(6)]
++    w = [min(x, 60) for x in w]
++    fmt = "  ".join("{:<%d}" % x for x in w)
++    print("BAKED CONSTANTS (the archives against what the build was asked for)")
++    print(fmt.format("constant", "file", "expected", "found", "source", ""))
++    for r in rows:
++        print(fmt.format(*[str(x)[:60] for x in r]))
++    for var in REMOVED:
++        if env.get(var):
++            print(f"  {var}={env[var]}: removed knob (2026-09-28), refused by build_round13.sh unless the old default; not baked")
++    print(f"BAKED CONSTANTS {'OK' if not bad else 'FAILED'}: {len(rows)} checks, {bad} mismatches")
++    return 1 if bad else 0
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/reproduce.sh b/reproduce.sh
+index befa644..49eef37 100755
+--- a/reproduce.sh
++++ b/reproduce.sh
+@@ -4,6 +4,7 @@
+ #   RPDE_REPRODUCE_GO=1 bash reproduce.sh [final]                  # default: the two packages of record (09-27)
+ #   RPDE_REPRODUCE_GO=1 bash reproduce.sh r35|r34|r28|r25          # superseded packages the board scored
+ #   RPDE_REPRODUCE_GO=1 bash reproduce.sh --recipe A|QD|QD_STATIC  # the 09-24 candidates (REPRODUCE.md section 10)
++#   RPDE_REPRODUCE_GO=1 bash reproduce.sh decision                 # Decision-phase candidate: FINAL + --aug-resim (section 14)
+ #
+ # `final` trains the 5 held-out twins and the 6 all-data members, then calls Track_1/submit_fno/build_final.sh, which
+ # builds and gates both archives (Track 1 81.671149, Track 2 82.055553). By default it REUSES the committed SIGBLEND band
+@@ -35,6 +36,10 @@
+ #   RPDE_REPRO_FITBAND=1     FIT the band from the twins (RPDE_BAND_FILL=1) instead of reusing the
+ #                            committed one -- what a NEW member set needs, and what the smoke
+ #                            exercises. A refit is not bit-reproducible across twin sets.
++#   RPDE_DP_RESIM_FFNO=<S>   `decision` only: --aug-resim S on the four F-FNO members and three F-FNO twins (default 0.25;
++#                            empty = none, i.e. the record's F-FNO recipe and names)
++#   RPDE_DP_RESIM_VIT=<S>    `decision` only: the same for the two ViT members and two ViT twins (default 0.25; empty = the
++#                            record's ViTs, reused where they exist)
+ set -uo pipefail
+ cd "$(dirname "$0")"
+ 
+@@ -405,6 +410,65 @@ build_final_pkg() {
+       || { echo "FAILED: build_final.sh (gates, causality or identity) -- read ${RPDE_REPRO_PKG:-$W/pkg}/build_*.log"; exit 1; }
+ }
+ 
++# ============================== DECISION (2026-09-28): FINAL + the Re-similarity augmentation ==================
++# REPRODUCE.md section 14. The recipe of record plus `--aug-resim` (train2.py), the band REFIT from the new twins exactly
++# as the record's was made (static fit, then SIGBLEND by dump_twins.py + make_k0_band.py), the record's constants plus
++# PREV_SPACE "target" (arm I1). New checkpoint names, so nothing of the record is overwritten: `_resim` for S = 0.25,
++# `_resim<S without the dot>` for another S, and the record's own name when the variable is empty.
++DP_RF=${RPDE_DP_RESIM_FFNO-0.25}
++DP_RV=${RPDE_DP_RESIM_VIT-0.25}
++_dp_sfx() { [ -z "$1" ] && return 0; [ "$1" = "0.25" ] && echo _resim || echo "_resim${1/./}"; }
++DP_SF=$(_dp_sfx "$DP_RF"); DP_SV=$(_dp_sfx "$DP_RV")
++DP_AF=${DP_RF:+--aug-resim $DP_RF}; DP_AV=${DP_RV:+--aug-resim $DP_RV}
++# Resumable, so each stage can run as a --requeue job (the same flags as the QD recipe above): a preempted job continues
++# from its last 20-epoch checkpoint (weights, optimizer, schedule, every generator including --aug-resim's).
++DP_RES="--ckpt-every 20 --resume"
++dp_twins_vit_p()    { run $OUT/arch_vit_d384$DP_SV.pth    $VITP --seed 1 $DP_AV $DP_RES; }
++dp_twins_vit_c()    { run $OUT/arch_vit_cmb3sim$DP_SV.pth $VITC --seed 1 $SIMF --sim-exclude-held $DP_AV $DP_RES; }
++dp_twins_ffno()     { for s in $SEEDS_TW; do run $P2/p2_ffno_l8_sim${DP_SF}_s$s.pth $FFNO $SIMF --sim-exclude-held --seed $s $DP_AF $DP_RES; done; }
++dp_members_vit_p()  { run $OUT/arch_vit_all${DP_SV}_s1.pth         $VITP --seed 1 --all-data $DP_AV $DP_RES; }
++dp_members_vit_c()  { run $OUT/arch_vit_all_cmb3sim${DP_SV}_s3.pth $VITC --seed 3 --all-data $SIMF $DP_AV $DP_RES; }
++dp_members_ffno()   { for s in $SEEDS_ME; do run $OUT/ffno_all_w40l8_sim${DP_SF}_s$s.pth $FFNO $SIMF --seed $s --all-data $DP_AF $DP_RES; done; }
++_A_DP() { echo "$OUT/ffno_all_w40l8_sim${DP_SF}_s1.pth $OUT/ffno_all_w40l8_sim${DP_SF}_s2.pth $OUT/ffno_all_w40l8_sim${DP_SF}_s3.pth \
++                $OUT/ffno_all_w40l8_sim${DP_SF}_s4.pth $OUT/arch_vit_all${DP_SV}_s1.pth $OUT/arch_vit_all_cmb3sim${DP_SV}_s3.pth"; }
++_M_DP() { echo "$P2/p2_ffno_l8_sim${DP_SF}_s1.pth $P2/p2_ffno_l8_sim${DP_SF}_s2.pth $P2/p2_ffno_l8_sim${DP_SF}_s3.pth \
++                $OUT/arch_vit_d384$DP_SV.pth $OUT/arch_vit_cmb3sim$DP_SV.pth"; }
++DP_TAG=dp_resim$([ "$DP_RF" = 0.25 ] || echo "_f${DP_RF/./}")$([ "$DP_RV" = 0.25 ] || echo "_v${DP_RV/./}")$([ "$EPOCHS" = 400 ] || echo _SMOKE)
++DP_BAND_DIR=${RPDE_DP_BAND_DIR:-${RPDE_REPRO_LOG:-${TMPDIR:-/tmp}}/decision/band}
++dp_band() {
++  # The record's band, re-made from THIS run's twins: the static fit with the flags of `r38_a080_c0_fill.npz`
++  # (Track_1/bands/MANIFEST.md; --fit-on seen --fit-aoa 15 20 and --inflate 1.39 are fit_band.py's defaults, written out
++  # here so a change of default cannot change this band), then the SIGBLEND transform with the settings of
++  # `k27_sigblend_lam0.5` (dump_twins.py on val_unseen, make_k0_band.py lambda 0.5, inflate 1.29, 16 bins).
++  echo "== decision band: static fit -> twin dump -> SIGBLEND, into $DP_BAND_DIR =="
++  ensure_val
++  local W=$DP_BAND_DIR; mkdir -p "$W"
++  if [ -f "$W/k0/band_k0_sigblend_lam0.5.npz" ] && [ -f "$W/k0/band_k0_sigblend_lam0.5.json" ]; then
++    echo "  SKIP  band exists ($W/k0)"; return 0; fi
++  for c in $(_A_DP) $(_M_DP); do [ -f "$c" ] || { echo "MISSING $c -- train it first"; exit 1; }; done
++  $PY Track_1/submit_fno/fit_band.py --ckpt $(_A_DP) --err-ckpt $(_M_DP) --alpha 0.80 --band-p 0.45 \
++      --fit-on seen --fit-aoa 15 20 --inflate 1.39 --fill-unscored --centre-alpha 0 \
++      --out "$W/band_${DP_TAG}_static.npz" > "$W/fit_band.log" 2>&1 \
++      || { echo "FAILED: static band (see $W/fit_band.log)"; exit 1; }
++  $PY Track_1/sigblend/dump_twins.py "$W/dump_unseen.npz" --val Track_1/val_unseen.npz --twins $(_M_DP) \
++      > "$W/dump_twins.log" 2>&1 || { echo "FAILED: twin dump (see $W/dump_twins.log)"; exit 1; }
++  ( cd Track_1/sigblend && B_DUMP="$W/dump_unseen.npz" K0_BAND="$W/band_${DP_TAG}_static.npz" K0_INFL=1.29 K0_NB=16 \
++      PYTHONPATH=.. $PY make_k0_band.py "$W/k0" ) > "$W/make_k0_band.log" 2>&1 \
++      || { echo "FAILED: SIGBLEND fit (see $W/make_k0_band.log)"; exit 1; }
++  grep -a "q =\|LOTO\|leave" "$W/make_k0_band.log" | tail -4
++  echo "  band $W/k0/band_k0_sigblend_lam0.5.npz  md5 $(md5sum < "$W/k0/band_k0_sigblend_lam0.5.npz" | cut -c1-12)"
++}
++dp_build() {
++  echo "== decision build, BOTH tracks: record constants + PREV_SPACE target, tag $DP_TAG =="
++  ensure_val
++  local W=$DP_BAND_DIR
++  [ -f "$W/k0/band_k0_sigblend_lam0.5.npz" ] || { echo "MISSING the refitted band in $W/k0 -- run dp_band first"; exit 1; }
++  RPDE_FORCE=1 RPDE_A="$(_A_DP)" RPDE_M="$(_M_DP)" RPDE_BAND="$W/k0/band_k0_sigblend_lam0.5.npz" \
++      RPDE_SIGBLEND="$W/k0/band_k0_sigblend_lam0.5.json" RPDE_SHIP_PREV_SPACE=target RPDE_TAG="$DP_TAG" \
++      bash Track_1/submit_fno/build_final.sh "${RPDE_REPRO_PKG:-${RPDE_REPRO_LOG:-${TMPDIR:-/tmp}}/decision/pkg}" \
++      || { echo "FAILED: build_final.sh (gates, causality or baked constants)"; exit 1; }
++}
++
+ # RPDE_REPRO_STAGE runs a subset -- the header's "split across the job cap", which needed a way
+ # to call one function. It trains and stops: no band, no build, no gates.
+ if [ -n "${RPDE_REPRO_STAGE:-}" ]; then
+@@ -426,7 +490,9 @@ case "$WHICH" in
+   # QD needs the r34 members and twins too: the control band and the twin export of the k derivation (§10.3) use them.
+   QD)         twins_vit; twins_ffno; twins_ffno_qd; members_vit; members_ffno; members_ffno_qd; qd_k_derive; build_qd ;;
+   QD_STATIC)  twins_vit; twins_ffno_qd; members_vit; members_ffno_qd; build_qd_static ;;
+-  *) echo "usage: $0 [final|r35|r34|r25|r28] | --recipe A|QD|QD_STATIC"; exit 2 ;;
++  decision)   dp_twins_vit_p; dp_twins_vit_c; dp_twins_ffno; dp_members_vit_p; dp_members_vit_c; dp_members_ffno
++              dp_band; dp_build ;;
++  *) echo "usage: $0 [final|r35|r34|r25|r28|decision] | --recipe A|QD|QD_STATIC"; exit 2 ;;
+ esac
+ 
+ echo

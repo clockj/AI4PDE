@@ -4,6 +4,7 @@
 #   RPDE_REPRODUCE_GO=1 bash reproduce.sh [final]                  # default: the two packages of record (09-27)
 #   RPDE_REPRODUCE_GO=1 bash reproduce.sh r35|r34|r28|r25          # superseded packages the board scored
 #   RPDE_REPRODUCE_GO=1 bash reproduce.sh --recipe A|QD|QD_STATIC  # the 09-24 candidates (REPRODUCE.md section 10)
+#   RPDE_REPRODUCE_GO=1 bash reproduce.sh decision                 # Decision-phase candidate: FINAL + --aug-resim (section 14)
 #
 # `final` trains the 5 held-out twins and the 6 all-data members, then calls Track_1/submit_fno/build_final.sh, which
 # builds and gates both archives (Track 1 81.671149, Track 2 82.055553). By default it REUSES the committed SIGBLEND band
@@ -35,6 +36,10 @@
 #   RPDE_REPRO_FITBAND=1     FIT the band from the twins (RPDE_BAND_FILL=1) instead of reusing the
 #                            committed one -- what a NEW member set needs, and what the smoke
 #                            exercises. A refit is not bit-reproducible across twin sets.
+#   RPDE_DP_RESIM_FFNO=<S>   `decision` only: --aug-resim S on the four F-FNO members and three F-FNO twins (default 0.25;
+#                            empty = none, i.e. the record's F-FNO recipe and names)
+#   RPDE_DP_RESIM_VIT=<S>    `decision` only: the same for the two ViT members and two ViT twins (default 0.25; empty = the
+#                            record's ViTs, reused where they exist)
 set -uo pipefail
 cd "$(dirname "$0")"
 
@@ -405,6 +410,65 @@ build_final_pkg() {
       || { echo "FAILED: build_final.sh (gates, causality or identity) -- read ${RPDE_REPRO_PKG:-$W/pkg}/build_*.log"; exit 1; }
 }
 
+# ============================== DECISION (2026-09-28): FINAL + the Re-similarity augmentation ==================
+# REPRODUCE.md section 14. The recipe of record plus `--aug-resim` (train2.py), the band REFIT from the new twins exactly
+# as the record's was made (static fit, then SIGBLEND by dump_twins.py + make_k0_band.py), the record's constants plus
+# PREV_SPACE "target" (arm I1). New checkpoint names, so nothing of the record is overwritten: `_resim` for S = 0.25,
+# `_resim<S without the dot>` for another S, and the record's own name when the variable is empty.
+DP_RF=${RPDE_DP_RESIM_FFNO-0.25}
+DP_RV=${RPDE_DP_RESIM_VIT-0.25}
+_dp_sfx() { [ -z "$1" ] && return 0; [ "$1" = "0.25" ] && echo _resim || echo "_resim${1/./}"; }
+DP_SF=$(_dp_sfx "$DP_RF"); DP_SV=$(_dp_sfx "$DP_RV")
+DP_AF=${DP_RF:+--aug-resim $DP_RF}; DP_AV=${DP_RV:+--aug-resim $DP_RV}
+# Resumable, so each stage can run as a --requeue job (the same flags as the QD recipe above): a preempted job continues
+# from its last 20-epoch checkpoint (weights, optimizer, schedule, every generator including --aug-resim's).
+DP_RES="--ckpt-every 20 --resume"
+dp_twins_vit_p()    { run $OUT/arch_vit_d384$DP_SV.pth    $VITP --seed 1 $DP_AV $DP_RES; }
+dp_twins_vit_c()    { run $OUT/arch_vit_cmb3sim$DP_SV.pth $VITC --seed 1 $SIMF --sim-exclude-held $DP_AV $DP_RES; }
+dp_twins_ffno()     { for s in $SEEDS_TW; do run $P2/p2_ffno_l8_sim${DP_SF}_s$s.pth $FFNO $SIMF --sim-exclude-held --seed $s $DP_AF $DP_RES; done; }
+dp_members_vit_p()  { run $OUT/arch_vit_all${DP_SV}_s1.pth         $VITP --seed 1 --all-data $DP_AV $DP_RES; }
+dp_members_vit_c()  { run $OUT/arch_vit_all_cmb3sim${DP_SV}_s3.pth $VITC --seed 3 --all-data $SIMF $DP_AV $DP_RES; }
+dp_members_ffno()   { for s in $SEEDS_ME; do run $OUT/ffno_all_w40l8_sim${DP_SF}_s$s.pth $FFNO $SIMF --seed $s --all-data $DP_AF $DP_RES; done; }
+_A_DP() { echo "$OUT/ffno_all_w40l8_sim${DP_SF}_s1.pth $OUT/ffno_all_w40l8_sim${DP_SF}_s2.pth $OUT/ffno_all_w40l8_sim${DP_SF}_s3.pth \
+                $OUT/ffno_all_w40l8_sim${DP_SF}_s4.pth $OUT/arch_vit_all${DP_SV}_s1.pth $OUT/arch_vit_all_cmb3sim${DP_SV}_s3.pth"; }
+_M_DP() { echo "$P2/p2_ffno_l8_sim${DP_SF}_s1.pth $P2/p2_ffno_l8_sim${DP_SF}_s2.pth $P2/p2_ffno_l8_sim${DP_SF}_s3.pth \
+                $OUT/arch_vit_d384$DP_SV.pth $OUT/arch_vit_cmb3sim$DP_SV.pth"; }
+DP_TAG=dp_resim$([ "$DP_RF" = 0.25 ] || echo "_f${DP_RF/./}")$([ "$DP_RV" = 0.25 ] || echo "_v${DP_RV/./}")$([ "$EPOCHS" = 400 ] || echo _SMOKE)
+DP_BAND_DIR=${RPDE_DP_BAND_DIR:-${RPDE_REPRO_LOG:-${TMPDIR:-/tmp}}/decision/band}
+dp_band() {
+  # The record's band, re-made from THIS run's twins: the static fit with the flags of `r38_a080_c0_fill.npz`
+  # (Track_1/bands/MANIFEST.md; --fit-on seen --fit-aoa 15 20 and --inflate 1.39 are fit_band.py's defaults, written out
+  # here so a change of default cannot change this band), then the SIGBLEND transform with the settings of
+  # `k27_sigblend_lam0.5` (dump_twins.py on val_unseen, make_k0_band.py lambda 0.5, inflate 1.29, 16 bins).
+  echo "== decision band: static fit -> twin dump -> SIGBLEND, into $DP_BAND_DIR =="
+  ensure_val
+  local W=$DP_BAND_DIR; mkdir -p "$W"
+  if [ -f "$W/k0/band_k0_sigblend_lam0.5.npz" ] && [ -f "$W/k0/band_k0_sigblend_lam0.5.json" ]; then
+    echo "  SKIP  band exists ($W/k0)"; return 0; fi
+  for c in $(_A_DP) $(_M_DP); do [ -f "$c" ] || { echo "MISSING $c -- train it first"; exit 1; }; done
+  $PY Track_1/submit_fno/fit_band.py --ckpt $(_A_DP) --err-ckpt $(_M_DP) --alpha 0.80 --band-p 0.45 \
+      --fit-on seen --fit-aoa 15 20 --inflate 1.39 --fill-unscored --centre-alpha 0 \
+      --out "$W/band_${DP_TAG}_static.npz" > "$W/fit_band.log" 2>&1 \
+      || { echo "FAILED: static band (see $W/fit_band.log)"; exit 1; }
+  $PY Track_1/sigblend/dump_twins.py "$W/dump_unseen.npz" --val Track_1/val_unseen.npz --twins $(_M_DP) \
+      > "$W/dump_twins.log" 2>&1 || { echo "FAILED: twin dump (see $W/dump_twins.log)"; exit 1; }
+  ( cd Track_1/sigblend && B_DUMP="$W/dump_unseen.npz" K0_BAND="$W/band_${DP_TAG}_static.npz" K0_INFL=1.29 K0_NB=16 \
+      PYTHONPATH=.. $PY make_k0_band.py "$W/k0" ) > "$W/make_k0_band.log" 2>&1 \
+      || { echo "FAILED: SIGBLEND fit (see $W/make_k0_band.log)"; exit 1; }
+  grep -a "q =\|LOTO\|leave" "$W/make_k0_band.log" | tail -4
+  echo "  band $W/k0/band_k0_sigblend_lam0.5.npz  md5 $(md5sum < "$W/k0/band_k0_sigblend_lam0.5.npz" | cut -c1-12)"
+}
+dp_build() {
+  echo "== decision build, BOTH tracks: record constants + PREV_SPACE target, tag $DP_TAG =="
+  ensure_val
+  local W=$DP_BAND_DIR
+  [ -f "$W/k0/band_k0_sigblend_lam0.5.npz" ] || { echo "MISSING the refitted band in $W/k0 -- run dp_band first"; exit 1; }
+  RPDE_FORCE=1 RPDE_A="$(_A_DP)" RPDE_M="$(_M_DP)" RPDE_BAND="$W/k0/band_k0_sigblend_lam0.5.npz" \
+      RPDE_SIGBLEND="$W/k0/band_k0_sigblend_lam0.5.json" RPDE_SHIP_PREV_SPACE=target RPDE_TAG="$DP_TAG" \
+      bash Track_1/submit_fno/build_final.sh "${RPDE_REPRO_PKG:-${RPDE_REPRO_LOG:-${TMPDIR:-/tmp}}/decision/pkg}" \
+      || { echo "FAILED: build_final.sh (gates, causality or baked constants)"; exit 1; }
+}
+
 # RPDE_REPRO_STAGE runs a subset -- the header's "split across the job cap", which needed a way
 # to call one function. It trains and stops: no band, no build, no gates.
 if [ -n "${RPDE_REPRO_STAGE:-}" ]; then
@@ -426,7 +490,9 @@ case "$WHICH" in
   # QD needs the r34 members and twins too: the control band and the twin export of the k derivation (§10.3) use them.
   QD)         twins_vit; twins_ffno; twins_ffno_qd; members_vit; members_ffno; members_ffno_qd; qd_k_derive; build_qd ;;
   QD_STATIC)  twins_vit; twins_ffno_qd; members_vit; members_ffno_qd; build_qd_static ;;
-  *) echo "usage: $0 [final|r35|r34|r25|r28] | --recipe A|QD|QD_STATIC"; exit 2 ;;
+  decision)   dp_twins_vit_p; dp_twins_vit_c; dp_twins_ffno; dp_members_vit_p; dp_members_vit_c; dp_members_ffno
+              dp_band; dp_build ;;
+  *) echo "usage: $0 [final|r35|r34|r25|r28|decision] | --recipe A|QD|QD_STATIC"; exit 2 ;;
 esac
 
 echo

@@ -127,6 +127,68 @@ def aug_mask(x: torch.Tensor, y: torch.Tensor, p: float,
     return torch.where(m, zconst, x), torch.where(m, zconst, y)
 
 
+def resim_frames(d: torch.Tensor, t0: int, s: float) -> torch.Tensor:
+    """The T_IN+T_OUT frames of `--aug-resim` for one window, in PHYSICAL units, times `s`.
+
+    d  : (T, H, W, C) one raw physical trajectory (train2 keeps `trajs` un-normalized)
+    t0 : the window's own start frame
+    s  : the Reynolds factor; the caller guarantees t0 + s*(T_IN+T_OUT-1) <= T-1
+
+    Frame j sits at source time t0 + s*j, LINEAR in time between the two neighbouring frames
+    (`a + w*(b - a)`, which returns `a` bit for bit when w = 0 or a = b), then every velocity is
+    multiplied by s. An element that is the physical zero in a neighbour that carries weight is
+    set to the physical zero, so the PIV mask can never be smeared into a small non-zero value.
+    Multiplying in physical units keeps that zero exactly zero; the same map applied in
+    normalized units (`--aug-scale`'s `a*x + (a-1)*MEAN/STD`) is equal only up to rounding.
+    """
+    n = T_IN + T_OUT
+    tt = t0 + s * torch.arange(n, dtype=torch.float64)
+    k0 = tt.floor().long()
+    w = tt - k0.double()
+    k1 = (k0 + 1).clamp(max=d.shape[0] - 1)
+    a, b = d[k0], d[k1]
+    wv = w.float().view(n, 1, 1, 1)
+    f = a + wv * (b - a)
+    z = (a == 0) | ((b == 0) & (wv > 0))
+    return torch.where(z, torch.zeros((), dtype=f.dtype), f) * s
+
+
+def aug_resim(trajs_t: list, sel: torch.Tensor, S: float, p: float,
+              gen: torch.Generator) -> tuple[list[int], torch.Tensor | None, torch.Tensor, int]:
+    """`--aug-resim`: Reynolds-similar neighbours of the real windows in `sel`.
+
+    At fixed geometry and angle, u/U as a function of t*U/c changes slowly with Re, so the
+    recording at Re' = s*Re is, to first order, the recording at Re with every velocity times s
+    AND time running s times faster. `--aug-scale` did only the amplitude half.
+
+    Per sample, exactly two uniforms are drawn from `gen` (a dedicated generator, never the
+    default one): whether it is augmented (prob. p) and its log-uniform s in [1/(1+S), 1+S].
+    A sample whose resampled window would run past the trajectory's last frame is left as it
+    is (s = 1): nothing is padded or extrapolated. Returns the batch rows that were replaced,
+    their (n, T_IN+T_OUT, H, W, C) physical frames (None when no row), s per row (1 where not
+    replaced), and how many rows drew s != 1 but did not fit before the trajectory's end.
+    """
+    b = len(sel)
+    u_hit = torch.rand(b, generator=gen, dtype=torch.float64)
+    u_s = torch.rand(b, generator=gen, dtype=torch.float64)
+    lo = float(np.log(1.0 + S))
+    s_all = torch.where(u_hit < p, torch.exp((2.0 * u_s - 1.0) * lo),
+                        torch.ones((), dtype=torch.float64))
+    last = T_IN + T_OUT - 1
+    rows, frames, n_short = [], [], 0
+    for r, (i, t0) in enumerate(sel.tolist()):
+        s = float(s_all[r])
+        if s == 1.0:
+            continue
+        if t0 + s * last > trajs_t[i].shape[0] - 1:
+            s_all[r] = 1.0
+            n_short += 1
+            continue
+        rows.append(r)
+        frames.append(resim_frames(trajs_t[i], t0, s))
+    return rows, (torch.stack(frames) if frames else None), s_all, n_short
+
+
 def _sam_ascent(model: torch.nn.Module, rho: float) -> list:
     """Move every parameter to `w + rho * g / ||g||` in place; return `(param, w)` pairs.
 
@@ -379,6 +441,17 @@ def main() -> None:
                          "(the --sim term keeps its own mapped mask), adds no parameters, and "
                          "is inert at 0 -- no random number is drawn, so a p=0 run is "
                          "byte-identical to one without the flag.")
+    ap.add_argument("--aug-resim", type=float, default=0.0,
+                    help="Reynolds-similarity augmentation (Decision-phase arm T4). A real "
+                         "window is replaced by the same trajectory resampled in time by a "
+                         "factor s from its own start (frame j at t0 + s*j, linear in time) "
+                         "with every velocity times s: to first order the recording at "
+                         "Re*s. s is log-uniform in [1/(1+S), 1+S]; a window that would run "
+                         "past the trajectory's end is left as it is. REAL batch only. Draws "
+                         "come from a dedicated generator, so the default RNG stream keeps "
+                         "its order. 0 disables it: nothing is built and nothing is drawn.")
+    ap.add_argument("--aug-resim-p", type=float, default=0.5,
+                    help="per-sample probability that --aug-resim augments a real window.")
     ap.add_argument("--norm", choices=["real", "sim", "self"], default="real",
                     help="'real'/'sim' = fixed global GaussianNormalizer statistics for that "
                          "dataset. 'self' = WP-C, divide each window by its own mean streamwise "
@@ -787,6 +860,19 @@ def main() -> None:
     # (_fno.load_any refuses them). Refuse rather than mask an inconsistent input.
     if args.aug_mask > 0.0 and (args.hist or args.ctx != T_IN):
         raise SystemExit("--aug-mask is not implemented for --hist / --ctx != 20")
+    if args.aug_resim != 0.0:
+        # A resampled window has no consistent history / context frames, no teacher label, no
+        # sub-pixel twin, and would be undone by a per-window self scale; mixing it with a
+        # second amplitude scale or a mixed partner has no physical reading. Refuse them all.
+        bad = [f for f, on in (("--hist", args.hist), ("--ctx != 20", args.ctx != T_IN),
+                               ("--teacher", bool(args.teacher)),
+                               ("--subpix", args.subpix > 0.0), ("--mixup", args.mixup > 0.0),
+                               ("--norm self", args.norm == "self"),
+                               ("--aug-scale", args.aug_scale > 0.0)) if on]
+        if bad:
+            raise SystemExit(f"--aug-resim refuses {bad}")
+        if args.aug_resim < 0.0 or not 0.0 < args.aug_resim_p <= 1.0:
+            raise SystemExit("--aug-resim needs S > 0 and 0 < --aug-resim-p <= 1")
     if args.subpix > 0.0:
         if args.arch != "fno":
             raise SystemExit(f"--subpix is implemented on --arch fno (got {args.arch})")
@@ -833,6 +919,15 @@ def main() -> None:
         torch.manual_seed(args.seed)
         torch.cuda.manual_seed_all(args.seed)
         np.random.seed(args.seed)
+    if args.aug_resim > 0.0:
+        # Its OWN CPU generator: the default CPU stream (randperm, the sim / aux randint), the
+        # CUDA stream (dropout) and numpy keep exactly the draws they would make without the
+        # flag. Seeded from --seed with a fixed offset so a seeded run stays reproducible.
+        resim_gen = torch.Generator()
+        if args.seed >= 0:
+            resim_gen.manual_seed(args.seed + 7_000_003)
+        else:
+            resim_gen.seed()
 
     dev = "cuda"
     # Self-normalization needs raw physical trajectories: the per-window scale is only
@@ -1109,6 +1204,10 @@ def main() -> None:
         if ck.get("rng_cuda") is not None and torch.cuda.is_available():
             torch.cuda.set_rng_state_all([t.cpu() for t in ck["rng_cuda"]])
         np.random.set_state(ck["rng_np"])
+        if args.aug_resim > 0.0:
+            if ck.get("rng_resim") is None:
+                raise SystemExit(f"--resume: {RESUME} has no --aug-resim generator state")
+            resim_gen.set_state(ck["rng_resim"].cpu().to(torch.uint8))
         start_ep, elapsed0 = int(ck["epoch"]), float(ck.get("elapsed", 0.0))
         print(f"resume: {RESUME} -> epoch {start_ep}/{args.epochs}, "
               f"{elapsed0:.0f}s already spent, sched step {sched.last_epoch}", flush=True)
@@ -1120,14 +1219,17 @@ def main() -> None:
     def save_resume(ep_done):
         """Atomic, because a preemption during the write would otherwise poison the restart."""
         tmp = RESUME + ".tmp"
-        torch.save({"model": model.state_dict(), "opt": opt.state_dict(),
-                    "sched": sched.state_dict(), "epoch": ep_done, "epochs": args.epochs,
-                    "swa_state": swa_state, "swa_n": swa_n,
-                    "rng_cpu": torch.get_rng_state(),
-                    "rng_cuda": (torch.cuda.get_rng_state_all()
-                                 if torch.cuda.is_available() else None),
-                    "rng_np": np.random.get_state(),
-                    "elapsed": elapsed0 + time.time() - t0}, tmp)
+        ck_out = {"model": model.state_dict(), "opt": opt.state_dict(),
+                  "sched": sched.state_dict(), "epoch": ep_done, "epochs": args.epochs,
+                  "swa_state": swa_state, "swa_n": swa_n,
+                  "rng_cpu": torch.get_rng_state(),
+                  "rng_cuda": (torch.cuda.get_rng_state_all()
+                               if torch.cuda.is_available() else None),
+                  "rng_np": np.random.get_state(),
+                  "elapsed": elapsed0 + time.time() - t0}
+        if args.aug_resim > 0.0:
+            ck_out["rng_resim"] = resim_gen.get_state()
+        torch.save(ck_out, tmp)
         os.replace(tmp, RESUME)
 
     t0 = time.time()
@@ -1139,11 +1241,28 @@ def main() -> None:
                 torch.multinomial(w_samp, len(idx_t), replacement=True))
         acc = np.zeros(17)          # 16 loss terms + `err` (--err-head), appended last
         n = 0
+        if args.aug_resim > 0.0:
+            rs_hit = rs_short = 0     # windows replaced / drawn s != 1 but too close to the end
+            rs_s = []
         for i in range(0, len(idx_t), args.batch):
             pos = perm[i:i + args.batch]
             sel = idx_t[pos]
             x, y, ctx = fetch(sel)
             b = len(sel)
+            if args.aug_resim > 0.0:
+                # BEFORE self_norm: `fetch` returns raw physical frames, so the resampled window
+                # goes through the SAME normalizer as every real one, and everything the loss
+                # derives from `y` -- std_t(y) for the log-std head, tke(y) -- is computed from
+                # the augmented target. Only rows that were drawn AND fit are replaced.
+                rs_rows, rs_fr, rs_sv, rs_ns = aug_resim(trajs_t, sel, args.aug_resim,
+                                                         args.aug_resim_p, resim_gen)
+                if rs_fr is not None:
+                    rs_fr = rs_fr.to(dev, non_blocking=True)
+                    x[rs_rows] = rs_fr[:, :T_IN]
+                    y[rs_rows] = rs_fr[:, T_IN:]
+                rs_hit += len(rs_rows)
+                rs_short += rs_ns
+                rs_s += rs_sv[rs_rows].tolist()
             hist = hist_t[pos].to(dev, non_blocking=True) if args.hist else None
 
             # `mul` converts a normalized difference or std to physical units; `off` completes
@@ -1611,6 +1730,11 @@ def main() -> None:
                   f"aux {a[11]:.5f}  psim {a[12]:.5f}  cov {a[13]:.5f}  "
                   f"sub {a[14]:.5f}  kd {a[15]:.5f}  err {a[16]:.5f}  "
                   f"({elapsed0 + time.time() - t0:.0f}s)", flush=True)
+            if args.aug_resim > 0.0:
+                ls = np.log(np.asarray(rs_s)) if rs_s else np.zeros(1)
+                print(f"  resim: {rs_hit}/{n} windows replaced ({rs_hit / max(n, 1):.3f}), "
+                      f"{rs_short} drawn but too close to the end; log s mean {ls.mean():+.4f} "
+                      f"range [{ls.min():+.4f}, {ls.max():+.4f}]", flush=True)
 
         if RESUME and args.ckpt_every and (ep + 1) % args.ckpt_every == 0:
             save_resume(ep + 1)
