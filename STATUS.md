@@ -1,4 +1,4 @@
-# Status — 2026-09-27, Main Development closed
+# Status — 2026-09-28, Main Development closed
 
 The only file that changes after a board result. Keep it under 40 lines; detail goes to `ROUNDS.md`.
 
@@ -11,8 +11,8 @@ The only file that changes after a board result. Keep it under 40 lines; detail 
   byte-identical to the uploads, file by file (jobs 7569053, 7569179). Since the refactor of 09-28 the code files carry
   guards and fewer dead knobs, and the rebuild is **output-identical at tolerance 0** (`Track_1/verify/final_identity.py`,
   jobs 7569409, 7569482); `band.npz` and the six members are still byte-identical.
-* **Top ten: not known.** The cut read at 21:39Z on 09-27 was T1 81.885 / T2 81.988, so Track 2 is +0.068 above that
-  read and Track 1 −0.214 below it. The final table is the organizers' to publish.
+* **Final ranks (owner's read, 09-28): Track 1 #20, Track 2 #8.** The top ten are shortlisted, so **Track 2 is in the
+  Decision phase and Track 1 is not.** The cut read at 21:39Z on 09-27 was T1 81.885 / T2 81.988.
 * **Decision phase, to 2026-10-25.** Organizers retrain shortlisted methods from scratch (8× A800) and score a private
   set at novel AoA / Re. **One submission per track for the whole phase.** Nothing is staged.
 * **The method of record** (both tracks): recipe-A members (4 F-FNO w40 L8 + sim, 2 ViT d384 L8), ALPHA 0.80 with
@@ -37,5 +37,5 @@ The only file that changes after a board result. Keep it under 40 lines; detail 
 
 ## Reports
 
-`../artifacts/realpde_phase_report_20260927.html` (the four phases) and `realpde_final_method_20260927.html` (the method).
-The newest handoff is `../handoffs/HANDOFF_20260927.md`.
+`../artifacts/20260927_realpde_phase_report.html` (the four phases, with the recommendations for the finals package) and
+`20260927_realpde_final_method.html` (the method). The newest handoff is `../handoffs/HANDOFF_20260927.md`.

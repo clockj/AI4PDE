@@ -31,7 +31,7 @@ Check `date` often. A result that arrives after 18:55 is worth nothing.
   mean of 6 fields = y0; ALPHA 0.80 amplitude rescale toward the σ head; band centred on y0 (centre0),
   half = base·clip(σ/σ_ref,0.3,3)^0.45, base fitted per element on held-out twins at stretch 1.39. T2 adds causal online
   band calibration (R1, asymmetric) and optionally D1c (causal per-pixel bias removal) and SIGEMA.
-* MUST READ (skim, 5 min max): `/users/PAS1187/qwu/workspace/realpde/artifacts/progress_report_20260927.md`
+* MUST READ (skim, 5 min max): `/users/PAS1187/qwu/workspace/realpde/artifacts/20260927_progress_report.md`
   sections 零, 4.4–4.6, 五, 六 (what was tried and closed, backbone configs). Project rules: `CLAUDE.md` in the repo
   (its "Current state" is stale at 09-20; the progress report wins). **Do not re-propose a closed arm unchanged.**
 

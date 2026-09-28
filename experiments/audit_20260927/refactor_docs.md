@@ -76,4 +76,4 @@ not exactly linear; reproducibility (+0.0006, not bit for bit).
 
 `STATUS.md`, `Track_1/opoint.py`, `Track_1/band_io.py`, `.claude/rules/` (named in ROADMAP Part 4 and the ROUNDS/ROADMAP
 headers) exist only as untracked files in the main repo or in `notes/new_*`; they must land in the same commit.
-`../artifacts/progress_report_20260927.md` is outside the repository (cited as "PR §n").
+`../artifacts/20260927_progress_report.md` is outside the repository (cited as "PR §n").

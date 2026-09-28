@@ -49,7 +49,7 @@ Refactor reports, each with its verification: `refactor_instr.md` (instruments),
 | `models_alt.py` mixes the three live families with about 1,000 lines of closed ones | 31 names moved verbatim to `models_closed.py` and re-exported through `models_alt` (1955 → 1041 lines). Bitwise identical: seeded construction of 25 configurations, forward in eval and train mode, 19 checkpoints loaded both ways, a 2-epoch ViT training run. F-FNO training on the GPU is not deterministic even for the original code (two runs differ by 2e-5); under PyTorch's deterministic mode original and refactor are bitwise equal |
 | About 700 lines of `train2.py` are closed arms | left: the organizers retrain from this file, and removing a guarded branch changes nothing they would run while risking the order of random draws |
 | Tracked training logs, queue files, the first trainer | moved to `Track_1/archive/unet_r9_r12/` |
-| 334 checkpoints (18.6 GB) in `Track_1/unet/`, of which 25 are read by a `reproduce.sh` target | inventory in `audit_training.md` §4; nothing deleted |
+| 334 checkpoints (18.6 GB) in `Track_1/unet/`, of which 25 are read by a `reproduce.sh` target | inventory in `audit_training.md` §4. **On 09-28 the owner had classes E and F deleted: 263 files, 15.85 GB.** 71 remain (2.8 GB): the 11 final, the 14 of the superseded `reproduce.sh` recipes, 44 named by tracked code, 2 named by `board.jsonl`. Name, size, md5 and the full `train2.py` argument set of every deleted file: `Track_1/archive/checkpoints_deleted_20260928.json` |
 
 ### Layout and instruments
 

@@ -82,7 +82,7 @@ alone has `{"final": …}` — and the brackets are written out in `pred_note`. 
 submission id, or `null` where it was not reported.
 
 **The rows of 2026-09-21 … 09-27** (R31–R37, T2R18–T2R24) were added on 2026-09-27 from
-`Track_1/board_rounds.py`, `../../artifacts/progress_report_20260927.md` and the final-day notes in
+`Track_1/board_rounds.py`, `../../artifacts/20260927_progress_report.md` and the final-day notes in
 `../experiments/sprint_20260927/`. The subscores of R35–R37 and T2R22–T2R24 are complete. The eight
 rounds of 09-21 … 09-24 were uploaded from the agent team's server, and only their `final` was carried
 back: their `actual` is `{"final": …}` and `result_note` begins "FINAL ONLY". T2R19, a byte-for-byte
@@ -138,5 +138,5 @@ declared once, side by side, through `lb.py`'s `t(en, zh)`; ledger strings go th
 | subscore weights | `Track_1/board_rounds.py` → `Track_1/final_v9.py`: free linear fit (no Σw = 1) over every board round with five subscores, **pooled across both tracks**. **Print `final_v9.W0`; never copy weights from prose.** Two fits are quoted in the docs: **42 rounds to 2026-09-20** (0.4778 / 0.1010 / 0.0921 / 0.0965 / 0.2498 as rounded in `CLAUDE.md` then) and **48 rounds at the close, 2026-09-27** (0.4819 / 0.0981 / 0.0911 / 0.0961 / 0.2491, Σw 1.0164) | **48 rounds** (2026-09-27), max residual 0.0058 (R6, recorded to three decimals); the three adaptive Track-2 rows miss by 0.0026–0.0049, so the rule is not exactly linear and the gate is 0.0060. The 42-round fit reads the six closing rounds high by +0.005 … +0.013 |
 | `w_time`, read directly | pairs of rounds whose four error subscores are identical, so only `time` moved (first R13 → R14, largest R20 → R23) | 0.0956–0.0962 over five pairs (fit 0.0965 at 42 rounds, 0.0961 at 48) |
 | proxy → board ratios | `Track_1/predict_board.py --anchor` / `Track_1/proxy_calib.py` (GPU; once per round) | rel 1.068 · tke 1.136 · mvpe 1.454; the constant in use, `predict_board.RATIO`, is 1.078 / 1.150 / 1.511 |
-| SPS element tail `f` | `Track_1/calib_band13.py`, inverted from a board SPS for a known band | 1.360 (T1) / 1.350 (T2) at round 13; re-inverted by the agent team on 09-24: f₀ ≈ 1.29 for the static band, f_QD ≈ 1.35 for the QD band (`../../artifacts/progress_report_20260927.md` §0.4) |
+| SPS element tail `f` | `Track_1/calib_band13.py`, inverted from a board SPS for a known band | 1.360 (T1) / 1.350 (T2) at round 13; re-inverted by the agent team on 09-24: f₀ ≈ 1.29 for the static band, f_QD ≈ 1.35 for the QD band (`../../artifacts/20260927_progress_report.md` §0.4) |
 | board latency | `board_rounds.py` `INV_MS_*` / `LOC_SLOPE_*`, `predict_board.py` `LAT_*` | invocation 1.151 / 0.866 ms (R23); FLOPs 1.75 / 0.60 board ms per 4060-eq local ms (R24). Since 09-25: an uncontrolled intercept of ~2.6 ms, Track-1 calls of 14–99 windows, and same-path drift of −0.86 ms on Track 2 in one day (`../ROADMAP.md` §1.36) — price latency with a bracket, never a level |

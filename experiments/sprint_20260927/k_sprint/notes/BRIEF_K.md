@@ -41,7 +41,7 @@ A result that arrives after 18:55 is worth nothing.
   base fitted per element on held-out twins at stretch 1.39. fp16 AMP, int8-packed weights, dense F-FNO path.
   T1: one predict() call per 14-99 windows, new subprocess per call, chunked. T2: batch-1 steps, CUDA graph, two streams,
   asymmetric online band calibration R1 (+ optional D1c / SIGEMA knobs).
-* MUST SKIM (5 min max): `/users/PAS1187/qwu/workspace/realpde/artifacts/progress_report_20260927.md` sections
+* MUST SKIM (5 min max): `/users/PAS1187/qwu/workspace/realpde/artifacts/20260927_progress_report.md` sections
   0 (零), 4.3-4.6, 5 (五), 6 (六) = what was tried and CLOSED. Project rules: `CLAUDE.md` in the repo ("Current state" there
   is stale at 09-20; the progress report wins). **Do not re-propose a closed arm unchanged.**
 

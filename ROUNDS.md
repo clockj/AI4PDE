@@ -3035,7 +3035,7 @@ From 09-21 to 09-27 04Z a team of 13 agents ran the project on a separate server
 uploading. On the last afternoon (16:03 – 19:59 EDT) two Claude Code sessions ran a final sprint on
 OSC. The sections below follow the board, one per upload day. Sources, cited per claim:
 `Track_1/board_rounds.py` (every subscore on record); the team's report
-`../artifacts/progress_report_20260927.md` (Chinese; "PR §n"); commit messages on `qwu/agent`;
+`../artifacts/20260927_progress_report.md` (Chinese; "PR §n"); commit messages on `qwu/agent`;
 `experiments/sprint_20260927/` for the last day; `../sub_candidates/HISTORY.md` for the final
 registrations.
 

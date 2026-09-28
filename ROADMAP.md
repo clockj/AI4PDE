@@ -8,7 +8,8 @@ The header of 2026-09-05 and the plans of 08-31 … 09-20 are kept verbatim at t
 **Final state, 2026-09-27.**
 * Track 1 **81.671149** (R37, `track1_k27fin_a080.zip`) · Track 2 **82.055553** (T2R24,
   `T2_MRGP2_track2_MRGP2.zip`), both rebuilt byte for byte by `bash Track_1/submit_fno/build_final.sh`.
-* Top-10 cut read at 21:39Z on 09-27: T1 81.885, T2 81.988. Final ranks are not known.
+* Final ranks (owner's read, 09-28): **Track 1 #20, Track 2 #8**; the top ten are shortlisted. The cut read at
+  21:39Z on 09-27 was T1 81.885, T2 81.988.
 * Decision phase to 2026-10-25: organizers retrain shortlisted methods from scratch and score a private
   set at novel AoA / Re; **one submission per track for the whole phase.**
 
@@ -1341,7 +1342,7 @@ information paid on the board: the centre, ALPHA 0.80, JOINT_GAIN, SIGBLEND and 
 
 **Closed, re-opened or qualified 2026-09-21 … 09-27** (the agent-team week and the final-day sprint;
 detail in `ROUNDS.md` "Round 31 / T2R18" … "Round 37 / T2R24", in `experiments/sprint_20260927/README.md`
-and in `../artifacts/progress_report_20260927.md` "PR"). Entries above that these change carry a dated
+and in `../artifacts/20260927_progress_report.md` "PR"). Entries above that these change carry a dated
 note.
 
 | direction | status | evidence |
@@ -1384,8 +1385,10 @@ note.
 *Written 2026-09-27 at the close of Main Development. The plans of 08-31 … 09-20 are at the end of this
 file, verbatim.* The organizers retrain each shortlisted method from scratch on 8× A800 and score a
 private set at **novel AoA / Re**. There is **one submission per track for the whole phase**
-(commit fb0cb6d), so nothing is uploaded without the owner's explicit go. Whether we are shortlisted
-is not known: the 21:39Z cut read T1 81.885 / T2 81.988 against our 81.671 / 82.056. The method to
+(commit fb0cb6d), so nothing is uploaded without the owner's explicit go. **Track 2 finished #8 and is
+shortlisted; Track 1 finished #20 and is not** (owner's read, 09-28; the 21:39Z cut had read T1 81.885 /
+T2 81.988 against our 81.671 / 82.056). The plan below is therefore a Track-2 plan; Track 1 shares the
+members and the band and needs no work of its own. The method to
 defend is the one in `STATUS.md`, and the package that goes up must be re-creatable by `reproduce.sh`.
 
 **Priorities, in order.**
@@ -1533,7 +1536,7 @@ defend is the one in `STATUS.md`, and the package that goes up must be re-creata
 | The first two months: July U-Net package, the disclosed tiling exploit, FNO/DeepONet sweeps, PDE-Refiner, round 9–12 builds and queue | `Track_1/archive/` (`README.md`) |
 | Rules loaded when a file in their directory is read (bands, ledgers, instruments, training) | `.claude/rules/` |
 | Procedures: build a package, evaluate a change, record a board result, reproduce from the release, OSC jobs | `.claude/skills/` |
-| The agent team's report of 09-21 … 09-27 (Chinese) | `../artifacts/progress_report_20260927.md` |
+| The agent team's report of 09-21 … 09-27 (Chinese) | `../artifacts/20260927_progress_report.md` |
 
 **Machine.** OSC; data at `/users/PAS1187/qwu/RealPDE/`, env `realpde` (torch 2.2.2+cu121).
 Training needs an A100 Slurm allocation — the login/OnDemand node has no GPU. The **12-core
