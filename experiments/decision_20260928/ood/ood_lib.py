@@ -103,6 +103,20 @@ def layout(reg, lay):
         root = os.path.join(os.path.dirname(CKPT), lay, "ckpt", reg)   # + the control's two ViTs
         stem = "ffnosim_lam10" if lay == "t3" else "ffnosim_resim"
         return [os.path.join(root, f"{r}_{stem}_s{k}.pth") for k in range(1, 5)] + vit(["vitp_s1", "vitc_s3"])
+    dec = os.path.dirname(CKPT)
+    if lay == "t4v":             # T4v: the four T4 F-FNO members + ViT-C resim s3 + ViT-P resim s1 (all six augmented)
+        return ([os.path.join(dec, "t4", "ckpt", reg, f"{r}_ffnosim_resim_s{k}.pth") for k in range(1, 5)]
+                + [os.path.join(dec, "t4vp", "ckpt", reg, f"{r}_vitp_resim_s1.pth"),
+                   os.path.join(dec, "t4vc", "ckpt", reg, f"{r}_vitc_resim_s3.pth")])
+    if lay == "t4b":             # T4b: --aug-resim 0.5, seeds 1-4, + the control's two ViTs
+        return [os.path.join(dec, "t4b", "ckpt", reg, f"{r}_ffnosim_resim50_s{k}.pth") for k in range(1, 5)] \
+            + vit(["vitp_s1", "vitc_s3"])
+    if lay == "twins_t4":        # T4 in distribution: the three T4 twins + the two ViT twins of record
+        return [os.path.join(dec, "t4id", "ckpt", "ID", f"p2_ffno_l8_sim_resim_s{k}.pth") for k in range(1, 4)] \
+            + [os.path.join(REPO_UNET, x + ".pth") for x in ["arch_vit_d384", "arch_vit_cmb3sim"]]
+    if lay == "twins_t4all":     # all five twins augmented: three T4 F-FNO twins + the two augmented ViT twins
+        return [os.path.join(dec, "t4id", "ckpt", "ID", f"p2_ffno_l8_sim_resim_s{k}.pth") for k in range(1, 4)] \
+            + [os.path.join(dec, "t4id", "ckpt", "ID", x) for x in ["arch_vit_d384_resim.pth", "arch_vit_cmb3sim_resim.pth"]]
     if lay == "twins_ffno":      # the twins of record minus their ViTs (in distribution, F-FNO only)
         return [os.path.join(REPO_UNET, x + ".pth") for x in ["p2_ffno_l8_sim_s1", "p2_ffno_l8_sim_s2", "p2_ffno_l8_sim_s3"]]
     if lay == "standin":         # the sprint's stand-ins (screen/aoa), F-FNO family first, FNO w96 second

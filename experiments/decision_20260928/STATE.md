@@ -10,6 +10,7 @@ Plan and criteria: `PLAN.md`. Update this file at every wave; keep job ids, path
 | 2026-09-28 05:15 | wave 1 moved to Ascend; smokes and the cancelled Pitzer start | 1.4 (Pitzer 1.1 cancelled, smokes 0.3) | 1.4 | 0.5 % |
 
 | 2026-09-28 10:57 | every training finished (24 wave 1, 8 T3, 4 T4), instrument chunks 1 – 4 so far | wave 1 60.3 · T3 20.9 · T4 10.6 · instrument 5.7 · other 0.2 | **97.7** | 33 % |
+| 2026-09-28 15:08 | wave 3 (T4 on A20 / A10, twins, T4v on RE done; T4b, T4v second stage running) and instrument chunks 4 – 5 | sacct over `rp_dp_*` / `pz_dp_*`, running jobs counted to 15:08 | **156.5** | 52 % |
 
 Estimates made at 05:15 (A100): wave 1 about 60, arms T3 + T4(RE) about 31; both held. Read the ledger with
 `sacct -M ascend,pitzer -X -n -S 2026-09-28 -o jobname%26,elapsed,state,alloctres%40 | grep -E 'rp_dp_|pz_dp_'`.
@@ -161,6 +162,24 @@ was checked flag by flag against its control's job script, the only difference b
 | T4v, ViT-C s3, s1 and ViT-P s1 with the augmentation, RE | 3 | 7573004 – 7573006 | 6 |
 | T4b, `--aug-resim 0.5`, RE seeds 1 – 4 (each behind one leader) | 4 | 7573010 – 7573013 | 10 |
 
+### T4v, the single-member screen on RE (finished 13:44 EDT; seed-matched to the control ViTs)
+
+| member | rein | relo | rehi | delta rein / relo / rehi | mean of relo, rehi | rel error at relo, arm / control |
+|---|---|---|---|---|---|---|
+| ViT-P s1 + `--aug-resim 0.25` | 84.758 | 85.227 | 79.899 | +0.060 / **+6.719** / +0.404 | +3.562 | 0.0859 / 0.1921 |
+| ViT-C s3 + the same | 84.989 | 85.738 | 80.082 | +0.079 / **+4.541** / +0.092 | +2.316 | 0.0803 / 0.1456 |
+| ViT-C s1 + the same | 85.062 | 85.501 | 80.281 | +0.107 / **+5.560** / +0.396 | +2.978 | 0.0851 / 0.1648 |
+
+**The screen is cleared** (bar: +0.20 on the mean of relo and rehi, rein ≥ −0.05). With the augmentation a ViT at low Re
+is where an F-FNO is (85.2 – 85.7 against 85.6 for the control F-FNO and 86.1 for the augmented one): the family's
+weakness below the training range was the amplitude it had never seen. At rehi its rel error does not improve
+(0.1164 – 0.1202 against 0.1156 – 0.1174); the gain there is in the other subscores.
+
+**Second stage submitted 13:45 EDT** (`R/t4/jobs/gen_t4y.py`, ids in `R/t4/jobs/submitted_t4y.tsv`, each behind one
+running T4 job): the mirror's two ViTs with the augmentation on A20 and A10 (7575504 – 7575507) and the two ViT twins on
+`VAL_TRAJ` (7575508, 7575509; recipes checked against the stored config of `arch_vit_d384` and `arch_vit_cmb3sim`).
+About 15 GPU-h.
+
 ## Instrument (gauge)
 
 Code in `ood/` (`README.md` has the commands), generated files in `R/ood/`, note `results/ood_instrument.md`. One run =
@@ -276,6 +295,37 @@ members generalise natural blanking; the synthetic masks of I2 / I7 overstate th
 
 Two I6 jobs died because their script was edited while they ran (bash reads a script as it executes); re-run, and
 every instrument job now runs from a snapshot of the code.
+
+### Chunk 5, first part: T4's verdict (1.47 GPU-h; `results/ood_chunk5.md`)
+
+**T4 passes every term of its criterion.** Four augmented F-FNO members with the control's two ViTs, against the mirror
+control of the same regime; each ensemble with its own refitted band; real package path.
+
+| regime | stream (Track 2) | per subscore: rel / tke / mvpe / sps | frozen (Track 1's case) | criterion |
+|---|---|---|---|---|
+| A20 | **+0.052 (16/16)** | +0.041 / +0.026 / +0.000 / +0.117 | +0.095 (15/16) | ≥ −0.02, pass |
+| A10 | **+0.040 (17/18)** | +0.019 / +0.068 / +0.018 / +0.088 | +0.125 (18/18) | ≥ −0.02, pass |
+| relo | **+0.334 (9/9)** | +0.174 / +0.502 / +0.084 / +0.773 | +0.505 (9/9) | mean of relo, rehi |
+| rehi | **+0.046 (6/7)** | +0.028 / −0.022 / −0.001 / +0.138 | +0.174 (6/7) | +0.190 ≥ +0.10, pass |
+| rein | +0.025 (9/10) | | +0.025 | reported |
+| **OOD mean** (A20, A10, relo, rehi) | **+0.118** | | +0.225 | headline |
+| **in distribution, twins, all 8** | **+0.033 (8/8)** | +0.015 / +0.080 / +0.006 / +0.071 | +0.027 (7/8) | ≥ −0.03, pass |
+| in distribution, twins, AoA 15 – 20 | +0.046 (3/3) | +0.021 / +0.106 / +0.007 / +0.099 | +0.041 (3/3) | |
+
+* The twins read is the one that stands for the development board: three T4 twins with the two ViT twins of record
+  against the five twins of record, both bands refitted the shipping way. Composite 77.2838 against 77.2506; the refit
+  of the record's twins reproduces the band of record's composite to 2e-4.
+* **Not a seed effect.** Leave-one-seed-out at RE, eleven ensembles: relo +0.309 [+0.301, +0.315], rehi +0.045
+  [+0.039, +0.055], rein +0.024, in distribution +0.036, against a control-to-control spread over four reseeded draws
+  of at most 0.034 / 0.011 / 0.010 / 0.012. The four members share one recipe and one commit: this rules out a lucky
+  seed set, not a lucky configuration.
+* **T4v at RE, all six members augmented:** relo **+0.709 (9/9)** against the control and +0.376 against T4 with the
+  control's ViTs; rehi +0.025 (5/7) and −0.021 (2/7); rein +0.020 and −0.005. Frozen, relo +1.872. All of its margin
+  over T4 is at relo. A20, A10 and the twins are training.
+* **What is left after the stream is not reachable by a per-trajectory correction.** Share of the squared error,
+  control, frozen → stream: the mean error that persists over a trajectory falls 6.9 → 0.7 % (rehi), 28.3 → 1.2 % (relo),
+  12.4 → 1.0 % (A20); what remains is 72 – 76 % fluctuation and 23 – 34 % mean error that changes from window to window.
+  rehi gains least from everything because it had little persistent error to begin with.
 
 ## Decisions
 
