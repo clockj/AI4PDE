@@ -4,7 +4,7 @@ Forecast real PIV flow past a NACA4418 airfoil: 20 frames of velocity on a 32×6
 upper bound per element. CFD of the same airfoil is a training-side asset only.
 [Site](https://realpdecompetition.github.io/) · [Track 1 Sim2Real](https://www.codabench.org/competitions/17363/) ·
 [Track 2 LTTTA](https://www.codabench.org/competitions/17385/) · remote `github.com/clockj/AI4PDE` · branches `main`
-(release) and `qwu/agent` (working; merges to `main` go through a pull request).
+(release) and `qwu/dev` (working; merges to `main` go through a pull request).
 
 @STATUS.md
 
@@ -52,8 +52,8 @@ and rules that only matter inside one directory in `.claude/rules/` (loaded when
     `/fs/scratch/PAS1187/qwu/tmp/realpde/` or `/tmp`. `Track_1/unet/*.pth` and `../sub_candidates/` are the exceptions.
 11. **Never touch other projects' Slurm jobs** (`ondemand/*`, `ttf_*`, `hd_*`, `p5_*`, `p6_*`, `tt26-*`, `m2_*`). Ours are
     `rp_*` (Ascend) and `pz_*` (Pitzer). Every `sbatch` excludes the owner's interactive desktop node.
-12. **Commits:** at most 7 a day on `qwu/agent`, never pushed by an agent. Never commit checkpoints, `val_*.npz` or
-    archives. Commit before building: a build edits tracked files.
+12. **Commits:** on `qwu/dev`, when a piece of work is done, at most 10 a day and never split without need; never pushed
+    by an agent. Never commit checkpoints, `val_*.npz` or archives. Commit before building: a build edits tracked files.
 
 ## The problem and the contracts
 
