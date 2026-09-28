@@ -1,14 +1,16 @@
 #!/bin/bash
 # Rebuild both packages of record from the released data. READ REPRODUCE.md FIRST.
 #
-#   RPDE_REPRODUCE_GO=1 bash reproduce.sh [t1|t2|both|r25|r28]    # default: both
-#   RPDE_REPRODUCE_GO=1 bash reproduce.sh --recipe A|QD|QD_STATIC   # the 09-24 FINAL_RECIPE candidates (REPRODUCE.md top)
+#   RPDE_REPRODUCE_GO=1 bash reproduce.sh [final]                  # default: the two packages of record (09-27)
+#   RPDE_REPRODUCE_GO=1 bash reproduce.sh r35|r34|r28|r25          # superseded packages the board scored
+#   RPDE_REPRODUCE_GO=1 bash reproduce.sh --recipe A|QD|QD_STATIC  # the 09-24 candidates (REPRODUCE.md section 10)
 #
-# t1, t2 and both are the method of record (R30 / T2R17, tag r34): ONE member set, both archives.
-# r25 and r28 rebuild the superseded packages the board actually scored (REPRODUCE.md section 4).
+# `final` trains the 5 held-out twins and the 6 all-data members, then calls Track_1/submit_fno/build_final.sh, which
+# builds and gates both archives (Track 1 81.671149, Track 2 82.055553). By default it REUSES the committed SIGBLEND band
+# (Track_1/bands/k27_sigblend_lam0.5.npz), which is what reproducing a scored package must do; RPDE_REPRO_FITBAND=1
+# re-derives the band from the twins this run trained (static fit -> twin dump -> make_k0_band.py).
 #
-# ~37 A100-hours for `both`: since 09-20 the two tracks ship the SAME member set, so `t1`, `t2`
-# and `both` differ only in which archive is built at the end (REPRODUCE.md section 5).
+# ~37 A100-hours: the two tracks ship the SAME member set, and the Track-2 stream stack trains nothing.
 # It runs the stages SEQUENTIALLY in one process and is meant to be launched from a single
 # long job, or split across the job cap with RPDE_REPRO_STAGE (below).
 #
@@ -21,7 +23,8 @@
 # one member. Checkpoints go to Track_1/unet/ -- the documented exception to "no generated trees
 # under $HOME" (CLAUDE.md), a few large files. Everything else goes to scratch.
 #
-# Five knobs, all no-ops when unset, so the default path is exactly the pipeline of record:
+# Knobs, all no-ops when unset, so the default path is exactly the pipeline of record:
+#   RPDE_REPRO_PKG=<dir>     where `final` writes its two archives and build log (default: $RPDE_REPRO_LOG/final/pkg)
 #   RPDE_REPRO_OUT=<dir>     write (and read back) every checkpoint there instead of Track_1/unet
 #   RPDE_REPRO_EPOCHS=<n>    --epochs for every training stage (400 = the recipe). Anything else
 #                            is a SMOKE: the guard below then refuses to write into the repo.
@@ -46,6 +49,8 @@ cd "$(dirname "$0")"
 _PY_DEFAULT=/users/PAS1187/qwu/.conda/envs/realpde/bin/python
 [ -x "$_PY_DEFAULT" ] || _PY_DEFAULT=$(command -v python3 || echo "$_PY_DEFAULT")
 PY=${PY:-$_PY_DEFAULT}
+export PY                                         # the build scripts read it; without the export they fell back to the author's path
+export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1          # torch >= 2.6: the checkpoints carry numpy (REPRODUCE.md section 0)
 RPDE=${RPDE:-/users/PAS1187/qwu/RealPDE}
 REAL=$RPDE/train_real/train_real
 SIM=$RPDE/train_sim/train_sim
@@ -60,7 +65,7 @@ if [ -z "${RPDE_SIMCACHE:-}" ] && ! { mkdir -p /fs/scratch/PAS1187/qwu/tmp/realp
 fi
 P2=${P2:-$OUT}               # where the three F-FNO twins live; see REPRODUCE.md 6.2
 EPOCHS=${RPDE_REPRO_EPOCHS:-400}
-WHICH=${1:-both}
+WHICH=${1:-final}
 [ "$WHICH" = "--recipe" ] && WHICH=${2:?"--recipe needs A, QD or QD_STATIC"}
 export HDF5_USE_FILE_LOCKING=FALSE
 
@@ -375,19 +380,29 @@ build_qd_static() {
   BUILD_ALPHA=0.80 build qd_static "${_KNOBS[@]}" RPDE_A="$(_A_QD)" RPDE_M="$(_M_QD)" RPDE_TAG=qd_static
 }
 
-# ---------------------------------------------------------------------------------------------
-# OPTIONAL: the distilled single-model student (STUDENT=1; OFF by default).
-# Not a package of record -- no student has scored -- but a two-stage recipe is exactly the kind
-# of method the re-training step cannot reproduce from one train2.py line, so its driver lives
-# here beside the others rather than in a handoff. It reuses the teachers this script just
-# trained (stage 1 of the pipeline skips whatever is already present), labels every training
-# window with them, and trains one model against those labels: ~6 GPU-h on top of `both`.
-#   STUDENT=1 RPDE_REPRODUCE_GO=1 bash reproduce.sh both
-student() {
-  echo "== distilled student (heldout = the evidence pipeline; pass STUDENT_MODE=alldata to ship) =="
-  bash Track_1/unet/distill_pipeline.sh \
-      "${STUDENT_OUT:-/fs/scratch/PAS1187/qwu/tmp/realpde/distill/reproduce}" \
-      "${STUDENT_MODE:-heldout}"
+# ============================== FINAL (2026-09-27): the two packages of record ================
+# REPRODUCE.md section 13. Members and twins are recipe A's; the band is the SIGBLEND transform of the static r38 band; the
+# constants are the ones build_final.sh lists. The Track-2 stream stack (R1, D1c, VARCAL) is inference code: nothing to train.
+build_final_pkg() {
+  echo "== band + build, BOTH tracks (FINAL: k27fin / MRGP2) =="
+  ensure_val
+  local W="${RPDE_REPRO_LOG:-${TMPDIR:-/tmp}}/final"; mkdir -p "$W"
+  local BAND=Track_1/bands/k27_sigblend_lam0.5.npz SB=Track_1/sigblend/band_k0_sigblend_lam0.5.json
+  if [ "${RPDE_REPRO_FITBAND:-0}" = "1" ]; then
+    echo "  refit: static band (alpha 0.80, centre 0, filled) -> twin dump -> SIGBLEND power law"
+    $PY Track_1/submit_fno/fit_band.py --ckpt $(_A_R38) --err-ckpt $(_M_R38) --alpha 0.80 --band-p 0.45 \
+        --fill-unscored --centre-alpha 0 --out "$W/band_r38_a080_c0_fill.npz" > "$W/fit_band.log" 2>&1 \
+        || { echo "FAILED: static band (see $W/fit_band.log)"; exit 1; }
+    $PY Track_1/sigblend/dump_twins.py "$W/dump_unseen.npz" --twins $(_M_R38) > "$W/dump_twins.log" 2>&1 \
+        || { echo "FAILED: twin dump (see $W/dump_twins.log)"; exit 1; }
+    ( cd Track_1/sigblend && B_DUMP="$W/dump_unseen.npz" K0_BAND="$W/band_r38_a080_c0_fill.npz" K0_INFL=1.29 K0_NB=16 \
+        PYTHONPATH=.. $PY make_k0_band.py "$W/k0" ) > "$W/make_k0_band.log" 2>&1 \
+        || { echo "FAILED: SIGBLEND fit (see $W/make_k0_band.log)"; exit 1; }
+    BAND="$W/k0/band_k0_sigblend_lam0.5.npz"; SB="$W/k0/band_k0_sigblend_lam0.5.json"
+  fi
+  RPDE_FORCE=1 RPDE_A="$(_A_R38)" RPDE_M="$(_M_R38)" RPDE_BAND="$BAND" RPDE_SIGBLEND="$SB" \
+      bash Track_1/submit_fno/build_final.sh "${RPDE_REPRO_PKG:-$W/pkg}" \
+      || { echo "FAILED: build_final.sh (gates, causality or identity) -- read ${RPDE_REPRO_PKG:-$W/pkg}/build_*.log"; exit 1; }
 }
 
 # RPDE_REPRO_STAGE runs a subset -- the header's "split across the job cap", which needed a way
@@ -402,7 +417,8 @@ fi
 
 # t1, t2 and both are the SAME pipeline since 09-20: one member set, one build, two archives.
 case "$WHICH" in
-  t1|t2|both) twins_vit; twins_ffno; members_vit; members_ffno; build_r35 ;;
+  final)      twins_vit; twins_ffno; members_vit; members_ffno; build_final_pkg ;;
+  r35|t1|t2|both) twins_vit; twins_ffno; members_vit; members_ffno; build_r35 ;;
   r34)        twins_vit; twins_ffno; members_vit; members_ffno; build_r34 ;;
   r25)        twins_vit; twins_fno_w96;    members_vit; members_fno_w96;    build_r25 ;;
   r28)        twins_vit; twins_ffno_nosim; members_vit; members_ffno_nosim; build_r28 ;;
@@ -410,9 +426,8 @@ case "$WHICH" in
   # QD needs the r34 members and twins too: the control band and the twin export of the k derivation (§10.3) use them.
   QD)         twins_vit; twins_ffno; twins_ffno_qd; members_vit; members_ffno; members_ffno_qd; qd_k_derive; build_qd ;;
   QD_STATIC)  twins_vit; twins_ffno_qd; members_vit; members_ffno_qd; build_qd_static ;;
-  *) echo "usage: $0 [t1|t2|both|r34|r25|r28] | --recipe A|QD|QD_STATIC"; exit 2 ;;
+  *) echo "usage: $0 [final|r35|r34|r25|r28] | --recipe A|QD|QD_STATIC"; exit 2 ;;
 esac
-[ "${STUDENT:-0}" = "1" ] && student
 
 echo
 echo "DONE. Acceptance is a SCORE test, not a checksum (REPRODUCE.md section 7): the strict gates"

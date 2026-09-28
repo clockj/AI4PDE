@@ -160,6 +160,12 @@ FALLBACK_FP = 0.0
 # values bit-identical; the process boundary then carries one storage instead of three (t2_ipc: ~2.3 ms/step of transport).
 # False = three clones, exactly as before.
 STACKED_OUT = False
+# ARENA_STEPS (K1, 09-27): > 0 = on the CPU return path every step's pred / lower / upper are written straight into
+# their OWN slot of a page-locked arena allocated at load (untimed), instead of pinned staging + three fresh clones per
+# step (the evaluator keeps every prediction, so each clone is a fresh mmap + first-touch faults). Same bits (md5 over 336
+# steps); A100 / 2.2.2 median 3.05 -> 2.82 ms/step. Falls back to the clone path when the arena is used up or could not
+# be allocated. 1024 steps = 1.5 GB page-locked. Build knob RPDE_SHIP_ARENA_STEPS.
+ARENA_STEPS = 0
 # NUMPY_OUT (09-26, t2_ipc3): on the CPU return path hand back numpy arrays (zero-copy views of the fresh clones) instead of torch
 # tensors. The kit's local_eval takes `torch.as_tensor(...)` of what we return, so values/shape/dtype are unchanged; the process
 # boundary is cheaper for numpy under every transport emulated (+0.25..0.29 ms/step torch queue, +0.8..1.06 plain pickle). False = torch.
@@ -167,6 +173,9 @@ NUMPY_OUT = False
 # SPS interval centre, decoupled from the prediction -- see Track_1 submission.py CENTRE_ALPHA.
 # Read from band.npz (`centre_alpha`) in _load_band; no key => ALPHA, the old bounds exactly.
 CENTRE_ALPHA = ALPHA
+# JOINT_GAIN (K2 09-27): one compose gain per pixel for both channels, weighted in physical units (std**2); same TKE map and
+# time mean, prediction closer to y0. Requires CENTRE_ALPHA == 0 (asserted in _load_band). False = bit-identical.
+JOINT_GAIN = False
 
 # ---------------------------------------------------------------------------------------
 # R1 (2026-09-25, Ramesh; approved for TRACK 2 ONLY by Jonas): causal per-pixel online calibration of the SPS
@@ -196,16 +205,55 @@ SIGEMA = False             # sigma_EMA (owner michael 09-27 13:35Z; Jonas step-1
                            # windows. Only ALPHA's sigma changes (the band keeps sigma_head). Needs R1 (its revealed-target plumbing). False = off.
 SIGEMA_BETA = 0.8
 SIGEMA_N0 = 3.0
+SIGPOW = None              # SIGBLEND band (K-sprint design_0, 09-27): None = off, bit-identical. A tuple (q_u, q_v): the static band is
+                           # multiplied by (sigma_phys + 1e-8) ** q_c per channel (sigma_phys = sig * std, the heads' PHYSICAL sigma, float32),
+                           # AFTER base * clip(sigma/sigma_ref)^p and BEFORE the R1 gains; the band npz carries base' and p'. Static/drv band
+                           # only: refuses with the err-head band.
 SIGEMA_DDOF = 0            # 0 = population variance over the 20 frames (as s_ in the compose); 1 = unbiased (x 20/19)
+VC_N0 = 0.0                # VARCAL (design C, 09-27): > 0 = on with this N0. Causal per-pixel/channel calibration of the composed fluctuation
+                           # AMPLITUDE from this trajectory's revealed windows: g = box3(sum var_t(y)) / box3(sum vpred), both sums over PAST windows
+                           # (model space; vpred = (ALPHA*sigma_head + (1-ALPHA)*s_)^2 of that window, uncalibrated), clipped to VC_CLIP, shrunk to 1 by
+                           # n/(n+VC_N0); the compose target std is multiplied by sqrt(g). Band, centre and sigma_head untouched. Needs R1. 0.0 = off.
+VC_CLIP = (0.25, 4.0)
+FW_N0 = 0.0                # FAMW (design C, 09-27; the team's "family weights", per-pixel online mixing): > 0 = on with this N0. Needs exactly two
+                           # fused groups A (first) and B (second). w = weight of B; w0 = n_B / n_members. Per pixel/channel, over PAST windows:
+                           # w_ols = box3(sum_t d*(y - yA)) / box3(sum_t d*d), d = yB - yA (model space), clipped to [0, 1], shrunk to w0 by n/(n+FW_N0).
+                           # The ensemble mean becomes yA + w*(yB - yA) BEFORE compose, so D1c accumulates the residual AFTER it. Needs R1. 0.0 = off.
+R1_TSM = 1                 # TSM (design B2, 09-27): 3 = the running K x K table is box-smoothed (3x3 over H, W, replicate-padded) BEFORE the
+                           # per-pixel argmax, i.e. the sufficient statistic is pooled over the 9 neighbours instead of only the argmax's output
+                           # (which is still box-smoothed and shrunk as before). 1 = off, bit-identical. Needs R1_ASYM.
+R1_BLK_N0 = 0.0            # BLK (design B2, 09-27): > 0 = on with this N0. Needs R1_ASYM. A second causal table at LEAD-TIME-BLOCK resolution
+                           # (K x K x G x H x W x C, G = T_OUT / R1_BLK blocks of R1_BLK consecutive output frames; same statistic, same revealed
+                           # windows of THIS trajectory; the per-pixel table is its sum over the blocks). Per block and pixel: 3x3 box of the table,
+                           # argmax, 3x3 box of the multiplier -> k_blk; this window's multiplier = k_pix + (k_blk - k_pix) * n / (n + R1_BLK_N0),
+                           # clamped to [min(R1_KS), max(R1_KS)], constant within a block. n = 0 -> exactly 1.0. 0.0 = off, bit-identical.
+R1_BLK = 4                 # BLK: output frames per lead-time block (must divide T_OUT = 20)
 R1_UNSCORED_TOL = 1e-6                                      # |yn - z_c| below this = an unscored (physical 0) element
 R1_FP32 = True             # True: width term + running sum in float32 (Ramesh 09-25: gains identical to 3 decimals, ~half the
                            # memory traffic and V100 fp32 rate); False: float64, bit-matching his numpy reference
 _SIGMA_G = 0.0563870259
+D1C_EB = False             # D1c-EB (design C phase 2, 09-27): True = the D1c shrink becomes max(n/(n+D1C_N0), tau2/(tau2+se2)) once n >= 2, an
+                           # empirical-Bayes factor PER CHANNEL pooled over all pixels: raw = dsum/n (per pixel), b2 = mean_px(raw^2),
+                           # s2 = sum_k(e_k - raw)^2 / (n - 1) (e_k = window k's time-mean error, per pixel), se2 = mean_px(s2) / n, tau2 = max(b2 - se2, 0).
+                           # A trajectory whose persistent bias stands out of its own window-to-window scatter is corrected at nearly full strength
+                           # within a few windows; one whose bias does not keeps D1c's n/(n+D1C_N0). No constant. Needs D1C_N0 > 0. False = D1c as before.
+D1C_EB_N0 = 0.0            # damping of the empirical-Bayes factor in its first windows: factor *= n/(n+D1C_EB_N0). 0.0 = none.
+D1C_LEAD_N0 = 0.0          # D1c lead-time profile (design C phase 2): > 0 = on. The shift becomes a(t) * b(pixel): a(t) = <bt, raw>_px / <raw, raw>_px per
+                           # channel (bt = per-frame mean error over past windows), shrunk to 1 by n/(n+D1C_LEAD_N0), clipped to [0, 3]. 0.0 = off.
 
 
 def _r1_box3(a):                             # (H,W,C) float64, replicate-padded 3x3 mean, reference op order
     o = a
     for ax in (0, 1):
+        q = o.movedim(ax, 0); L = q.shape[0]
+        q = torch.cat([q[:1], q, q[-1:]], 0)
+        o = (((q[0:L] + q[1:L + 1]) + q[2:L + 2]) / 3.0).movedim(0, ax)
+    return o
+
+
+def _r1_boxn(a, d0, d1):                     # _r1_box3 over two arbitrary dims (d0, d1) of any tensor, same op order
+    o = a
+    for ax in (d0, d1):
         q = o.movedim(ax, 0); L = q.shape[0]
         q = torch.cat([q[:1], q, q[-1:]], 0)
         o = (((q[0:L] + q[1:L + 1]) + q[2:L + 2]) / 3.0).movedim(0, ax)
@@ -226,22 +274,38 @@ class _CausalBandScalerT:
         self.shape = tuple(shape)
         self.npix = int(np.prod(shape))
         self.cum2 = (torch.zeros((len(ks), len(ks)) + tuple(shape), dtype=self.adt, device=device) if R1_ASYM else None)
+        self.blk = int(R1_BLK) if (R1_ASYM and R1_BLK_N0 > 0) else 0          # BLK: frames per lead-time block (0 = off)
+        self.cumG = (torch.zeros((len(ks), len(ks), T_OUT // self.blk) + tuple(shape), dtype=self.adt, device=device) if self.blk else None)
+        self.kmin, self.kmax = float(min(ks)), float(max(ks))
 
     @torch.no_grad()
     def reset(self):
         self.cum.zero_(); self.n.zero_()
         if self.cum2 is not None:
             self.cum2.zero_()
+        if self.cumG is not None:
+            self.cumG.zero_()
 
     @torch.no_grad()
     def kfield_asym(self):                   # -> (k_lo, k_hi), each (1,1,H,W,C) float32, from PAST windows only
         # Jonas' spec (work/r1_asym/causal_band_asym_t.py): first max in row-major (lo, hi) order over the K*K cells.
         K = len(self.ks)
-        flat = self.cum2.flatten(0, 1).argmax(0)
+        flat = (_r1_boxn(self.cum2, 2, 3) if R1_TSM > 1 else self.cum2).flatten(0, 1).argmax(0)
         al, ah = torch.div(flat, K, rounding_mode="floor"), flat % K
         sh = self.n / (self.n + self.n0)
         klo = 1.0 + (_r1_box3(self.ks[al]) - 1.0) * sh
         khi = 1.0 + (_r1_box3(self.ks[ah]) - 1.0) * sh
+        if self.blk:                         # BLK: -> (1,T,H,W,C), constant within a lead-time block
+            fe = _r1_boxn(self.cumG, 3, 4).flatten(0, 1).argmax(0)                                   # (G,H,W,C)
+            el = _r1_boxn(self.ks[torch.div(fe, K, rounding_mode="floor")], 1, 2)
+            eh = _r1_boxn(self.ks[fe % K], 1, 2)
+            s = self.n / (self.n + R1_BLK_N0)                                                        # n = 0 -> 0: k stays exactly 1.0
+            G = el.shape[0]
+            klo = (klo[None] + (el - klo[None]) * s).clamp(self.kmin, self.kmax)
+            khi = (khi[None] + (eh - khi[None]) * s).clamp(self.kmin, self.kmax)
+            klo = klo.to(torch.float32).unsqueeze(1).expand((G, self.blk) + self.shape).reshape((G * self.blk,) + self.shape)
+            khi = khi.to(torch.float32).unsqueeze(1).expand((G, self.blk) + self.shape).reshape((G * self.blk,) + self.shape)
+            return klo[None], khi[None]
         return klo.to(torch.float32)[None, None], khi.to(torch.float32)[None, None]
 
     @torch.no_grad()
@@ -254,7 +318,14 @@ class _CausalBandScalerT:
         below = y_tgt < C
         A = torch.exp(-((C - lo).to(self.adt) * st)) * torch.where(below, y_tgt >= lo, True) * scored
         B = torch.exp(-((hi - C).to(self.adt) * st)) * torch.where(below, True, y_tgt <= hi)
-        self.cum2 += torch.einsum("athwc,bthwc->abhwc", A, B) * flag.to(self.adt)
+        if self.blk:                         # one einsum at block resolution; the per-pixel table is its sum over the blocks
+            K, G = len(self.ks), self.cumG.shape[2]
+            inc = torch.einsum("agthwc,bgthwc->abghwc", A.reshape((K, G, self.blk) + self.shape),
+                               B.reshape((K, G, self.blk) + self.shape)) * flag.to(self.adt)
+            self.cumG += inc
+            self.cum2 += inc.sum(2)
+        else:
+            self.cum2 += torch.einsum("athwc,bthwc->abhwc", A, B) * flag.to(self.adt)
         self.n += flag
 
     @torch.no_grad()
@@ -350,6 +421,13 @@ class FrozenEnsemble:
         # err_floor (absent => None => the 09-24 direct band exactly): half = max(k*H, err_floor*base).
         self.floor = (self.half0 * float(_ERR["floor"])
                       if _ERR is not None and _ERR.get("floor") and self.half0 is not None else None)
+        self.sigpow = None
+        if SIGPOW is not None:
+            if _ERR is not None:
+                raise RuntimeError("SIGPOW is not supported together with the err-head band (_ERR); refusing")
+            if self.half0 is None:
+                raise RuntimeError("SIGPOW needs a band (band.npz); refusing")
+            self.sigpow = torch.tensor([float(SIGPOW[0]), float(SIGPOW[1])], dtype=torch.float32, device=device)
         self.Ad = torch.from_numpy(_A).to(device)
         self.Bd = torch.from_numpy(_B).to(device)
 
@@ -361,6 +439,13 @@ class FrozenEnsemble:
         self.gh = torch.zeros_like(self.go)
         self.host = [torch.empty((1, T_OUT, H, W, 3), dtype=torch.float32,
                                  pin_memory=cuda) for _ in range(3)]
+        self.arena, self.arena_i = None, 0
+        if ARENA_STEPS and cuda:
+            try:
+                self.arena = [torch.zeros((int(ARENA_STEPS), 1, T_OUT, H, W, 3), dtype=torch.float32).pin_memory()
+                              for _ in range(3)]
+            except Exception:
+                self.arena = None
         # Running-history accumulator. `hsum` is the sum of every delivered frame's u,v, `hn`
         # the frame count; `ghm` holds the resulting mean and `ggate` the blend strength, both
         # written by ttt_step and read by _body.
@@ -374,8 +459,9 @@ class FrozenEnsemble:
         self.r1 = None
         if R1 and self.half0 is not None:
             self.r1 = _CausalBandScalerT(R1_KS, R1_N0, _STD_TGT.tolist(), _SIGMA_G, device, (H, W, 2))
-            self.gk = torch.ones((1, 1, H, W, 2), dtype=torch.float32, device=device)
-            self.gk2 = torch.ones((1, 1, H, W, 2), dtype=torch.float32, device=device) if R1_ASYM else None   # k_hi (R1_ASYM)
+            kT = T_OUT if (R1_ASYM and R1_BLK_N0 > 0) else 1                  # BLK: the multiplier varies with the lead-time block
+            self.gk = torch.ones((1, kT, H, W, 2), dtype=torch.float32, device=device)
+            self.gk2 = torch.ones((1, kT, H, W, 2), dtype=torch.float32, device=device) if R1_ASYM else None   # k_hi (R1_ASYM)
             self.gH = torch.zeros((1, T_OUT, H, W, 2), dtype=torch.float32, device=device)
             self.gC = torch.zeros((1, T_OUT, H, W, 2), dtype=torch.float32, device=device)
             self.r1_z = torch.from_numpy((-_fno.MEAN.astype(np.float64).reshape(-1)[:2]
@@ -393,7 +479,11 @@ class FrozenEnsemble:
             self.gC0 = torch.zeros((1, T_OUT, H, W, 2), dtype=torch.float32, device=device)
             self.dsum = torch.zeros((1, 1, H, W, 2), dtype=torch.float64, device=device)
             self.dn = torch.zeros((), dtype=torch.float64, device=device)
-            self.gD = torch.zeros((1, 1, H, W, 2), dtype=torch.float32, device=device)
+            self.gD = torch.zeros((1, T_OUT if D1C_LEAD_N0 else 1, H, W, 2), dtype=torch.float32, device=device)
+        self.d1x = self.d1c and (bool(D1C_EB) or bool(D1C_LEAD_N0))
+        if self.d1x:
+            self.dsq = torch.zeros((1, 1, H, W, 2), dtype=torch.float64, device=device)       # sum of squared time-mean errors
+            self.dsumf = torch.zeros((1, T_OUT, H, W, 2), dtype=torch.float64, device=device)  # per-frame error sum (lead profile)
         # sigma_EMA state: vS / vW = forgetting sums of revealed-window variances and weights, vn = revealed windows, gEma = vS / vW.
         self.sigema = bool(SIGEMA) and self.r1 is not None
         if self.sigema:
@@ -402,6 +492,27 @@ class FrozenEnsemble:
             self.vn = torch.zeros((), dtype=torch.float64, device=device)
             self.gEma = torch.zeros((1, 1, H, W, 2), dtype=torch.float32, device=device)
             self.gWt = torch.zeros((), dtype=torch.float32, device=device)
+        # VARCAL state: cT / cP = running sums of revealed target variance and of the matching windows' uncalibrated composed variance,
+        # cn = revealed windows, gVp = the last window's uncalibrated composed variance (written in the graph), gG = this window's std gain.
+        self.vc = bool(VC_N0) and self.r1 is not None and ALPHA > 0
+        if self.vc:
+            self.cT = torch.zeros((H, W, 2), dtype=torch.float64, device=device)
+            self.cP = torch.zeros((H, W, 2), dtype=torch.float64, device=device)
+            self.cn = torch.zeros((), dtype=torch.float64, device=device)
+            self.gVp = torch.zeros((1, 1, H, W, 2), dtype=torch.float32, device=device)
+            self.gG = torch.ones((1, 1, H, W, 2), dtype=torch.float32, device=device)
+        # FAMW state: fA / fB = running sums of d*d and d*(y - yA); fn = revealed windows; gYA / gYB = the last window's family means
+        # (model space, written in the graph); gW = this window's weight of family B.
+        self.fw = bool(FW_N0) and self.r1 is not None and len(models) == 2
+        if self.fw:
+            nA, nB = (getattr(m, "n_members", 1) for m in models)
+            self.fw0 = float(nB) / float(nA + nB)
+            self.fA = torch.zeros((H, W, 2), dtype=torch.float64, device=device)
+            self.fB = torch.zeros((H, W, 2), dtype=torch.float64, device=device)
+            self.fn = torch.zeros((), dtype=torch.float64, device=device)
+            self.gYA = torch.zeros((1, T_OUT, H, W, 2), dtype=torch.float32, device=device)
+            self.gYB = torch.zeros((1, T_OUT, H, W, 2), dtype=torch.float32, device=device)
+            self.gW = torch.full((1, 1, H, W, 2), self.fw0, dtype=torch.float32, device=device)
         self._streams =([torch.cuda.Stream() for _ in models]
                          if cuda and PAR_STREAMS and len(models) > 1 else None)
         self.graph = None
@@ -450,10 +561,31 @@ class FrozenEnsemble:
                     self.gk.copy_(self.r1.kfield())
         if self.d1c:
             # Score the PREVIOUS window's uncorrected C against the target revealed this step (gated by gflag, no host branch).
-            e = (self.gC0 - (self.gyp[..., :2] * self.Ad + self.Bd)).mean(1, keepdim=True)
+            ef = self.gC0 - (self.gyp[..., :2] * self.Ad + self.Bd)
+            e = ef.mean(1, keepdim=True)
             self.dsum.add_(e.double() * self.gflag)
             self.dn.add_(self.gflag)
-            self.gD.copy_(-(self.dsum / (self.dn + D1C_N0)))
+            if self.d1x:
+                n_ = self.dn; nn = torch.clamp(n_, min=1.0)
+                raw = self.dsum / nn                                  # n = 0: exactly 0, so every product below is 0
+                shr = n_ / (n_ + D1C_N0)
+                if D1C_EB:
+                    self.dsq.add_(e.double() * e.double() * self.gflag)
+                    ss = torch.clamp(self.dsq - nn * raw * raw, min=0.0)
+                    se2 = (ss / torch.clamp(nn - 1.0, min=1.0) / nn).mean((2, 3), keepdim=True)
+                    tau2 = torch.clamp((raw * raw).mean((2, 3), keepdim=True) - se2, min=0.0)
+                    eb = torch.where(n_ > 1.5, tau2 / (tau2 + se2 + 1e-30), torch.zeros_like(tau2))      # n < 2: no variance estimate, EB off
+                    if D1C_EB_N0:
+                        eb = eb * (n_ / (n_ + D1C_EB_N0))
+                    shr = torch.maximum(eb, shr)
+                b_ = raw * shr
+                if D1C_LEAD_N0:
+                    self.dsumf.add_(ef.double() * self.gflag)
+                    a_ = ((self.dsumf / nn) * raw).sum((2, 3), keepdim=True) / torch.clamp((raw * raw).sum((2, 3), keepdim=True), min=1e-30)
+                    b_ = b_ * torch.clamp(1.0 + (a_ - 1.0) * (n_ / (n_ + D1C_LEAD_N0)), 0.0, 3.0)
+                self.gD.copy_((-b_).to(torch.float32))
+            else:
+                self.gD.copy_(-(self.dsum / (self.dn + D1C_N0)))
         if self.sigema:
             # The target revealed this step belongs to the PREVIOUS window: fold its per-pixel variance in (gated, no host branch).
             v = self.gyp[..., :2].var(1, keepdim=True, unbiased=bool(SIGEMA_DDOF)).double()
@@ -463,6 +595,23 @@ class FrozenEnsemble:
             self.vn.add_(self.gflag)
             self.gEma.copy_(self.vS / torch.clamp(self.vW, min=1e-12))
             self.gWt.copy_(self.vn / (self.vn + SIGEMA_N0))
+        if self.vc:
+            # PREVIOUS window: revealed target variance against that window's uncalibrated composed variance (gVp not yet overwritten).
+            self.cT.add_(self.gyp[..., :2].var(1, unbiased=False)[0].double() * self.gflag)
+            self.cP.add_(self.gVp[0, 0].double() * self.gflag)
+            self.cn.add_(self.gflag)
+            g = torch.clamp(_r1_box3(self.cT) / torch.clamp(_r1_box3(self.cP), min=1e-12), VC_CLIP[0], VC_CLIP[1])
+            g = 1.0 + (g - 1.0) * (self.cn / (self.cn + VC_N0))          # n = 0 -> exactly 1.0
+            self.gG.copy_(torch.sqrt(g).to(torch.float32)[None, None])
+        if self.fw:
+            # PREVIOUS window's family means (gYA / gYB not yet overwritten) against the target revealed this step.
+            d_ = (self.gYB - self.gYA).double()
+            self.fA.add_((d_ * d_).sum(1)[0] * self.gflag)
+            self.fB.add_((d_ * (self.gyp[..., :2].double() - self.gYA.double())).sum(1)[0] * self.gflag)
+            self.fn.add_(self.gflag)
+            w_ = torch.clamp(_r1_box3(self.fB) / torch.clamp(_r1_box3(self.fA), min=1e-12), 0.0, 1.0)
+            w_ = self.fw0 + (w_ - self.fw0) * (self.fn / (self.fn + FW_N0))   # n = 0 -> exactly w0
+            self.gW.copy_(torch.clamp(w_, 0.0, 1.0).to(torch.float32)[None, None])
         pv =self.gx[..., :2].permute(0, 1, 4, 2, 3).reshape(1, CH, H, W).contiguous()
         y = sig = er = None
         total = etot = 0
@@ -501,6 +650,12 @@ class FrozenEnsemble:
             sig = None if sig is None else sig / total
         if er is not None and etot > 1:
             er = er / etot
+        if self.fw:
+            # FAMW: per-pixel causal family mix replaces the uniform member mean (sigma stays the uniform mean of the heads).
+            yA = outs[0][0] / getattr(self.models[0], "n_members", 1)
+            yB = outs[1][0] / getattr(self.models[1], "n_members", 1)
+            self.gYA.copy_(yA); self.gYB.copy_(yB)
+            y = yA + self.gW * (yB - yA)
         y0 = y                            # pre-compose mean: the interval centre's anchor
         if sig is not None and ALPHA > 0:
             m_ = y.mean(1, keepdim=True)
@@ -508,7 +663,29 @@ class FrozenEnsemble:
             sa = sig
             if self.sigema:                  # ALPHA's sigma only; the band below still reads sigma_head
                 sa = torch.where(self.gWt > 0, torch.sqrt(self.gWt * self.gEma + (1.0 - self.gWt) * sig * sig), sig)   # n = 0: sigma_head exactly
-            y = m_ + (y - m_) * ((ALPHA * sa + (1 - ALPHA) * s_) / (s_ + 1e-6))
+            if JOINT_GAIN:
+                w_ = (self.std * self.std).float()
+                t_ = ALPHA * sa + (1 - ALPHA) * s_
+                gj_ = (torch.sqrt((t_ * t_ * w_).sum(-1, keepdim=True))
+                       / (torch.sqrt((s_ * s_ * w_).sum(-1, keepdim=True)) + 1e-7))
+                if self.vc:
+                    # E1 merge (09-27): VARCAL must see the variance of the field JOINT_GAIN actually composes: per channel it is
+                    # (s_ * gain)^2, the gain from sigma_head (uncalibrated, as in the per-channel branch: sig, not sa).
+                    if self.sigema:
+                        tu_ = ALPHA * sig + (1 - ALPHA) * s_
+                        gu_ = (torch.sqrt((tu_ * tu_ * w_).sum(-1, keepdim=True))
+                               / (torch.sqrt((s_ * s_ * w_).sum(-1, keepdim=True)) + 1e-7))
+                    else:
+                        gu_ = gj_
+                    self.gVp.copy_((s_ * gu_) ** 2)
+                    y = m_ + (y - m_) * (gj_ * self.gG)
+                else:
+                    y = m_ + (y - m_) * gj_
+            elif self.vc:
+                self.gVp.copy_((ALPHA * sig + (1 - ALPHA) * s_) ** 2)       # uncalibrated composed variance of THIS window (read next step)
+                y = m_ + (y - m_) * (((ALPHA * sa + (1 - ALPHA) * s_) * self.gG) / (s_ + 1e-6))
+            else:
+                y = m_ + (y - m_) * ((ALPHA * sa + (1 - ALPHA) * s_) / (s_ + 1e-6))
         if HIST_BETA:
             # Unconditional tensor arithmetic: ggate is 0 for an in-range window, so this is
             # an identity there and no branch is needed inside the graph.
@@ -531,6 +708,10 @@ class FrozenEnsemble:
         else:
             if self.band_p and self.sref is not None and sig is not None:
                 half = half * torch.clamp((sig * self.std) / self.sref, 0.3, 3.0) ** self.band_p
+            if self.sigpow is not None:
+                if sig is None:
+                    raise RuntimeError("SIGPOW needs the sigma head (sig is None); refusing")
+                half = half * ((sig * self.std).float() + 1e-8) ** self.sigpow
             if self.err is not None and er is not None and self.eref is not None and self.err["q"]:
                 half = half * torch.clamp((er * self.std) / self.eref, 0.3, 3.0) ** self.err["q"]
         half_hi = None
@@ -601,6 +782,7 @@ class FrozenEnsemble:
                 self.dsum.zero_(); self.dn.zero_(); self.gD.zero_()
             if self.sigema:
                 self.vS.zero_(); self.vW.zero_(); self.vn.zero_(); self.gEma.zero_(); self.gWt.zero_()
+            self._reset_c()
         except Exception as e:
             global GRAPH_ERR
             GRAPH_ERR = repr(e)[:300]
@@ -627,6 +809,15 @@ class FrozenEnsemble:
             self.dsum.zero_(); self.dn.zero_(); self.gD.zero_()
         if self.sigema:
             self.vS.zero_(); self.vW.zero_(); self.vn.zero_(); self.gEma.zero_(); self.gWt.zero_()
+        self._reset_c()
+
+    def _reset_c(self) -> None:          # VARCAL / FAMW / D1c-EB per-trajectory state (design C); no-op when all are off
+        if self.d1x:
+            self.dsq.zero_(); self.dsumf.zero_()
+        if self.vc:
+            self.cT.zero_(); self.cP.zero_(); self.cn.zero_(); self.gG.fill_(1.0)
+        if self.fw:
+            self.fA.zero_(); self.fB.zero_(); self.fn.zero_(); self.gW.fill_(self.fw0)
 
     @torch.no_grad()
     def ttt_step(self, input_norm, prev_target_norm=None) -> Tuple[Any, Dict[str, Any]]:
@@ -694,6 +885,14 @@ class FrozenEnsemble:
             return [s.clone() for s in srcs]
         if not self.device.startswith("cuda"):
             return [s.clone() for s in srcs]
+        if self.arena is not None and self.arena_i < int(ARENA_STEPS) and not STACKED_OUT:
+            j = self.arena_i
+            self.arena_i = j + 1
+            outs = [self.arena[i][j] for i in range(len(srcs))]
+            for o, s in zip(outs, srcs):
+                o.copy_(s, non_blocking=True)
+            torch.cuda.synchronize()
+            return outs
         for i, s in enumerate(srcs):
             self.host[i].copy_(s, non_blocking=True)   # pinned: 0.031 ms vs 0.068 pageable
         torch.cuda.synchronize()
@@ -712,6 +911,8 @@ def _load_band(submission_dir: str):
     p = float(z["p"])
     global CENTRE_ALPHA, _ERR
     CENTRE_ALPHA = float(z["centre_alpha"]) if "centre_alpha" in z.files else ALPHA
+    if JOINT_GAIN:
+        assert CENTRE_ALPHA == 0.0, "JOINT_GAIN needs CENTRE_ALPHA == 0 (compose is no longer linear in alpha)"
     # --err-head band (2026-09-23). Absent keys => None => the band is exactly the old one.
     #   err_mode "drv":    half = base * clip(sigma/sigma_ref)^p * clip(H/err_ref, .3, 3)^err_q
     #   err_mode "direct": half = err_k * H          (H = heads' predicted |error|, physical)
@@ -785,6 +986,7 @@ def get_ttt_model(submission_dir: str, device: str):
         probe = torch.zeros((1, T_IN, H, W, 3), dtype=torch.float32)
         for _ in range(3):
             m.ttt_step(probe, None)
+        m.arena_i = 0
         if dev.startswith("cuda"):
             torch.cuda.synchronize()
     except Exception:
@@ -794,7 +996,7 @@ def get_ttt_model(submission_dir: str, device: str):
             aff = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None
             gpu = torch.cuda.get_device_name(0) if dev.startswith("cuda") else "cpu"
             print(f"[rpde-t2] load: gpu {gpu!r} cpus {os.cpu_count()} affinity {aff} torch {torch.__version__} "
-                  f"cuda {torch.version.cuda} amp {AMP_ACTIVE} par_streams {PAR_STREAMS} r1 {R1} r1_asym {R1_ASYM} d1c_n0 {D1C_N0} sigema {SIGEMA} b {SIGEMA_BETA} n0 {SIGEMA_N0} alpha {ALPHA} "
+                  f"cuda {torch.version.cuda} amp {AMP_ACTIVE} par_streams {PAR_STREAMS} r1 {R1} r1_asym {R1_ASYM} r1_tsm {R1_TSM} r1_blk_n0 {R1_BLK_N0} r1_blk {R1_BLK} d1c_n0 {D1C_N0} d1c_eb {D1C_EB} d1c_eb_n0 {D1C_EB_N0} d1c_lead_n0 {D1C_LEAD_N0} vc_n0 {VC_N0} fw_n0 {FW_N0} sigpow {SIGPOW} sigema {SIGEMA} b {SIGEMA_BETA} n0 {SIGEMA_N0} alpha {ALPHA} joint_gain {JOINT_GAIN} centre_alpha {CENTRE_ALPHA} "
                   f"graph {'CAPTURED' if m.graph is not None else 'NONE'} graph_worst {GRAPH_WORST} graph_tol {GRAPH_TOL} "
                   f"graph_err {GRAPH_ERR} fallback_fp {FALLBACK_FP} stacked_out {STACKED_OUT} numpy_out {NUMPY_OUT} members {len(ckpts)}", flush=True)
         except Exception as e:

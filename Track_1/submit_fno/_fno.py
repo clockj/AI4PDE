@@ -1324,6 +1324,9 @@ def _swin_member(blob: dict, device: str):
                     blob.get("var_head", True), **SWIN_VARIANTS[arch]).to(device)
 
 
+LN_MANUAL = False      # set by Track 1's submission.py (baked constant); Track 2 leaves it off
+
+
 class _StkLN(nn.Module):
     """K LayerNorms over the last axis of a member-major (K, B, h, w, c) tensor.
 
@@ -1342,6 +1345,14 @@ class _StkLN(nn.Module):
                              .reshape(k, 1, 1, 1, c).clone(), persistent=False)
 
     def forward(self, x):
+        if LN_MANUAL and x.is_cuda:
+            # K1 (09-27): native_layer_norm's row-wise kernel is 28 % of the fused F-FNO stack's device time at batch 56
+            # (1.44 ms per call over 580k tokens x 40). Same arithmetic from var_mean + elementwise kernels, moments in
+            # fp32: stack -10 %, package -0.09 ms/window (A100, 2.2.2); prediction differs 6.6e-4 relative (inside the
+            # AMP gate), scores unchanged to 5 digits. Track 1 only -- at batch 1 it adds kernels to Track 2's graph.
+            x32 = x.float()
+            var, mu = torch.var_mean(x32, dim=-1, keepdim=True, unbiased=False)
+            return torch.addcmul(self.b, (x32 - mu).mul_(torch.rsqrt(var + self.eps)), self.w)
         return torch.addcmul(self.b, _F.layer_norm(x, x.shape[-1:], eps=self.eps), self.w)
 
 
@@ -2370,6 +2381,10 @@ def load_any(path: str, device: str):
 # False = the D2 (c868b3a) path, byte for byte. OPT-IN since 09-25 18Z: it trades +0.03 ms/window on a many-core host for
 # -0.18 on one core, and is stacked only if D2's board read says CPU-bound; build_round13 bakes it (RPDE_SHIP_DIRECT_PRED).
 D2_DIRECT_PRED = False
+# JOINT_GAIN (K2 09-27): the ALPHA compose uses ONE gain per pixel for both channels, g = |T|/|s| with the channels weighted in
+# PHYSICAL units (std**2, compose runs in normalized space). Same per-pixel TKE map, same time mean, prediction closer to y0.
+# Valid only with the band centred on y0 (CENTRE_ALPHA 0: the callers assert it). False = the per-channel compose, bit for bit.
+JOINT_GAIN = False
 # GPU_FP (Track 1 submission.py, 09-26): the batch fingerprint eps, set by the caller for one call; 0.0 = off. Applied below
 # to each chunk's prediction just before the direct copy; _PRED_FP_HITS counts the chunks it was applied to.
 _PRED_FP = 0.0
@@ -2402,6 +2417,17 @@ def eband_features(c0, sig, x):
                         t.reshape(1, -1, 1, 1, 1).expand_as(c0),
                         torch.log(xs + 1e-6).expand_as(c0),
                         torch.log(torch.abs(c0 - c0.mean(dim=1, keepdim=True)) + 1e-6)], dim=-1)
+
+
+_EB_LOGSIG_ONLY = {}
+
+
+def _eband_logsig_only(beta_dev):
+    """True iff EBAND coefficients 1..4 are all exactly zero (checked once per constant tensor; one host sync)."""
+    k = id(beta_dev)
+    if k not in _EB_LOGSIG_ONLY:
+        _EB_LOGSIG_ONLY[k] = bool((beta_dev[:, 1:5] == 0).all().item())
+    return _EB_LOGSIG_ONLY[k]
 
 
 def eband_yhat(c0, sig, x, beta_dev, clip=None):
@@ -2540,7 +2566,13 @@ def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
             m_ = y.mean(1, keepdim=True)
             f_ = y - m_
             s_ = y.std(1, keepdim=True, unbiased=False)
-            y = m_ + f_ * ((alpha * sig + (1 - alpha) * s_) / (s_ + 1e-6))
+            if JOINT_GAIN:
+                w_ = (std * std).float()
+                t_ = alpha * sig + (1 - alpha) * s_
+                y = m_ + f_ * (torch.sqrt((t_ * t_ * w_).sum(-1, keepdim=True))
+                               / (torch.sqrt((s_ * s_ * w_).sum(-1, keepdim=True)) + 1e-7))
+            else:
+                y = m_ + f_ * ((alpha * sig + (1 - alpha) * s_) / (s_ + 1e-6))
         if sigma_out is not None and sig is not None:
             # Physical units, (B, 1, H, W, 2). The SPS band is scaled by this: predicted sigma
             # correlates 0.551 with per-element |error| after the per-element mean is removed,
@@ -2575,7 +2607,13 @@ def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
             if eband is not None:
                 # EBAND: channels u, v of the half-width scaled (mult) or replaced by exp(yhat); channel 2 stays 0.
                 beta_dev, eb_mode, eb_clip = eband
-                fac = torch.exp(eband_yhat(c_dev, sig * std, xb[:len(yp)], beta_dev, eb_clip))
+                if eb_clip is None and _eband_logsig_only(beta_dev):
+                    # SIGBLEND fast path (E0a 09-27): features 1..4 carry zero weight, so yhat = b0*log(sigma+1e-8) + b5 on the
+                    # (B,1,H,W,2) sigma field, broadcast over t below -- bit-identical to the general path (adding the four
+                    # 0*finite terms and the zero intercept is exact) without building the (B,20,H,W,2,5) feature stack.
+                    fac = torch.exp(torch.log((sig * std).float() + 1e-8) * beta_dev[:, 0] + beta_dev[:, 5])
+                else:
+                    fac = torch.exp(eband_yhat(c_dev, sig * std, xb[:len(yp)], beta_dev, eb_clip))
                 h2 = half[..., :2] * fac if eb_mode == "mult" else fac
                 half = torch.cat([h2, half[..., 2:]], -1)
             p3 = torch.zeros_like(half); p3[..., :2] = yp

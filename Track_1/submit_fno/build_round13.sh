@@ -127,17 +127,37 @@ sed -i "s/^BLEND_BETA = .*/BLEND_BETA = $BETA/" Track_1/submit_fno/submission.py
 [ -n "${RPDE_SHIP_R1:-}" ] && sed -i "s/^R1 = .*/R1 = $RPDE_SHIP_R1/" Track_2/submit/submission.py
 [ -n "${RPDE_SHIP_STACKED_OUT:-}" ] && sed -i "s/^STACKED_OUT = .*/STACKED_OUT = $RPDE_SHIP_STACKED_OUT/" Track_2/submit/submission.py
 [ -n "${RPDE_SHIP_R1_ASYM:-}" ] && sed -i "s/^R1_ASYM = .*/R1_ASYM = $RPDE_SHIP_R1_ASYM/" Track_2/submit/submission.py
+# design B2 (09-27): R1_TSM 3 = table smoothing; R1_BLK_N0 > 0 = lead-time-block residual (R1_BLK frames per block). Off = 1 / 0.0.
+[ -n "${RPDE_SHIP_R1_TSM:-}" ] && sed -i "s/^R1_TSM = [^ ]*/R1_TSM = $RPDE_SHIP_R1_TSM/" Track_2/submit/submission.py
+[ -n "${RPDE_SHIP_R1_BLK_N0:-}" ] && sed -i "s/^R1_BLK_N0 = [^ ]*/R1_BLK_N0 = $RPDE_SHIP_R1_BLK_N0/" Track_2/submit/submission.py
+[ -n "${RPDE_SHIP_R1_BLK:-}" ] && sed -i "s/^R1_BLK = [^ ]*/R1_BLK = $RPDE_SHIP_R1_BLK/" Track_2/submit/submission.py
 [ -n "${RPDE_SHIP_NUMPY_OUT:-}" ] && sed -i "s/^NUMPY_OUT = .*/NUMPY_OUT = $RPDE_SHIP_NUMPY_OUT/" Track_2/submit/submission.py
 [ -n "${RPDE_SHIP_D1C_N0:-}" ] && sed -i "s/^D1C_N0 = [^ ]*/D1C_N0 = $RPDE_SHIP_D1C_N0/" Track_2/submit/submission.py
+[ -n "${RPDE_SHIP_SIGPOW:-}" ] && sed -i "s|^SIGPOW = None |SIGPOW = $RPDE_SHIP_SIGPOW |" Track_2/submit/submission.py
 [ -n "${RPDE_SHIP_SIGEMA:-}" ] && sed -i "s/^SIGEMA = [^ ]*/SIGEMA = $RPDE_SHIP_SIGEMA/" Track_2/submit/submission.py
 [ -n "${RPDE_SHIP_SIGEMA_BETA:-}" ] && sed -i "s/^SIGEMA_BETA = .*/SIGEMA_BETA = $RPDE_SHIP_SIGEMA_BETA/" Track_2/submit/submission.py
 [ -n "${RPDE_SHIP_SIGEMA_N0:-}" ] && sed -i "s/^SIGEMA_N0 = .*/SIGEMA_N0 = $RPDE_SHIP_SIGEMA_N0/" Track_2/submit/submission.py
 [ -n "${RPDE_SHIP_SIGEMA_DDOF:-}" ] && sed -i "s/^SIGEMA_DDOF = [0-9]*/SIGEMA_DDOF = $RPDE_SHIP_SIGEMA_DDOF/" Track_2/submit/submission.py
+[ -n "${RPDE_SHIP_D1C_EB:-}" ] && sed -i "s/^D1C_EB = [^ ]*/D1C_EB = $RPDE_SHIP_D1C_EB/" Track_2/submit/submission.py
+[ -n "${RPDE_SHIP_D1C_EB_N0:-}" ] && sed -i "s/^D1C_EB_N0 = [^ ]*/D1C_EB_N0 = $RPDE_SHIP_D1C_EB_N0/" Track_2/submit/submission.py
+[ -n "${RPDE_SHIP_D1C_LEAD_N0:-}" ] && sed -i "s/^D1C_LEAD_N0 = [^ ]*/D1C_LEAD_N0 = $RPDE_SHIP_D1C_LEAD_N0/" Track_2/submit/submission.py
+[ -n "${RPDE_SHIP_VC_N0:-}" ] && sed -i "s/^VC_N0 = [^ ]*/VC_N0 = $RPDE_SHIP_VC_N0/" Track_2/submit/submission.py
+[ -n "${RPDE_SHIP_FW_N0:-}" ] && sed -i "s/^FW_N0 = [^ ]*/FW_N0 = $RPDE_SHIP_FW_N0/" Track_2/submit/submission.py
 [ -n "${RPDE_SHIP_SMALL_GRAPH:-}" ] && sed -i "s/^SMALL_GRAPH = .*/SMALL_GRAPH = $RPDE_SHIP_SMALL_GRAPH/" Track_1/submit_fno/submission.py
 [ -n "${RPDE_SHIP_SMALL_N:-}" ] && sed -i "s/^SMALL_N = [0-9]*/SMALL_N = $RPDE_SHIP_SMALL_N/" Track_1/submit_fno/submission.py   # keeps the trailing comment
 [ -n "${RPDE_SHIP_SMALL_GRAPH_LAZY:-}" ] && sed -i "s/^SMALL_GRAPH_LAZY = .*/SMALL_GRAPH_LAZY = $RPDE_SHIP_SMALL_GRAPH_LAZY/" Track_1/submit_fno/submission.py
+[ -n "${RPDE_SHIP_PIN_OUT:-}" ] && sed -i "s/^PIN_OUT = [0-9]*/PIN_OUT = $RPDE_SHIP_PIN_OUT/" Track_1/submit_fno/submission.py
+[ -n "${RPDE_SHIP_BATCH_CAP:-}" ] && sed -i "s/^BATCH_CAP = [0-9]*/BATCH_CAP = $RPDE_SHIP_BATCH_CAP/" Track_1/submit_fno/submission.py
+[ -n "${RPDE_SHIP_ARENA_STEPS:-}" ] && sed -i "s/^ARENA_STEPS = [0-9]*/ARENA_STEPS = $RPDE_SHIP_ARENA_STEPS/" Track_2/submit/submission.py
+[ -n "${RPDE_SHIP_LN_MANUAL:-}" ] && sed -i "s/^LN_MANUAL = .*/LN_MANUAL = $RPDE_SHIP_LN_MANUAL/" Track_1/submit_fno/submission.py
 [ -n "${RPDE_SHIP_WARM_TAILS:-}" ] && sed -i "s/^WARM_TAILS = .*/WARM_TAILS = $RPDE_SHIP_WARM_TAILS/" Track_1/submit_fno/submission.py
 [ -n "${RPDE_SHIP_DIRECT_PRED:-}" ] && sed -i "s/^D2_DIRECT_PRED = .*/D2_DIRECT_PRED = $RPDE_SHIP_DIRECT_PRED/" Track_1/submit_fno/_fno.py
+# RPDE_SHIP_JOINT_GAIN=True (K2 09-27): one compose gain per pixel for both channels, all three compose sites (_fno.py + both
+# submission.py). Requires a centre0 band (CENTRE_ALPHA 0; asserted at load). Unset = files untouched.
+if [ -n "${RPDE_SHIP_JOINT_GAIN:-}" ]; then
+  sed -i "s/^JOINT_GAIN = .*/JOINT_GAIN = $RPDE_SHIP_JOINT_GAIN/" Track_1/submit_fno/_fno.py Track_1/submit_fno/submission.py Track_2/submit/submission.py
+  grep -H "^JOINT_GAIN = " Track_1/submit_fno/_fno.py Track_1/submit_fno/submission.py Track_2/submit/submission.py
+fi
 [ -n "${RPDE_SHIP_GPU_FP:-}" ] && sed -i "s/^GPU_FP = .*/GPU_FP = $RPDE_SHIP_GPU_FP/" Track_1/submit_fno/submission.py
 # RPDE_SHIP_EBAND='<python literal>' (09-27 T1 arm): the EBAND constant, e.g. from band_feats.py --const <predictor.npz>; replaced by
 # python (the literal carries quotes and commas), and read back to check it parses to (beta 2x6, mode, clip).
@@ -222,7 +242,9 @@ fi
 
 echo "=== 4/5  Track 2: build + strict gate ==================================="
 $PY Track_2/build_t2.py --band Track_2/submit/band8.npz $FP16 --ckpt $A
-$PY Track_2/validate_t2.py --zip Track_2/submission_t2.zip
+# RPDE_T2_ADAPTIVE=1: the package carries per-trajectory state (R1, D1c, VARCAL), so re-running windows out of order cannot
+# be bit-identical; gate it as an adaptive package. Its causality is asserted separately (stream_eval.py --causal-check).
+$PY Track_2/validate_t2.py ${RPDE_T2_ADAPTIVE:+--adaptive} --zip Track_2/submission_t2.zip
 
 echo "=== 5/5  stage for upload =============================================="
 mkdir -p "$SUB"

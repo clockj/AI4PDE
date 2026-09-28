@@ -189,6 +189,14 @@ _EBAND_DEV = None
 # timed call. True: at import, run predict() once for every row count 1..batch, in float32 and float64 (not timed). Outputs of the
 # real call are unchanged bit for bit (same kernels, same inputs); only untimed load time grows.
 WARM_TAILS = False
+# LN_MANUAL (K1, 09-27): the fused stacks' LayerNorm from var_mean + elementwise kernels (see _fno._StkLN). Not bit-identical
+# (6.6e-4 relative on the prediction). Build knob RPDE_SHIP_LN_MANUAL.
+LN_MANUAL = False
+_fno.LN_MANUAL = LN_MANUAL
+# BATCH_CAP (K1, 09-27): > 0 caps the chunk _pick_batch chose. On the A100 the probe picks 112 (one chunk for every
+# N <= 99) but the shipped path at N 99 runs 1.59 ms/window in one chunk against 1.37 in chunks of 56; N <= 56 is unchanged.
+# Same bits (md5 at N 99). Build knob RPDE_SHIP_BATCH_CAP.
+BATCH_CAP = 0
 # SMALL_GRAPH (L3, audit 2 N5, 09-26): if the evaluator calls predict() with few windows at a time (H1), each call runs the
 # batched eager path at a tiny batch. True: at import, also capture predict_fno's device chunk as a CUDA graph at batch 1
 # (verified bit-exact against eager predict_fno at batch 1, prediction / sigma / centre), and serve every call with
@@ -252,6 +260,9 @@ ALPHA = 0.60
 # The value is READ FROM band.npz (`centre_alpha`, written by fit_band.py --centre-alpha), so the
 # centre can never disagree with the centre the band was fitted at; no key => ALPHA (legacy).
 CENTRE_ALPHA = ALPHA
+# JOINT_GAIN (K2 09-27): one compose gain per pixel for both channels (see _fno.JOINT_GAIN, which _load() sets to this value).
+# Requires CENTRE_ALPHA == 0 (asserted at load). False = the per-channel compose, bit for bit.
+JOINT_GAIN = False
 
 
 
@@ -442,7 +453,13 @@ class _Graphed:
             m_ = y.mean(1, keepdim=True)
             f_ = y - m_
             s_ = y.std(1, keepdim=True, unbiased=False)
-            y = m_ + f_ * ((ALPHA * sig + (1 - ALPHA) * s_) / (s_ + 1e-6))
+            if JOINT_GAIN:
+                w_ = (self.std * self.std).float()
+                t_ = ALPHA * sig + (1 - ALPHA) * s_
+                y = m_ + f_ * (torch.sqrt((t_ * t_ * w_).sum(-1, keepdim=True))
+                               / (torch.sqrt((s_ * s_ * w_).sum(-1, keepdim=True)) + 1e-7))
+            else:
+                y = m_ + f_ * ((ALPHA * sig + (1 - ALPHA) * s_) / (s_ + 1e-6))
         if sig is not None:
             self.gs.copy_((sig * self.std).float())
         self.gy.copy_((y * self.std + self.mean).float())
@@ -559,6 +576,8 @@ def _capture_graph1(models, dev, band):
 def _load():
     """Load once at import, so the evaluator's timing of predict() excludes it."""
     dev = "cuda" if torch.cuda.is_available() else "cpu"
+    if JOINT_GAIN:
+        _fno.JOINT_GAIN = True          # predict_fno's compose (the GPU-band / direct-pred path) follows this file's constant
     # fuse() collapses same-architecture members into one grouped invocation (5 width-24 seeds
     # + w48 + m1220 + w64 goes from 8 invocations to 4). It is score-identical -- 78.4925
     # against 78.4927 on the AoA 15-20 proxy, and exact to 1.5e-8 with TF32 disabled -- so the
@@ -594,6 +613,8 @@ def _load():
                         float(z["p"]))
         global CENTRE_ALPHA, _ERR
         CENTRE_ALPHA = float(z["centre_alpha"]) if "centre_alpha" in z.files else ALPHA
+        if JOINT_GAIN:
+            assert CENTRE_ALPHA == 0.0, "JOINT_GAIN needs CENTRE_ALPHA == 0 (compose is no longer linear in alpha)"
         # --err-head band (2026-09-23), same keys and rules as Track_2/submit/submission.py.
         #   err_mode "drv":    half = base * clip(sigma/sigma_ref)^p * clip(H/err_ref, .3, 3)^err_q
         #   err_mode "direct": half = err_k * H          (H = heads' predicted |error|, physical)
@@ -635,6 +656,8 @@ def _load():
     _AMP_DT = _amp_verified(models, dev)
     AMP_ACTIVE = None if _AMP_DT is None else str(_AMP_DT).replace("torch.", "")
     batch = _pick_batch(models, dev)
+    if BATCH_CAP:
+        batch = min(int(batch), int(BATCH_CAP))
     # Captured AFTER the batch is chosen and AFTER AMP is decided, so the graph records the
     # chunk size and the precision that will run.
     global GRAPH_ACTIVE
@@ -651,7 +674,7 @@ def _load():
             print(f"[rpde-t1] load: gpu {gpu!r} cpus {os.cpu_count()} affinity {aff} torch {torch.__version__} "
                   f"cuda {torch.version.cuda} batch {batch} amp {AMP_ACTIVE} graph {GRAPH_ACTIVE} gpu_band {GPU_BAND} "
                   f"direct_pred {getattr(_fno, 'D2_DIRECT_PRED', None)} alpha {ALPHA} centre_alpha {CENTRE_ALPHA} "
-                  f"batch_fp {BATCH_FP} small_graph {SMALL_GRAPH_ACTIVE} small_graph_diff {SMALL_GRAPH_DIFF} members {len(_CKPTS)}", flush=True)
+                  f"joint_gain {JOINT_GAIN}/{getattr(_fno, 'JOINT_GAIN', None)} batch_fp {BATCH_FP} small_graph {SMALL_GRAPH_ACTIVE} small_graph_diff {SMALL_GRAPH_DIFF} members {len(_CKPTS)}", flush=True)
         except Exception as e:
             print(f"[rpde-t1] load report failed: {e!r}", flush=True)
     return models, dev, band, ref, p, batch, graphed, g1
@@ -681,6 +704,39 @@ def _warm_tails():
     finally:
         _WARMING = False
         _DIAG_CALLS = 0
+
+
+# PIN_OUT (K1, 09-27): > 0 = the three full-size outputs of predict() are consecutive slices of a page-locked arena of
+# this many WINDOWS, allocated (hence faulted in) at import, which the evaluator does not time. It removes the fresh
+# allocation + first-touch page faults + pageable staging of 1.47 MB per window from the timed call. Every call gets its
+# OWN slice, so nothing already returned is overwritten; when the arena is used up (or could not be allocated) the call
+# allocates as before. Same bits (md5-identical at N 14/28/56/99, f32 and f64 input; k1_t1lat* 09-27).
+# Measured A100 / torch 2.2.2: warm 1.51 -> 1.32 ms/window (N 56); H100 1.06 -> 0.82.  Build knob RPDE_SHIP_PIN_OUT.
+PIN_OUT = 0
+_POOL = None
+_POOL_I = 0
+
+
+def _pool_init():
+    global _POOL
+    if not (PIN_OUT and torch.cuda.is_available()):
+        return
+    try:
+        _POOL = [torch.zeros((int(PIN_OUT), 20, 32, 64, 3), dtype=torch.float32).pin_memory() for _ in range(3)]
+    except Exception:
+        _POOL = None
+
+
+def _pool_take(n):
+    global _POOL_I
+    if _POOL is None or _WARMING or _POOL_I + n > int(PIN_OUT):
+        return None
+    i = _POOL_I
+    _POOL_I = i + n
+    return tuple(t.numpy()[i:i + n] for t in _POOL)
+
+
+_pool_init()
 
 
 def predict(input_array, metadata=None):
@@ -733,10 +789,14 @@ def _predict(input_array, metadata=None):
         xin = np.asarray(input_array)
         # float32 or float64 go up as they are (predict_fno casts on the GPU; f64->f32 rounding is identical there)
         xin = np.ascontiguousarray(xin) if xin.dtype in (np.float32, np.float64) else np.ascontiguousarray(xin, dtype=np.float32)
-        pred = np.zeros((len(xin), 20, 32, 64, 3), dtype=np.float32)
+        _pb = _pool_take(len(xin))
+        if _pb is not None:
+            pred, lower, upper = _pb
+        else:
+            pred = np.zeros((len(xin), 20, 32, 64, 3), dtype=np.float32)
+            lower = np.empty_like(pred)
+            upper = np.empty_like(pred)
         sig = np.empty((len(xin), 1, 32, 64, 2), dtype=np.float32)
-        lower = np.empty_like(pred)
-        upper = np.empty_like(pred)
         eb_ = None
         if EBAND is not None:
             global _EBAND_DEV

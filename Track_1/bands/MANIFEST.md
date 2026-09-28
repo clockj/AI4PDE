@@ -225,3 +225,30 @@ in both and never scored — on the two channels SPS actually reads it is 100 %.
 (`fcec17b2…`, inside `20260922/track1_*.zip`). Same gap, recorded by @Devi's zip hashes. It is a
 **dev-board** band by its own README's rule and must not propagate to the finals, but that is a
 reason to label it, not a reason to leave it unarchived.
+
+## 2026-09-25 … 09-27: the bands of the final packages
+
+| band file | md5 (12) | rounds that shipped it | ids |
+|---|---|---|---|
+| `r38_a080_c0_fill.npz` | `0cb37d8250ef` | R35, R36, **T2R22, T2R23** | 945431, 947197, 945432, 947196 |
+| `k27_sigblend_lam0.5.npz` | `e8309d9f01b7` | **R37, T2R24** — the packages of record | not reported |
+
+**`r38_a080_c0_fill.npz`** is the static band of recipe A: `fit_band.py --ckpt <the six all-data members>
+--err-ckpt <the five held-out twins> --alpha 0.80 --band-p 0.45 --centre-alpha 0 --fill-unscored --inflate 1.39`.
+The copy here is the one rebuilt on Ascend on 09-27 (job 7566633, `experiments/sprint_20260927/f_sprint/notes/baseline_ref.md`),
+which reproduced the 09-25 package's scores exactly; the agent team's own file stayed on their server.
+
+**`k27_sigblend_lam0.5.npz`** is its SIGBLEND transform (`Track_1/sigblend/make_k0_band.py`, λ 0.5, inflate 1.29, 16 σ-bins):
+
+```
+base' = base^(1-λ) · κ_{t,c}^λ        p' = (1-λ) · 0.45 = 0.225        sigma_ref unchanged
+half  = base' · clip(sigma_head / sigma_ref, 0.3, 3.0)^p' · (sigma_head + 1e-8)^(λ q_c),   q = (0.4847, 0.4907)
+```
+
+**It must ship with its two literals** (`Track_1/sigblend/band_k0_sigblend_lam0.5.json`): Track 1 applies the σ-power
+factor through `EBAND`, Track 2 through `SIGPOW`. Without the factor the band is about 3× too wide.
+`Track_1/submit_fno/build_final.sh` reads all three together. κ and q were fitted on the eight `val_unseen`
+trajectories; the evidence for them is the leave-one-trajectory-out read that script prints, never the in-sample one.
+
+**Not in this directory:** the bands of R31 – R34 and T2R18 – T2R21 (r35 is `r35_centre0_fill.npz`; r37's widened band and
+the two QD bands stayed on the agent team's server). None of them is on the path to the packages of record.

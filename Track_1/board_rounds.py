@@ -204,6 +204,19 @@ ROUNDS = [
     #   THE SIM LEVER IS SMALL ON THE BOARD AND LARGE OUT OF DISTRIBUTION: +0.02 here against +1.12 mean
     #   at a held-out AoA (plan §11.4). It is shipped for the private set, not for this number.
     ("R30 p2ffnoL8sim fill/2inv", "2026-09-20", 0, 94.878882, 78.883397, 94.261277, 91.959093, 42.263813, 81.418569),
+    # 09-21 .. 09-24 (R31 r35 centre0, R32 r37, R33 f4v1a060, R34 QD) were uploaded from the agent team's server and
+    # only their `final` was recorded -- they are in FINAL_ONLY below and take no part in the fit.
+    # R35 = package r38 "A": r34's members, ALPHA 0.60 -> 0.80, band centred on the alpha-0 field (centre0), static
+    # band refit at 0.80. Archive `track1_r38_samecode.zip` (61f05353). `final` was reported to four decimals.
+    ("R35 r38-A a80 centre0/2inv", "2026-09-25", 945431, 94.762531, 79.589142, 94.261277, 91.877333, 43.063080, 81.6224),
+    # R36 = "D": R35's prediction on the D2 host path plus the batch fingerprint (the evaluator calls predict() with
+    # 14..99 windows). Errors unchanged to 2e-3; `time` 5.70 -> 6.32 board ms is the whole -0.040.
+    ("R36 r38-D n1e a80/2inv", "2026-09-26", 947197, 94.760687, 79.589142, 94.261919, 91.479685, 43.060241, 81.582555),
+    # R37 = THE TRACK-1 PACKAGE OF RECORD, `track1_k27fin_a080.zip` (438cd3ff), built by build_final.sh. R35's members
+    # with JOINT_GAIN (rel +0.014), the SIGBLEND band through EBAND (sps +0.093 = containment) and the latency knobs
+    # WARM_TAILS / PIN_OUT 128 / BATCH_CAP 56 (time +0.203 over R35, 5.70 -> 5.39 board ms). tke and mvpe are
+    # BIT-IDENTICAL to R35, as JOINT_GAIN promises. Registered 81.67 [81.58, 81.79]; every subscore inside its bracket.
+    ("R37 k27fin a80 sigblend/2inv", "2026-09-27", 0, 94.776302, 79.589142, 94.261277, 92.080105, 43.155698, 81.671149),
 ]
 
 UNSCORED = []   # every round on both tracks now has full subscores
@@ -394,6 +407,32 @@ ROUNDS_T2 = [
     #   R30 saw. **Every row except tke has the same sign across the two boards**; tke is +0.0255 here
     #   against -0.0693 on Track 1, the one place the two boards disagree on this package.
     ("T2R17 p2ffnoL8sim fill/2inv", "2026-09-20", 0, 94.885309, 78.806628, 94.131921, 91.313614, 42.241165, 81.333776),
+    # 09-21 .. 09-24 (T2R18 r35, T2R19 its byte-identical resubmission, T2R20 f4v1a060, T2R21 QD): FINAL_ONLY below.
+    # T2R22 = r38 "A" + R1, the first ADAPTIVE package: per-pixel online band calibration from revealed targets.
+    # Archive `track2_r38_r1.zip` (0249944e). Board dC +0.0070 against R35's containment, above its registered bracket.
+    ("T2R22 r38-A+R1 a80/2inv", "2026-09-25", 945432, 94.770908, 79.515595, 94.131921, 91.758300, 43.556207, 81.71555),
+    # T2R23 = the same at ALPHA 0.90 with the graph-fallback fingerprint. `time` +0.58 (5.88 -> 5.02 board ms) carries
+    # the row; alpha 0.80 -> 0.90 is a net -0.032 on the accuracy rows, so the final packages went back to 0.80.
+    ("T2R23 r38+R1 a90/2inv", "2026-09-26", 947196, 94.704404, 79.608687, 94.131921, 92.339265, 43.516808, 81.739553),
+    # T2R24 = THE TRACK-2 PACKAGE OF RECORD, `T2_MRGP2_track2_MRGP2.zip` (1aa2896f), built by build_final.sh: asymmetric
+    # R1 + TSM + BLK, D1c with the empirical-Bayes shrink and the lead-time profile, VARCAL, SIGPOW band, JOINT_GAIN,
+    # ARENA. +0.340 over T2R22 and +0.390 without `time`: rel +0.100, tke +1.150, mvpe +0.263, sps +0.826.
+    # Registered 82.000 [81.885, 82.219]: inside, by two misses that cancel -- tke +0.62 ABOVE its bracket and `time`
+    # -0.68 below (6.71 board ms, the slowest Track-2 draw on record). The board moved like the held-out-AoA reads,
+    # not like the in-distribution one (implied board-likeness ~0.6-0.8 against the registered 0.5).
+    ("T2R24 MRGP2 stream stack a80/2inv", "2026-09-27", 0, 94.871355, 80.665340, 94.394560, 91.243742, 44.381923, 82.055553),
+]
+
+# Rounds whose five subscores were never recorded: (label, date, track, final or None). Not in the fit.
+FINAL_ONLY = [
+    ("R31 r35 centre0 a60", "2026-09-21", 1, 81.596074),
+    ("T2R18 r35 centre0 a60", "2026-09-21", 2, 81.499485),
+    ("R32 r37 inflate 1.55", "2026-09-22", 1, 81.538194),
+    ("T2R19 r35 resubmitted", "2026-09-22", 2, None),
+    ("R33 f4v1a060 (one ViT dropped)", "2026-09-23", 1, 81.5600),
+    ("T2R20 f4v1a060", "2026-09-23", 2, 81.4940),
+    ("R34 QD error-head band a80", "2026-09-24", 1, 81.5766),
+    ("T2R21 QD, two CUDA streams", "2026-09-24", 2, 81.6177),
 ]
 
 # The fit pools both tracks -- see the module docstring.  ROUNDS first, then ROUNDS_T2;
