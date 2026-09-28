@@ -6,7 +6,10 @@ like a small accuracy loss and be blamed on the model.  This runs BOTH on the sa
 prints the max absolute disagreement in physical units, for the prediction and for both SPS
 bounds.
 
-    python verify_space.py --submission submit_ho --traj 3750_0 16500_5
+    python verify_space.py --submission <extracted Track-2 package> --t1 <extracted Track-1 package> --traj 3750_0 16500_5
+
+It compares FROZEN packages: a Track-2 package that adapts (R1, D1c, VARCAL) differs from Track 1 by design after the
+first window of a trajectory.
 """
 from __future__ import annotations
 
@@ -34,7 +37,7 @@ def load(path, name):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--submission", default="submit_ho")
+    ap.add_argument("--submission", required=True, help="an extracted Track-2 package directory")
     ap.add_argument("--t1", default=str(HERE.parent / "Track_1" / "submit_fno"))
     ap.add_argument("--traj", nargs="+", default=["3750_0"])
     a = ap.parse_args()

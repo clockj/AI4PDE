@@ -23,6 +23,9 @@ export PY=${PY:-$_PY}
 export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1          # torch >= 2.6 refuses our checkpoints (numpy in the blob) without it
 OUT=${1:?"usage: build_final.sh OUTDIR   (the uploads live in ../sub_candidates/final; build somewhere else)"}
 mkdir -p "$OUT"
+for v in Track_1/val_seen.npz Track_1/val_unseen.npz; do
+  [ -f "$v" ] || { echo "MISSING $v -- the gates score on it. Build it first: ( cd Track_1 && \$PY make_val.py --data <train_real> )"; exit 1; }
+done
 TAG=${RPDE_TAG:-final_a080}
 U=${RPDE_U:-Track_1/unet}
 A="${RPDE_A:-$U/ffno_all_w40l8_sim_s1.pth $U/ffno_all_w40l8_sim_s2.pth $U/ffno_all_w40l8_sim_s3.pth $U/ffno_all_w40l8_sim_s4.pth $U/arch_vit_all_s1.pth $U/arch_vit_all_cmb3sim_s3.pth}"

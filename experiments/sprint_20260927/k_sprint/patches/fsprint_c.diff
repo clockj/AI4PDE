@@ -1,0 +1,142 @@
+diff --git a/Track_1/submit_fno/build_round13.sh b/Track_1/submit_fno/build_round13.sh
+index 9e557a6..0ea06fd 100755
+--- a/Track_1/submit_fno/build_round13.sh
++++ b/Track_1/submit_fno/build_round13.sh
+@@ -133,6 +133,8 @@ sed -i "s/^BLEND_BETA = .*/BLEND_BETA = $BETA/" Track_1/submit_fno/submission.py
+ [ -n "${RPDE_SHIP_SIGEMA_BETA:-}" ] && sed -i "s/^SIGEMA_BETA = .*/SIGEMA_BETA = $RPDE_SHIP_SIGEMA_BETA/" Track_2/submit/submission.py
+ [ -n "${RPDE_SHIP_SIGEMA_N0:-}" ] && sed -i "s/^SIGEMA_N0 = .*/SIGEMA_N0 = $RPDE_SHIP_SIGEMA_N0/" Track_2/submit/submission.py
+ [ -n "${RPDE_SHIP_SIGEMA_DDOF:-}" ] && sed -i "s/^SIGEMA_DDOF = [0-9]*/SIGEMA_DDOF = $RPDE_SHIP_SIGEMA_DDOF/" Track_2/submit/submission.py
++[ -n "${RPDE_SHIP_VC_N0:-}" ] && sed -i "s/^VC_N0 = [^ ]*/VC_N0 = $RPDE_SHIP_VC_N0/" Track_2/submit/submission.py
++[ -n "${RPDE_SHIP_FW_N0:-}" ] && sed -i "s/^FW_N0 = [^ ]*/FW_N0 = $RPDE_SHIP_FW_N0/" Track_2/submit/submission.py
+ [ -n "${RPDE_SHIP_SMALL_GRAPH:-}" ] && sed -i "s/^SMALL_GRAPH = .*/SMALL_GRAPH = $RPDE_SHIP_SMALL_GRAPH/" Track_1/submit_fno/submission.py
+ [ -n "${RPDE_SHIP_SMALL_N:-}" ] && sed -i "s/^SMALL_N = [0-9]*/SMALL_N = $RPDE_SHIP_SMALL_N/" Track_1/submit_fno/submission.py   # keeps the trailing comment
+ [ -n "${RPDE_SHIP_SMALL_GRAPH_LAZY:-}" ] && sed -i "s/^SMALL_GRAPH_LAZY = .*/SMALL_GRAPH_LAZY = $RPDE_SHIP_SMALL_GRAPH_LAZY/" Track_1/submit_fno/submission.py
+diff --git a/Track_2/submit/submission.py b/Track_2/submit/submission.py
+index a131be9..626ace5 100644
+--- a/Track_2/submit/submission.py
++++ b/Track_2/submit/submission.py
+@@ -197,6 +197,15 @@ SIGEMA = False             # sigma_EMA (owner michael 09-27 13:35Z; Jonas step-1
+ SIGEMA_BETA = 0.8
+ SIGEMA_N0 = 3.0
+ SIGEMA_DDOF = 0            # 0 = population variance over the 20 frames (as s_ in the compose); 1 = unbiased (x 20/19)
++VC_N0 = 0.0                # VARCAL (design C, 09-27): > 0 = on with this N0. Causal per-pixel/channel calibration of the composed fluctuation
++                           # AMPLITUDE from this trajectory's revealed windows: g = box3(sum var_t(y)) / box3(sum vpred), both sums over PAST windows
++                           # (model space; vpred = (ALPHA*sigma_head + (1-ALPHA)*s_)^2 of that window, uncalibrated), clipped to VC_CLIP, shrunk to 1 by
++                           # n/(n+VC_N0); the compose target std is multiplied by sqrt(g). Band, centre and sigma_head untouched. Needs R1. 0.0 = off.
++VC_CLIP = (0.25, 4.0)
++FW_N0 = 0.0                # FAMW (design C, 09-27; the team's "family weights", per-pixel online mixing): > 0 = on with this N0. Needs exactly two
++                           # fused groups A (first) and B (second). w = weight of B; w0 = n_B / n_members. Per pixel/channel, over PAST windows:
++                           # w_ols = box3(sum_t d*(y - yA)) / box3(sum_t d*d), d = yB - yA (model space), clipped to [0, 1], shrunk to w0 by n/(n+FW_N0).
++                           # The ensemble mean becomes yA + w*(yB - yA) BEFORE compose, so D1c accumulates the residual AFTER it. Needs R1. 0.0 = off.
+ R1_UNSCORED_TOL = 1e-6                                      # |yn - z_c| below this = an unscored (physical 0) element
+ R1_FP32 = True             # True: width term + running sum in float32 (Ramesh 09-25: gains identical to 3 decimals, ~half the
+                            # memory traffic and V100 fp32 rate); False: float64, bit-matching his numpy reference
+@@ -402,6 +411,27 @@ class FrozenEnsemble:
+             self.vn = torch.zeros((), dtype=torch.float64, device=device)
+             self.gEma = torch.zeros((1, 1, H, W, 2), dtype=torch.float32, device=device)
+             self.gWt = torch.zeros((), dtype=torch.float32, device=device)
++        # VARCAL state: cT / cP = running sums of revealed target variance and of the matching windows' uncalibrated composed variance,
++        # cn = revealed windows, gVp = the last window's uncalibrated composed variance (written in the graph), gG = this window's std gain.
++        self.vc = bool(VC_N0) and self.r1 is not None and ALPHA > 0
++        if self.vc:
++            self.cT = torch.zeros((H, W, 2), dtype=torch.float64, device=device)
++            self.cP = torch.zeros((H, W, 2), dtype=torch.float64, device=device)
++            self.cn = torch.zeros((), dtype=torch.float64, device=device)
++            self.gVp = torch.zeros((1, 1, H, W, 2), dtype=torch.float32, device=device)
++            self.gG = torch.ones((1, 1, H, W, 2), dtype=torch.float32, device=device)
++        # FAMW state: fA / fB = running sums of d*d and d*(y - yA); fn = revealed windows; gYA / gYB = the last window's family means
++        # (model space, written in the graph); gW = this window's weight of family B.
++        self.fw = bool(FW_N0) and self.r1 is not None and len(models) == 2
++        if self.fw:
++            nA, nB = (getattr(m, "n_members", 1) for m in models)
++            self.fw0 = float(nB) / float(nA + nB)
++            self.fA = torch.zeros((H, W, 2), dtype=torch.float64, device=device)
++            self.fB = torch.zeros((H, W, 2), dtype=torch.float64, device=device)
++            self.fn = torch.zeros((), dtype=torch.float64, device=device)
++            self.gYA = torch.zeros((1, T_OUT, H, W, 2), dtype=torch.float32, device=device)
++            self.gYB = torch.zeros((1, T_OUT, H, W, 2), dtype=torch.float32, device=device)
++            self.gW = torch.full((1, 1, H, W, 2), self.fw0, dtype=torch.float32, device=device)
+         self._streams =([torch.cuda.Stream() for _ in models]
+                          if cuda and PAR_STREAMS and len(models) > 1 else None)
+         self.graph = None
+@@ -463,6 +493,23 @@ class FrozenEnsemble:
+             self.vn.add_(self.gflag)
+             self.gEma.copy_(self.vS / torch.clamp(self.vW, min=1e-12))
+             self.gWt.copy_(self.vn / (self.vn + SIGEMA_N0))
++        if self.vc:
++            # PREVIOUS window: revealed target variance against that window's uncalibrated composed variance (gVp not yet overwritten).
++            self.cT.add_(self.gyp[..., :2].var(1, unbiased=False)[0].double() * self.gflag)
++            self.cP.add_(self.gVp[0, 0].double() * self.gflag)
++            self.cn.add_(self.gflag)
++            g = torch.clamp(_r1_box3(self.cT) / torch.clamp(_r1_box3(self.cP), min=1e-12), VC_CLIP[0], VC_CLIP[1])
++            g = 1.0 + (g - 1.0) * (self.cn / (self.cn + VC_N0))          # n = 0 -> exactly 1.0
++            self.gG.copy_(torch.sqrt(g).to(torch.float32)[None, None])
++        if self.fw:
++            # PREVIOUS window's family means (gYA / gYB not yet overwritten) against the target revealed this step.
++            d_ = (self.gYB - self.gYA).double()
++            self.fA.add_((d_ * d_).sum(1)[0] * self.gflag)
++            self.fB.add_((d_ * (self.gyp[..., :2].double() - self.gYA.double())).sum(1)[0] * self.gflag)
++            self.fn.add_(self.gflag)
++            w_ = torch.clamp(_r1_box3(self.fB) / torch.clamp(_r1_box3(self.fA), min=1e-12), 0.0, 1.0)
++            w_ = self.fw0 + (w_ - self.fw0) * (self.fn / (self.fn + FW_N0))   # n = 0 -> exactly w0
++            self.gW.copy_(torch.clamp(w_, 0.0, 1.0).to(torch.float32)[None, None])
+         pv =self.gx[..., :2].permute(0, 1, 4, 2, 3).reshape(1, CH, H, W).contiguous()
+         y = sig = er = None
+         total = etot = 0
+@@ -501,6 +548,12 @@ class FrozenEnsemble:
+             sig = None if sig is None else sig / total
+         if er is not None and etot > 1:
+             er = er / etot
++        if self.fw:
++            # FAMW: per-pixel causal family mix replaces the uniform member mean (sigma stays the uniform mean of the heads).
++            yA = outs[0][0] / getattr(self.models[0], "n_members", 1)
++            yB = outs[1][0] / getattr(self.models[1], "n_members", 1)
++            self.gYA.copy_(yA); self.gYB.copy_(yB)
++            y = yA + self.gW * (yB - yA)
+         y0 = y                            # pre-compose mean: the interval centre's anchor
+         if sig is not None and ALPHA > 0:
+             m_ = y.mean(1, keepdim=True)
+@@ -508,7 +561,11 @@ class FrozenEnsemble:
+             sa = sig
+             if self.sigema:                  # ALPHA's sigma only; the band below still reads sigma_head
+                 sa = torch.where(self.gWt > 0, torch.sqrt(self.gWt * self.gEma + (1.0 - self.gWt) * sig * sig), sig)   # n = 0: sigma_head exactly
+-            y = m_ + (y - m_) * ((ALPHA * sa + (1 - ALPHA) * s_) / (s_ + 1e-6))
++            if self.vc:
++                self.gVp.copy_((ALPHA * sig + (1 - ALPHA) * s_) ** 2)       # uncalibrated composed variance of THIS window (read next step)
++                y = m_ + (y - m_) * (((ALPHA * sa + (1 - ALPHA) * s_) * self.gG) / (s_ + 1e-6))
++            else:
++                y = m_ + (y - m_) * ((ALPHA * sa + (1 - ALPHA) * s_) / (s_ + 1e-6))
+         if HIST_BETA:
+             # Unconditional tensor arithmetic: ggate is 0 for an in-range window, so this is
+             # an identity there and no branch is needed inside the graph.
+@@ -601,6 +658,7 @@ class FrozenEnsemble:
+                 self.dsum.zero_(); self.dn.zero_(); self.gD.zero_()
+             if self.sigema:
+                 self.vS.zero_(); self.vW.zero_(); self.vn.zero_(); self.gEma.zero_(); self.gWt.zero_()
++            self._reset_c()
+         except Exception as e:
+             global GRAPH_ERR
+             GRAPH_ERR = repr(e)[:300]
+@@ -627,6 +685,13 @@ class FrozenEnsemble:
+             self.dsum.zero_(); self.dn.zero_(); self.gD.zero_()
+         if self.sigema:
+             self.vS.zero_(); self.vW.zero_(); self.vn.zero_(); self.gEma.zero_(); self.gWt.zero_()
++        self._reset_c()
++
++    def _reset_c(self) -> None:          # VARCAL / FAMW per-trajectory state (design C); no-op when both are off
++        if self.vc:
++            self.cT.zero_(); self.cP.zero_(); self.cn.zero_(); self.gG.fill_(1.0)
++        if self.fw:
++            self.fA.zero_(); self.fB.zero_(); self.fn.zero_(); self.gW.fill_(self.fw0)
+ 
+     @torch.no_grad()
+     def ttt_step(self, input_norm, prev_target_norm=None) -> Tuple[Any, Dict[str, Any]]:
+@@ -794,7 +859,7 @@ def get_ttt_model(submission_dir: str, device: str):
+             aff = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None
+             gpu = torch.cuda.get_device_name(0) if dev.startswith("cuda") else "cpu"
+             print(f"[rpde-t2] load: gpu {gpu!r} cpus {os.cpu_count()} affinity {aff} torch {torch.__version__} "
+-                  f"cuda {torch.version.cuda} amp {AMP_ACTIVE} par_streams {PAR_STREAMS} r1 {R1} r1_asym {R1_ASYM} d1c_n0 {D1C_N0} sigema {SIGEMA} b {SIGEMA_BETA} n0 {SIGEMA_N0} alpha {ALPHA} "
++                  f"cuda {torch.version.cuda} amp {AMP_ACTIVE} par_streams {PAR_STREAMS} r1 {R1} r1_asym {R1_ASYM} d1c_n0 {D1C_N0} vc_n0 {VC_N0} fw_n0 {FW_N0} sigema {SIGEMA} b {SIGEMA_BETA} n0 {SIGEMA_N0} alpha {ALPHA} "
+                   f"graph {'CAPTURED' if m.graph is not None else 'NONE'} graph_worst {GRAPH_WORST} graph_tol {GRAPH_TOL} "
+                   f"graph_err {GRAPH_ERR} fallback_fp {FALLBACK_FP} stacked_out {STACKED_OUT} numpy_out {NUMPY_OUT} members {len(ckpts)}", flush=True)
+         except Exception as e:

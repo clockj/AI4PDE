@@ -1,0 +1,25 @@
+def B(**k):
+    d = dict(mode="d1c", n0=30.0); d.update(k); return dict(bias=d)
+ARMS2 = {
+    "EBpix": B(mode="eb", eb_n0=2.0),
+    "EBG": B(mode="ebg"),
+    "EBG_s3": B(mode="ebg", smooth=3),
+    "EBG_s5": B(mode="ebg", smooth=5),
+    "EBG_kse2": B(mode="ebg", kse=2.0),
+    "EBG_cap8": B(mode="ebg", eb_cap=0.8),
+    "EBG_ebn2": B(mode="ebg", eb_n0=2.0),
+    "EBR9": B(mode="ebr", kr=9),
+    "EBR9_s3": B(mode="ebr", kr=9, smooth=3),
+    "EBR17_s3": B(mode="ebr", kr=17, smooth=3),
+    "D1c30_s3": B(smooth=3),
+    "D1c10_s3": B(n0=10.0, smooth=3),
+    "D1c10_s5": B(n0=10.0, smooth=5),
+    "D1c3_s5": B(n0=3.0, smooth=5),
+    "D1c30+rank1": B(lead="rank1", n0l=5.0),
+    "D1c30+lin30": B(lead="lin", n0l=30.0),
+    "D1c30+full30": B(lead="full", n0l=30.0),
+    "D1c10+lin10": B(n0=10.0, lead="lin", n0l=10.0),
+    "EBG+lin30": B(mode="ebg", lead="lin", n0l=30.0),
+    "EBG+rank1": B(mode="ebg", lead="rank1", n0l=5.0),
+    "gain30": B(gain=30.0),
+}

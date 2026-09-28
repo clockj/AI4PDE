@@ -12,7 +12,7 @@ instrument, a gate, the package code or any job script; the verdicts are in
 through `HERE`. Each one therefore carries a five-line block after its docstring that puts the
 **parent of `closed/`** on `sys.path`, and every `os.path.dirname(os.path.abspath(__file__))` in
 the file gained one `dirname`, so `HERE` still resolves to `Track_1/`. Nothing else changed.
-All 51 files compile and load from here; the 45 with `argparse` were checked with `--help`, and
+All 51 files of the 09-19 move compile and load from here; the 45 with `argparse` were checked with `--help`, and
 the six without (`tke_ceiling.py`, `verify_scoring_20260829.py`, `mvpe_fix_20260829.py`,
 `diag_history.py`, `divergence.py`, `eval_all.py`) were checked by executing their module body.
 `tke_ceiling.py` and `eval_all.py` still fail at run time for a reason that predates the move:
@@ -94,3 +94,14 @@ no longer exists.
 **A note on stale references.** `submit_fno/build_round11.sh` mentions `band_cv_v9.py` and
 `gain_v9.py`, and `unet/run_ctx.sh` mentions `diag_analog.py`, but only in comments — no shell
 script in the repo and no job script on scratch invokes anything in this directory.
+
+## Moved here on 2026-09-27
+
+| file | the question | verdict |
+|---|---|---|
+| `exchange_v9.py` | what is an across-the-board accuracy gain worth in each subscore? | frozen as the exchange rate in `../../EVALUATION.md` §2 (rel +0.346, tke +0.290, mvpe +0.100 per 10 % of error) |
+| `eval_wp.py`, `eval_pair.py`, `calib_sigma.py` | the scorers of the U-Net era (kit v7) | superseded by `../eval_v9.py` and `../sps9.py`; they stop at import because the v7 kit is gone |
+| `dinov2_init.py` | does a DINOv2-S initialisation help the ViT? | no gain (L8 +0.28 sps, L12 −0.12), and outside pretrained weights are now **prohibited** |
+| `distill_labels.py`, `distill_pipeline.sh` | can one student replace the six-member ensemble? | no: the mean transfers, the variance does not (K1 81.779 against the teacher's 82.320). `train2.py --teacher` is the training side and stays in place |
+
+The five Python files carry the same path shim as the rest of this directory.

@@ -1,0 +1,61 @@
+diff --git a/Track_1/submit_fno/build_round13.sh b/Track_1/submit_fno/build_round13.sh
+index 9e557a6..35111f4 100755
+--- a/Track_1/submit_fno/build_round13.sh
++++ b/Track_1/submit_fno/build_round13.sh
+@@ -129,6 +129,7 @@ sed -i "s/^BLEND_BETA = .*/BLEND_BETA = $BETA/" Track_1/submit_fno/submission.py
+ [ -n "${RPDE_SHIP_R1_ASYM:-}" ] && sed -i "s/^R1_ASYM = .*/R1_ASYM = $RPDE_SHIP_R1_ASYM/" Track_2/submit/submission.py
+ [ -n "${RPDE_SHIP_NUMPY_OUT:-}" ] && sed -i "s/^NUMPY_OUT = .*/NUMPY_OUT = $RPDE_SHIP_NUMPY_OUT/" Track_2/submit/submission.py
+ [ -n "${RPDE_SHIP_D1C_N0:-}" ] && sed -i "s/^D1C_N0 = [^ ]*/D1C_N0 = $RPDE_SHIP_D1C_N0/" Track_2/submit/submission.py
++[ -n "${RPDE_SHIP_SIGPOW:-}" ] && sed -i "s|^SIGPOW = None |SIGPOW = $RPDE_SHIP_SIGPOW |" Track_2/submit/submission.py
+ [ -n "${RPDE_SHIP_SIGEMA:-}" ] && sed -i "s/^SIGEMA = [^ ]*/SIGEMA = $RPDE_SHIP_SIGEMA/" Track_2/submit/submission.py
+ [ -n "${RPDE_SHIP_SIGEMA_BETA:-}" ] && sed -i "s/^SIGEMA_BETA = .*/SIGEMA_BETA = $RPDE_SHIP_SIGEMA_BETA/" Track_2/submit/submission.py
+ [ -n "${RPDE_SHIP_SIGEMA_N0:-}" ] && sed -i "s/^SIGEMA_N0 = .*/SIGEMA_N0 = $RPDE_SHIP_SIGEMA_N0/" Track_2/submit/submission.py
+diff --git a/Track_2/submit/submission.py b/Track_2/submit/submission.py
+index a131be9..176971d 100644
+--- a/Track_2/submit/submission.py
++++ b/Track_2/submit/submission.py
+@@ -196,6 +196,10 @@ SIGEMA = False             # sigma_EMA (owner michael 09-27 13:35Z; Jonas step-1
+                            # windows. Only ALPHA's sigma changes (the band keeps sigma_head). Needs R1 (its revealed-target plumbing). False = off.
+ SIGEMA_BETA = 0.8
+ SIGEMA_N0 = 3.0
++SIGPOW = None              # SIGBLEND band (K-sprint design_0, 09-27): None = off, bit-identical. A tuple (q_u, q_v): the static band is
++                           # multiplied by (sigma_phys + 1e-8) ** q_c per channel (sigma_phys = sig * std, the heads' PHYSICAL sigma, float32),
++                           # AFTER base * clip(sigma/sigma_ref)^p and BEFORE the R1 gains; the band npz carries base' and p'. Static/drv band
++                           # only: refuses with the err-head band.
+ SIGEMA_DDOF = 0            # 0 = population variance over the 20 frames (as s_ in the compose); 1 = unbiased (x 20/19)
+ R1_UNSCORED_TOL = 1e-6                                      # |yn - z_c| below this = an unscored (physical 0) element
+ R1_FP32 = True             # True: width term + running sum in float32 (Ramesh 09-25: gains identical to 3 decimals, ~half the
+@@ -350,6 +354,13 @@ class FrozenEnsemble:
+         # err_floor (absent => None => the 09-24 direct band exactly): half = max(k*H, err_floor*base).
+         self.floor = (self.half0 * float(_ERR["floor"])
+                       if _ERR is not None and _ERR.get("floor") and self.half0 is not None else None)
++        self.sigpow = None
++        if SIGPOW is not None:
++            if _ERR is not None:
++                raise RuntimeError("SIGPOW is not supported together with the err-head band (_ERR); refusing")
++            if self.half0 is None:
++                raise RuntimeError("SIGPOW needs a band (band.npz); refusing")
++            self.sigpow = torch.tensor([float(SIGPOW[0]), float(SIGPOW[1])], dtype=torch.float32, device=device)
+         self.Ad = torch.from_numpy(_A).to(device)
+         self.Bd = torch.from_numpy(_B).to(device)
+ 
+@@ -531,6 +542,10 @@ class FrozenEnsemble:
+         else:
+             if self.band_p and self.sref is not None and sig is not None:
+                 half = half * torch.clamp((sig * self.std) / self.sref, 0.3, 3.0) ** self.band_p
++            if self.sigpow is not None:
++                if sig is None:
++                    raise RuntimeError("SIGPOW needs the sigma head (sig is None); refusing")
++                half = half * ((sig * self.std).float() + 1e-8) ** self.sigpow
+             if self.err is not None and er is not None and self.eref is not None and self.err["q"]:
+                 half = half * torch.clamp((er * self.std) / self.eref, 0.3, 3.0) ** self.err["q"]
+         half_hi = None
+@@ -794,7 +809,7 @@ def get_ttt_model(submission_dir: str, device: str):
+             aff = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None
+             gpu = torch.cuda.get_device_name(0) if dev.startswith("cuda") else "cpu"
+             print(f"[rpde-t2] load: gpu {gpu!r} cpus {os.cpu_count()} affinity {aff} torch {torch.__version__} "
+-                  f"cuda {torch.version.cuda} amp {AMP_ACTIVE} par_streams {PAR_STREAMS} r1 {R1} r1_asym {R1_ASYM} d1c_n0 {D1C_N0} sigema {SIGEMA} b {SIGEMA_BETA} n0 {SIGEMA_N0} alpha {ALPHA} "
++                  f"cuda {torch.version.cuda} amp {AMP_ACTIVE} par_streams {PAR_STREAMS} r1 {R1} r1_asym {R1_ASYM} d1c_n0 {D1C_N0} sigpow {SIGPOW} sigema {SIGEMA} b {SIGEMA_BETA} n0 {SIGEMA_N0} alpha {ALPHA} "
+                   f"graph {'CAPTURED' if m.graph is not None else 'NONE'} graph_worst {GRAPH_WORST} graph_tol {GRAPH_TOL} "
+                   f"graph_err {GRAPH_ERR} fallback_fp {FALLBACK_FP} stacked_out {STACKED_OUT} numpy_out {NUMPY_OUT} members {len(ckpts)}", flush=True)
+         except Exception as e:

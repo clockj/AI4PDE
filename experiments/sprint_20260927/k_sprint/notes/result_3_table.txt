@@ -1,0 +1,103 @@
+# paired reference: baseline
+## baseline   (complete=True)  /fs/scratch/PAS1187/qwu/tmp/realpde/trick0927/logs/rp_k273_cr_baseline_7566871.log
+  ens_v9 twins AoA15-20 f=1.29       rel 0.1009 tke 0.4404 mvpe 0.0880 sps 40.28 final 80.242
+  ens_v9 twins AoA15-20 f=1.39       rel 0.1009 tke 0.4404 mvpe 0.0880 sps 38.53 final 79.427
+  ens_v9 twins full f=1.29           rel 0.0750 tke 0.4546 mvpe 0.0658 sps 46.66 final 82.614
+  ens_v9 twins full f=1.39           rel 0.0750 tke 0.4546 mvpe 0.0658 sps 44.99 final 81.873
+  stream twin static all             rel 96.383 tke 81.480 mvpe 96.815 sps 53.984 cov 0.92
+  stream twin static aoa15-20        rel 95.197 tke 81.947 mvpe 95.784 sps 47.860 cov 0.877
+  stream twin asym all               rel 96.383 tke 81.480 mvpe 96.815 sps 55.594 cov 0.905
+  stream twin asym aoa15-20          rel 95.197 tke 81.947 mvpe 95.784 sps 48.481 cov 0.862
+  stream twin asym_d1c all           rel 96.403 tke 81.480 mvpe 96.869 sps 55.646 cov 0.905
+  stream twin asym_d1c aoa15-20      rel 95.206 tke 81.947 mvpe 95.813 sps 48.484 cov 0.862
+## ctl_f   (complete=True)  /fs/scratch/PAS1187/qwu/tmp/realpde/trick0927/logs/rp_k273_cr_ctl_f_7567368.log
+  ens_v9 twins AoA15-20 f=1.29       rel 0.1009 tke 0.4409 mvpe 0.0881 sps 40.28 final 80.240 | d rel +0.00% tke +0.11% mvpe +0.11% sps +0.00 final -0.002
+  ens_v9 twins AoA15-20 f=1.39       rel 0.1009 tke 0.4409 mvpe 0.0881 sps 38.53 final 79.424 | d rel +0.00% tke +0.11% mvpe +0.11% sps +0.00 final -0.003
+  ens_v9 twins full f=1.29           rel 0.0750 tke 0.4550 mvpe 0.0658 sps 46.66 final 82.614 | d rel +0.00% tke +0.09% mvpe +0.00% sps +0.00 final +0.000
+  ens_v9 twins full f=1.39           rel 0.0750 tke 0.4550 mvpe 0.0658 sps 45.00 final 81.873 | d rel +0.00% tke +0.09% mvpe +0.00% sps +0.01 final +0.000
+  stream twin static all             rel 96.383 tke 81.470 mvpe 96.813 sps 53.994 cov 0.92 | d rel +0.000 tke -0.010 mvpe -0.002 sps +0.010 d_fin_nt +0.0013
+  stream twin static aoa15-20        rel 95.195 tke 81.934 mvpe 95.779 sps 47.861 cov 0.876 | d rel -0.002 tke -0.013 mvpe -0.005 sps +0.001 d_fin_nt -0.0025
+  stream twin asym all               rel 96.383 tke 81.470 mvpe 96.813 sps 55.593 cov 0.905 | d rel +0.000 tke -0.010 mvpe -0.002 sps -0.001 d_fin_nt -0.0014
+  stream twin asym aoa15-20          rel 95.195 tke 81.934 mvpe 95.779 sps 48.474 cov 0.861 | d rel -0.002 tke -0.013 mvpe -0.005 sps -0.007 d_fin_nt -0.0045
+  stream twin asym_d1c all           rel 96.404 tke 81.470 mvpe 96.868 sps 55.645 cov 0.905 | d rel +0.001 tke -0.010 mvpe -0.001 sps -0.001 d_fin_nt -0.0009
+  stream twin asym_d1c aoa15-20      rel 95.204 tke 81.934 mvpe 95.809 sps 48.475 cov 0.861 | d rel -0.002 tke -0.013 mvpe -0.004 sps -0.009 d_fin_nt -0.0049
+  per-trajectory static d_fin_nt: 3750_0:+0.014  26700_0:-0.006  16500_5:+0.003  6300_10:+0.005  13950_10:+0.001  21600_15:-0.003  8850_20:+0.001  11400_20:-0.005
+  sign counts d_fin_nt>0: AoA15-20 1/3  all 5/8;  rel>0: 0/3, 3/8;  sps>0: 1/3, 5/8
+## hib_f   (complete=True)  /fs/scratch/PAS1187/qwu/tmp/realpde/trick0927/logs/rp_k273_cr_hib_f_7567369.log
+  ens_v9 twins AoA15-20 f=1.29       rel 0.1009 tke 0.4408 mvpe 0.0882 sps 40.29 final 80.244 | d rel +0.00% tke +0.09% mvpe +0.23% sps +0.01 final +0.002
+  ens_v9 twins AoA15-20 f=1.39       rel 0.1009 tke 0.4408 mvpe 0.0882 sps 38.55 final 79.428 | d rel +0.00% tke +0.09% mvpe +0.23% sps +0.02 final +0.001
+  ens_v9 twins full f=1.29           rel 0.0751 tke 0.4544 mvpe 0.0658 sps 46.64 final 82.610 | d rel +0.13% tke -0.04% mvpe +0.00% sps -0.02 final -0.004
+  ens_v9 twins full f=1.39           rel 0.0751 tke 0.4544 mvpe 0.0658 sps 44.98 final 81.869 | d rel +0.13% tke -0.04% mvpe +0.00% sps -0.01 final -0.004
+  stream twin static all             rel 96.382 tke 81.484 mvpe 96.813 sps 54.003 cov 0.919 | d rel -0.001 tke +0.004 mvpe -0.002 sps +0.019 d_fin_nt +0.0045
+  stream twin static aoa15-20        rel 95.196 tke 81.936 mvpe 95.778 sps 47.889 cov 0.875 | d rel -0.001 tke -0.011 mvpe -0.006 sps +0.029 d_fin_nt +0.0051
+  stream twin asym all               rel 96.382 tke 81.484 mvpe 96.813 sps 55.586 cov 0.904 | d rel -0.001 tke +0.004 mvpe -0.002 sps -0.008 d_fin_nt -0.0023
+  stream twin asym aoa15-20          rel 95.196 tke 81.936 mvpe 95.778 sps 48.494 cov 0.861 | d rel -0.001 tke -0.011 mvpe -0.006 sps +0.013 d_fin_nt +0.0011
+  stream twin asym_d1c all           rel 96.402 tke 81.484 mvpe 96.868 sps 55.640 cov 0.905 | d rel -0.001 tke +0.004 mvpe -0.001 sps -0.006 d_fin_nt -0.0017
+  stream twin asym_d1c aoa15-20      rel 95.205 tke 81.936 mvpe 95.810 sps 48.496 cov 0.861 | d rel -0.001 tke -0.011 mvpe -0.003 sps +0.012 d_fin_nt +0.0011
+  per-trajectory static d_fin_nt: 3750_0:-0.008  26700_0:+0.010  16500_5:+0.008  6300_10:+0.018  13950_10:-0.011  21600_15:+0.012  8850_20:+0.007  11400_20:-0.003
+  sign counts d_fin_nt>0: AoA15-20 2/3  all 5/8;  rel>0: 2/3, 4/8;  sps>0: 3/3, 6/8
+## hio_f_sub2   (complete=True)  /fs/scratch/PAS1187/qwu/tmp/realpde/trick0927/logs/rp_k273_cr_hio_f_sub2_7567370.log
+  ens_v9 twins AoA15-20 f=1.29       rel 0.1010 tke 0.4415 mvpe 0.0884 sps 40.28 final 80.235 | d rel +0.10% tke +0.25% mvpe +0.45% sps +0.00 final -0.007
+  ens_v9 twins AoA15-20 f=1.39       rel 0.1010 tke 0.4415 mvpe 0.0884 sps 38.54 final 79.419 | d rel +0.10% tke +0.25% mvpe +0.45% sps +0.01 final -0.008
+  ens_v9 twins full f=1.29           rel 0.0773 tke 0.4540 mvpe 0.0683 sps 45.67 final 82.295 | d rel +3.07% tke -0.13% mvpe +3.80% sps -0.99 final -0.319
+  ens_v9 twins full f=1.39           rel 0.0773 tke 0.4540 mvpe 0.0683 sps 43.99 final 81.544 | d rel +3.07% tke -0.13% mvpe +3.80% sps -1.00 final -0.329
+  stream twin static all             rel 96.280 tke 81.493 mvpe 96.698 sps 53.323 cov 0.916 | d rel -0.103 tke +0.013 mvpe -0.117 sps -0.661 d_fin_nt -0.2238
+  stream twin static aoa15-20        rel 95.193 tke 81.912 mvpe 95.768 sps 47.885 cov 0.875 | d rel -0.004 tke -0.035 mvpe -0.016 sps +0.025 d_fin_nt -0.0007
+  stream twin asym all               rel 96.280 tke 81.493 mvpe 96.698 sps 55.168 cov 0.905 | d rel -0.103 tke +0.013 mvpe -0.117 sps -0.426 d_fin_nt -0.1651
+  stream twin asym aoa15-20          rel 95.193 tke 81.912 mvpe 95.768 sps 48.491 cov 0.861 | d rel -0.004 tke -0.035 mvpe -0.016 sps +0.010 d_fin_nt -0.0044
+  stream twin asym_d1c all           rel 96.327 tke 81.493 mvpe 96.811 sps 55.336 cov 0.905 | d rel -0.076 tke +0.013 mvpe -0.058 sps -0.310 d_fin_nt -0.1178
+  stream twin asym_d1c aoa15-20      rel 95.203 tke 81.912 mvpe 95.806 sps 48.495 cov 0.861 | d rel -0.003 tke -0.035 mvpe -0.007 sps +0.011 d_fin_nt -0.0029
+  per-trajectory static d_fin_nt: 3750_0:-0.349  26700_0:-0.635  16500_5:-0.536  6300_10:-0.071  13950_10:-0.242  21600_15:+0.003  8850_20:+0.004  11400_20:-0.008
+  sign counts d_fin_nt>0: AoA15-20 2/3  all 2/8;  rel>0: 2/3, 2/8;  sps>0: 3/3, 3/8
+## hio2_f   (complete=True)  /fs/scratch/PAS1187/qwu/tmp/realpde/trick0927/logs/rp_k273_cr_hio2_f_7567378.log
+  ens_v9 twins AoA15-20 f=1.29       rel 0.1011 tke 0.4425 mvpe 0.0886 sps 40.26 final 80.224 | d rel +0.20% tke +0.48% mvpe +0.68% sps -0.02 final -0.018
+  ens_v9 twins AoA15-20 f=1.39       rel 0.1011 tke 0.4425 mvpe 0.0886 sps 38.52 final 79.408 | d rel +0.20% tke +0.48% mvpe +0.68% sps -0.01 final -0.019
+  ens_v9 twins full f=1.29           rel 0.0785 tke 0.4592 mvpe 0.0707 sps 45.20 final 82.108 | d rel +4.67% tke +1.01% mvpe +7.45% sps -1.46 final -0.506
+  ens_v9 twins full f=1.39           rel 0.0785 tke 0.4592 mvpe 0.0707 sps 43.51 final 81.353 | d rel +4.67% tke +1.01% mvpe +7.45% sps -1.48 final -0.520
+  stream twin static all             rel 96.223 tke 81.327 mvpe 96.586 sps 52.968 cov 0.914 | d rel -0.160 tke -0.153 mvpe -0.229 sps -1.016 d_fin_nt -0.3668
+  stream twin static aoa15-20        rel 95.189 tke 81.883 mvpe 95.757 sps 47.870 cov 0.873 | d rel -0.008 tke -0.064 mvpe -0.027 sps +0.010 d_fin_nt -0.0103
+  stream twin asym all               rel 96.223 tke 81.327 mvpe 96.586 sps 54.860 cov 0.904 | d rel -0.160 tke -0.153 mvpe -0.229 sps -0.734 d_fin_nt -0.2963
+  stream twin asym aoa15-20          rel 95.189 tke 81.883 mvpe 95.757 sps 48.466 cov 0.86 | d rel -0.008 tke -0.064 mvpe -0.027 sps -0.015 d_fin_nt -0.0165
+  stream twin asym_d1c all           rel 96.286 tke 81.327 mvpe 96.751 sps 55.102 cov 0.905 | d rel -0.117 tke -0.153 mvpe -0.118 sps -0.544 d_fin_nt -0.2181
+  stream twin asym_d1c aoa15-20      rel 95.200 tke 81.883 mvpe 95.797 sps 48.472 cov 0.86 | d rel -0.006 tke -0.064 mvpe -0.016 sps -0.012 d_fin_nt -0.0138
+  per-trajectory static d_fin_nt: 3750_0:-0.549  26700_0:-1.099  16500_5:-0.873  6300_10:-0.097  13950_10:-0.346  21600_15:-0.011  8850_20:-0.004  11400_20:-0.015
+  sign counts d_fin_nt>0: AoA15-20 0/3  all 0/8;  rel>0: 0/3, 0/8;  sps>0: 2/3, 2/8
+## ctl_fv   (complete=True)  /fs/scratch/PAS1187/qwu/tmp/realpde/trick0927/logs/rp_k273_cr_ctl_fv_7567379.log
+  ens_v9 twins AoA15-20 f=1.29       rel 0.1010 tke 0.4412 mvpe 0.0881 sps 40.27 final 80.235 | d rel +0.10% tke +0.18% mvpe +0.11% sps -0.01 final -0.007
+  ens_v9 twins AoA15-20 f=1.39       rel 0.1010 tke 0.4412 mvpe 0.0881 sps 38.52 final 79.419 | d rel +0.10% tke +0.18% mvpe +0.11% sps -0.01 final -0.008
+  ens_v9 twins full f=1.29           rel 0.0751 tke 0.4552 mvpe 0.0658 sps 46.66 final 82.611 | d rel +0.13% tke +0.13% mvpe +0.00% sps +0.00 final -0.003
+  ens_v9 twins full f=1.39           rel 0.0751 tke 0.4552 mvpe 0.0658 sps 44.99 final 81.870 | d rel +0.13% tke +0.13% mvpe +0.00% sps +0.00 final -0.003
+  stream twin static all             rel 96.381 tke 81.464 mvpe 96.814 sps 53.993 cov 0.92 | d rel -0.002 tke -0.016 mvpe -0.001 sps +0.009 d_fin_nt -0.0004
+  stream twin static aoa15-20        rel 95.194 tke 81.929 mvpe 95.780 sps 47.862 cov 0.876 | d rel -0.003 tke -0.018 mvpe -0.004 sps +0.002 d_fin_nt -0.0031
+  stream twin asym all               rel 96.381 tke 81.464 mvpe 96.814 sps 55.589 cov 0.905 | d rel -0.002 tke -0.016 mvpe -0.001 sps -0.005 d_fin_nt -0.0039
+  stream twin asym aoa15-20          rel 95.194 tke 81.929 mvpe 95.780 sps 48.468 cov 0.861 | d rel -0.003 tke -0.018 mvpe -0.004 sps -0.013 d_fin_nt -0.0069
+  stream twin asym_d1c all           rel 96.402 tke 81.464 mvpe 96.868 sps 55.641 cov 0.905 | d rel -0.001 tke -0.016 mvpe -0.001 sps -0.005 d_fin_nt -0.0034
+  stream twin asym_d1c aoa15-20      rel 95.202 tke 81.929 mvpe 95.809 sps 48.470 cov 0.861 | d rel -0.004 tke -0.018 mvpe -0.004 sps -0.014 d_fin_nt -0.0076
+  per-trajectory static d_fin_nt: 3750_0:+0.013  26700_0:-0.013  16500_5:-0.000  6300_10:+0.005  13950_10:+0.006  21600_15:-0.001  8850_20:-0.003  11400_20:-0.005
+  sign counts d_fin_nt>0: AoA15-20 0/3  all 3/8;  rel>0: 0/3, 0/8;  sps>0: 1/3, 5/8
+## hib_fv   (complete=True)  /fs/scratch/PAS1187/qwu/tmp/realpde/trick0927/logs/rp_k273_cr_hib_fv_7567380.log
+  ens_v9 twins AoA15-20 f=1.29       rel 0.1009 tke 0.4411 mvpe 0.0881 sps 40.29 final 80.242 | d rel +0.00% tke +0.16% mvpe +0.11% sps +0.01 final +0.000
+  ens_v9 twins AoA15-20 f=1.39       rel 0.1009 tke 0.4411 mvpe 0.0881 sps 38.55 final 79.427 | d rel +0.00% tke +0.16% mvpe +0.11% sps +0.02 final +0.000
+  ens_v9 twins full f=1.29           rel 0.0751 tke 0.4547 mvpe 0.0657 sps 46.64 final 82.609 | d rel +0.13% tke +0.02% mvpe -0.15% sps -0.02 final -0.005
+  ens_v9 twins full f=1.39           rel 0.0751 tke 0.4547 mvpe 0.0657 sps 44.97 final 81.867 | d rel +0.13% tke +0.02% mvpe -0.15% sps -0.02 final -0.006
+  stream twin static all             rel 96.381 tke 81.476 mvpe 96.818 sps 54.037 cov 0.918 | d rel -0.002 tke -0.004 mvpe +0.003 sps +0.053 d_fin_nt +0.0122
+  stream twin static aoa15-20        rel 95.198 tke 81.930 mvpe 95.781 sps 47.916 cov 0.874 | d rel +0.001 tke -0.017 mvpe -0.003 sps +0.056 d_fin_nt +0.0125
+  stream twin asym all               rel 96.381 tke 81.476 mvpe 96.818 sps 55.586 cov 0.904 | d rel -0.002 tke -0.004 mvpe +0.003 sps -0.008 d_fin_nt -0.0031
+  stream twin asym aoa15-20          rel 95.198 tke 81.930 mvpe 95.781 sps 48.504 cov 0.861 | d rel +0.001 tke -0.017 mvpe -0.003 sps +0.023 d_fin_nt +0.0042
+  stream twin asym_d1c all           rel 96.402 tke 81.476 mvpe 96.872 sps 55.635 cov 0.904 | d rel -0.001 tke -0.004 mvpe +0.003 sps -0.011 d_fin_nt -0.0034
+  stream twin asym_d1c aoa15-20      rel 95.207 tke 81.930 mvpe 95.815 sps 48.502 cov 0.861 | d rel +0.001 tke -0.017 mvpe +0.002 sps +0.018 d_fin_nt +0.0034
+  per-trajectory static d_fin_nt: 3750_0:-0.008  26700_0:+0.006  16500_5:+0.018  6300_10:+0.025  13950_10:+0.015  21600_15:+0.020  8850_20:+0.014  11400_20:+0.005
+  sign counts d_fin_nt>0: AoA15-20 3/3  all 7/8;  rel>0: 2/3, 3/8;  sps>0: 3/3, 7/8
+## hio_fv_sub2   (complete=True)  /fs/scratch/PAS1187/qwu/tmp/realpde/trick0927/logs/rp_k273_cr_hio_fv_sub2_7567381.log
+  ens_v9 twins AoA15-20 f=1.29       rel 0.1010 tke 0.4421 mvpe 0.0883 sps 40.26 final 80.229 | d rel +0.10% tke +0.39% mvpe +0.34% sps -0.02 final -0.013
+  ens_v9 twins AoA15-20 f=1.39       rel 0.1010 tke 0.4421 mvpe 0.0883 sps 38.53 final 79.415 | d rel +0.10% tke +0.39% mvpe +0.34% sps +0.00 final -0.012
+  ens_v9 twins full f=1.29           rel 0.0789 tke 0.4581 mvpe 0.0709 sps 44.82 final 82.007 | d rel +5.20% tke +0.77% mvpe +7.75% sps -1.84 final -0.607
+  ens_v9 twins full f=1.39           rel 0.0789 tke 0.4581 mvpe 0.0709 sps 43.13 final 81.248 | d rel +5.20% tke +0.77% mvpe +7.75% sps -1.86 final -0.625
+  stream twin static all             rel 96.206 tke 81.358 mvpe 96.575 sps 52.761 cov 0.909 | d rel -0.177 tke -0.122 mvpe -0.240 sps -1.223 d_fin_nt -0.4245
+  stream twin static aoa15-20        rel 95.194 tke 81.899 mvpe 95.774 sps 47.912 cov 0.872 | d rel -0.003 tke -0.048 mvpe -0.010 sps +0.052 d_fin_nt +0.0058
+  stream twin asym all               rel 96.206 tke 81.358 mvpe 96.575 sps 54.715 cov 0.903 | d rel -0.177 tke -0.122 mvpe -0.240 sps -0.879 d_fin_nt -0.3386
+  stream twin asym aoa15-20          rel 95.194 tke 81.899 mvpe 95.774 sps 48.497 cov 0.86 | d rel -0.003 tke -0.048 mvpe -0.010 sps +0.016 d_fin_nt -0.0032
+  stream twin asym_d1c all           rel 96.277 tke 81.358 mvpe 96.752 sps 55.024 cov 0.905 | d rel -0.126 tke -0.122 mvpe -0.117 sps -0.622 d_fin_nt -0.2387
+  stream twin asym_d1c aoa15-20      rel 95.205 tke 81.899 mvpe 95.816 sps 48.502 cov 0.86 | d rel -0.001 tke -0.048 mvpe +0.003 sps +0.018 d_fin_nt -0.0006
+  per-trajectory static d_fin_nt: 3750_0:-0.590  26700_0:-1.282  16500_5:-0.986  6300_10:-0.179  13950_10:-0.455  21600_15:+0.005  8850_20:+0.012  11400_20:+0.002
+  sign counts d_fin_nt>0: AoA15-20 3/3  all 3/8;  rel>0: 1/3, 1/8;  sps>0: 3/3, 3/8
