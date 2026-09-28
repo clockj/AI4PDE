@@ -64,6 +64,22 @@ else
 fi
 for c in $A $M; do [ -f "$c" ] || { echo "MISSING $c"; exit 1; }; done
 
+# Knobs REMOVED from the two submission.py on 2026-09-28 (never in a package of record, set by no reproduce.sh recipe).
+# Setting one of their RPDE_SHIP_* variables to anything but its old default used to bake it; now there is nothing to bake,
+# and a silent no-op would ship a package that is not the one asked for -- so refuse, before anything is built.
+_gone() {   # _gone VAR accepted-default-spellings...
+  local var=$1 val=${!1:-}; shift
+  [ -z "$val" ] && return 0
+  for d in "$@"; do [ "$val" = "$d" ] && return 0; done
+  echo "REFUSING: $var=$val -- that knob was removed on 2026-09-28; the last tree that has it is commit fdac00b"; exit 1
+}
+_gone RPDE_SHIP_GRAPH False;              _gone RPDE_SHIP_GRAPH_FP 1e-4 0.0001
+_gone RPDE_SHIP_SMALL_GRAPH False;        _gone RPDE_SHIP_SMALL_GRAPH_LAZY False;   _gone RPDE_SHIP_SMALL_N 4
+_gone RPDE_SHIP_BATCH_FP "(0.0, 0.0)" "(0, 0)";  _gone RPDE_SHIP_GPU_FP False;     _gone RPDE_SHIP_LN_MANUAL False
+_gone RPDE_SHIP_STACKED_OUT False;        _gone RPDE_SHIP_FALLBACK_FP 0.0 0
+_gone RPDE_SHIP_SIGEMA False;             _gone RPDE_SHIP_SIGEMA_BETA 0.8;          _gone RPDE_SHIP_SIGEMA_N0 3.0
+_gone RPDE_SHIP_SIGEMA_DDOF 0
+
 echo "=== 1/5  band for ALPHA=$ALPHA ============================================"
 # RPDE_BAND=<path> REUSES an existing band instead of refitting.  A refit is not reproducible
 # to the bit (it re-runs the models over the fitting split), and a PURE-LATENCY A/B needs the
@@ -103,30 +119,21 @@ sed -i "s/^FUSE = .*/FUSE = ${RPDE_FUSE:-True}/" Track_1/submit_fno/submission.p
 # literal, so pass the quotes: RPDE_SHIP_AMP='"fp16"'. A job that sets it restores `AMP = None`.
 sed -i "s/^AMP = .*/AMP = ${RPDE_SHIP_AMP:-None}/" Track_1/submit_fno/submission.py Track_2/submit/submission.py
 grep -H "^AMP = " Track_1/submit_fno/submission.py Track_2/submit/submission.py
-# GRAPH is BAKED too (round 26), and on Track 1 only: True captures predict()'s device-side chunk
-# in a CUDA graph at import, verified against eager, and scales the band by (1 + GRAPH_FP) on the
-# graph path so the board result fingerprints which path ran (`verify/graph_path.py`). Unset keeps
-# GRAPH = False, the eager path every earlier round shipped. A job that sets it restores it.
-sed -i "s/^GRAPH = .*/GRAPH = ${RPDE_SHIP_GRAPH:-False}/" Track_1/submit_fno/submission.py
-if [ -n "${RPDE_SHIP_GRAPH_FP:-}" ]; then
-  sed -i "s/^GRAPH_FP = .*/GRAPH_FP = $RPDE_SHIP_GRAPH_FP/" Track_1/submit_fno/submission.py
-fi
-grep -H "^GRAPH = \|^GRAPH_FP = " Track_1/submit_fno/submission.py
+# GRAPH (round 26, Track 1's CUDA graph of predict()) was baked here until 2026-09-28; it is gone from submission.py and
+# RPDE_SHIP_GRAPH is refused above (the graph is in `Track_1/closed/graph_path.py` and commit fdac00b).
 # The gated mean-blend lives only in Track 1's predict(): Track 2's step runs inside a captured
 # CUDA graph, where a data-dependent early-out is not expressible. It fires only for windows
 # outside the training speed range, so NOTHING LOCAL EXERCISES IT -- `verify/blend_path.py` is
 # the gate for it and the strict gate below is not.
 sed -i "s/^BLEND_BETA = .*/BLEND_BETA = $BETA/" Track_1/submit_fno/submission.py
 # Audit-2 knobs (09-25), BAKED like the rest; UNSET leaves each file untouched, so a build without them is byte-for-byte
-# the build before this block existed. RPDE_SHIP_BATCH_FP="(eps1, eps2)" Track 1 batch fingerprint (N<14, 14<=N<100);
-# RPDE_SHIP_FALLBACK_FP=<eps> Track 2 graph-fallback fingerprint; RPDE_SHIP_GRAPH_TOL=<tol> Track 2 capture tolerance (N6);
-# RPDE_SHIP_R1=True Track 2's causal band calibration (REPRODUCE §11); RPDE_SHIP_DIRECT_PRED=True D2b (_fno.py, both tracks' copy). All read on the time mean / capture only.
-[ -n "${RPDE_SHIP_BATCH_FP:-}" ] && sed -i "s/^BATCH_FP = .*/BATCH_FP = $RPDE_SHIP_BATCH_FP/" Track_1/submit_fno/submission.py
-[ -n "${RPDE_SHIP_FALLBACK_FP:-}" ] && sed -i "s/^FALLBACK_FP = .*/FALLBACK_FP = $RPDE_SHIP_FALLBACK_FP/" Track_2/submit/submission.py
+# the build before this block existed. RPDE_SHIP_GRAPH_TOL=<tol> Track 2 capture tolerance (N6);
+# RPDE_SHIP_R1=True Track 2's causal band calibration (REPRODUCE §11); RPDE_SHIP_DIRECT_PRED=True D2b (_fno.py, both tracks' copy).
+# (The BATCH_FP / FALLBACK_FP fingerprints and STACKED_OUT were removed 2026-09-28 and are refused above.)
 [ -n "${RPDE_SHIP_GRAPH_TOL:-}" ] && sed -i "s/^GRAPH_TOL = .*/GRAPH_TOL = $RPDE_SHIP_GRAPH_TOL/" Track_2/submit/submission.py
 [ -n "${RPDE_SHIP_R1:-}" ] && sed -i "s/^R1 = .*/R1 = $RPDE_SHIP_R1/" Track_2/submit/submission.py
-[ -n "${RPDE_SHIP_STACKED_OUT:-}" ] && sed -i "s/^STACKED_OUT = .*/STACKED_OUT = $RPDE_SHIP_STACKED_OUT/" Track_2/submit/submission.py
-[ -n "${RPDE_SHIP_R1_ASYM:-}" ] && sed -i "s/^R1_ASYM = .*/R1_ASYM = $RPDE_SHIP_R1_ASYM/" Track_2/submit/submission.py
+# [^ ]*, not .*, so the trailing comment survives like its neighbours' (audit m10, 2026-09-28: .* left orphan comment lines).
+[ -n "${RPDE_SHIP_R1_ASYM:-}" ] && sed -i "s/^R1_ASYM = [^ ]*/R1_ASYM = $RPDE_SHIP_R1_ASYM/" Track_2/submit/submission.py
 # design B2 (09-27): R1_TSM 3 = table smoothing; R1_BLK_N0 > 0 = lead-time-block residual (R1_BLK frames per block). Off = 1 / 0.0.
 [ -n "${RPDE_SHIP_R1_TSM:-}" ] && sed -i "s/^R1_TSM = [^ ]*/R1_TSM = $RPDE_SHIP_R1_TSM/" Track_2/submit/submission.py
 [ -n "${RPDE_SHIP_R1_BLK_N0:-}" ] && sed -i "s/^R1_BLK_N0 = [^ ]*/R1_BLK_N0 = $RPDE_SHIP_R1_BLK_N0/" Track_2/submit/submission.py
@@ -134,22 +141,22 @@ sed -i "s/^BLEND_BETA = .*/BLEND_BETA = $BETA/" Track_1/submit_fno/submission.py
 [ -n "${RPDE_SHIP_NUMPY_OUT:-}" ] && sed -i "s/^NUMPY_OUT = .*/NUMPY_OUT = $RPDE_SHIP_NUMPY_OUT/" Track_2/submit/submission.py
 [ -n "${RPDE_SHIP_D1C_N0:-}" ] && sed -i "s/^D1C_N0 = [^ ]*/D1C_N0 = $RPDE_SHIP_D1C_N0/" Track_2/submit/submission.py
 [ -n "${RPDE_SHIP_SIGPOW:-}" ] && sed -i "s|^SIGPOW = None |SIGPOW = $RPDE_SHIP_SIGPOW |" Track_2/submit/submission.py
-[ -n "${RPDE_SHIP_SIGEMA:-}" ] && sed -i "s/^SIGEMA = [^ ]*/SIGEMA = $RPDE_SHIP_SIGEMA/" Track_2/submit/submission.py
-[ -n "${RPDE_SHIP_SIGEMA_BETA:-}" ] && sed -i "s/^SIGEMA_BETA = .*/SIGEMA_BETA = $RPDE_SHIP_SIGEMA_BETA/" Track_2/submit/submission.py
-[ -n "${RPDE_SHIP_SIGEMA_N0:-}" ] && sed -i "s/^SIGEMA_N0 = .*/SIGEMA_N0 = $RPDE_SHIP_SIGEMA_N0/" Track_2/submit/submission.py
-[ -n "${RPDE_SHIP_SIGEMA_DDOF:-}" ] && sed -i "s/^SIGEMA_DDOF = [0-9]*/SIGEMA_DDOF = $RPDE_SHIP_SIGEMA_DDOF/" Track_2/submit/submission.py
 [ -n "${RPDE_SHIP_D1C_EB:-}" ] && sed -i "s/^D1C_EB = [^ ]*/D1C_EB = $RPDE_SHIP_D1C_EB/" Track_2/submit/submission.py
 [ -n "${RPDE_SHIP_D1C_EB_N0:-}" ] && sed -i "s/^D1C_EB_N0 = [^ ]*/D1C_EB_N0 = $RPDE_SHIP_D1C_EB_N0/" Track_2/submit/submission.py
 [ -n "${RPDE_SHIP_D1C_LEAD_N0:-}" ] && sed -i "s/^D1C_LEAD_N0 = [^ ]*/D1C_LEAD_N0 = $RPDE_SHIP_D1C_LEAD_N0/" Track_2/submit/submission.py
 [ -n "${RPDE_SHIP_VC_N0:-}" ] && sed -i "s/^VC_N0 = [^ ]*/VC_N0 = $RPDE_SHIP_VC_N0/" Track_2/submit/submission.py
 [ -n "${RPDE_SHIP_FW_N0:-}" ] && sed -i "s/^FW_N0 = [^ ]*/FW_N0 = $RPDE_SHIP_FW_N0/" Track_2/submit/submission.py
-[ -n "${RPDE_SHIP_SMALL_GRAPH:-}" ] && sed -i "s/^SMALL_GRAPH = .*/SMALL_GRAPH = $RPDE_SHIP_SMALL_GRAPH/" Track_1/submit_fno/submission.py
-[ -n "${RPDE_SHIP_SMALL_N:-}" ] && sed -i "s/^SMALL_N = [0-9]*/SMALL_N = $RPDE_SHIP_SMALL_N/" Track_1/submit_fno/submission.py   # keeps the trailing comment
-[ -n "${RPDE_SHIP_SMALL_GRAPH_LAZY:-}" ] && sed -i "s/^SMALL_GRAPH_LAZY = .*/SMALL_GRAPH_LAZY = $RPDE_SHIP_SMALL_GRAPH_LAZY/" Track_1/submit_fno/submission.py
+# RPDE_SHIP_PREV_SPACE=input|target (audit M1, 2026-09-28): the normalization Track 2 assumes for the REVEALED target. Unset
+# = the file's default "input", every package of record; "target" = what the official runner passes (kit t2_v6 local_eval).
+if [ -n "${RPDE_SHIP_PREV_SPACE:-}" ]; then
+  case "$RPDE_SHIP_PREV_SPACE" in input|target) ;; *) echo "REFUSING: RPDE_SHIP_PREV_SPACE=$RPDE_SHIP_PREV_SPACE (input|target)"; exit 1;; esac
+  sed -i "s/^PREV_SPACE = [^ ]*/PREV_SPACE = \"$RPDE_SHIP_PREV_SPACE\"/" Track_2/submit/submission.py
+fi
+# RPDE_SHIP_STATS_MASK=True (audit M2, 2026-09-28): D1c / VARCAL statistics over scored target elements only. Unset = False.
+[ -n "${RPDE_SHIP_STATS_MASK:-}" ] && sed -i "s/^STATS_MASK = [^ ]*/STATS_MASK = $RPDE_SHIP_STATS_MASK/" Track_2/submit/submission.py
 [ -n "${RPDE_SHIP_PIN_OUT:-}" ] && sed -i "s/^PIN_OUT = [0-9]*/PIN_OUT = $RPDE_SHIP_PIN_OUT/" Track_1/submit_fno/submission.py
 [ -n "${RPDE_SHIP_BATCH_CAP:-}" ] && sed -i "s/^BATCH_CAP = [0-9]*/BATCH_CAP = $RPDE_SHIP_BATCH_CAP/" Track_1/submit_fno/submission.py
 [ -n "${RPDE_SHIP_ARENA_STEPS:-}" ] && sed -i "s/^ARENA_STEPS = [0-9]*/ARENA_STEPS = $RPDE_SHIP_ARENA_STEPS/" Track_2/submit/submission.py
-[ -n "${RPDE_SHIP_LN_MANUAL:-}" ] && sed -i "s/^LN_MANUAL = .*/LN_MANUAL = $RPDE_SHIP_LN_MANUAL/" Track_1/submit_fno/submission.py
 [ -n "${RPDE_SHIP_WARM_TAILS:-}" ] && sed -i "s/^WARM_TAILS = .*/WARM_TAILS = $RPDE_SHIP_WARM_TAILS/" Track_1/submit_fno/submission.py
 [ -n "${RPDE_SHIP_DIRECT_PRED:-}" ] && sed -i "s/^D2_DIRECT_PRED = .*/D2_DIRECT_PRED = $RPDE_SHIP_DIRECT_PRED/" Track_1/submit_fno/_fno.py
 # RPDE_SHIP_JOINT_GAIN=True (K2 09-27): one compose gain per pixel for both channels, all three compose sites (_fno.py + both
@@ -158,7 +165,6 @@ if [ -n "${RPDE_SHIP_JOINT_GAIN:-}" ]; then
   sed -i "s/^JOINT_GAIN = .*/JOINT_GAIN = $RPDE_SHIP_JOINT_GAIN/" Track_1/submit_fno/_fno.py Track_1/submit_fno/submission.py Track_2/submit/submission.py
   grep -H "^JOINT_GAIN = " Track_1/submit_fno/_fno.py Track_1/submit_fno/submission.py Track_2/submit/submission.py
 fi
-[ -n "${RPDE_SHIP_GPU_FP:-}" ] && sed -i "s/^GPU_FP = .*/GPU_FP = $RPDE_SHIP_GPU_FP/" Track_1/submit_fno/submission.py
 # RPDE_SHIP_EBAND='<python literal>' (09-27 T1 arm): the EBAND constant, e.g. from band_feats.py --const <predictor.npz>; replaced by
 # python (the literal carries quotes and commas), and read back to check it parses to (beta 2x6, mode, clip).
 if [ -n "${RPDE_SHIP_EBAND:-}" ]; then
@@ -171,7 +177,7 @@ assert s2 != s; open(p, "w").write(s2); print("EBAND baked:", lit)
 PYEOF
 fi
 grep -H "^D2_DIRECT_PRED = " Track_1/submit_fno/_fno.py
-grep -H "^BATCH_FP = \|^DIAG = " Track_1/submit_fno/submission.py; grep -H "^FALLBACK_FP = \|^GRAPH_TOL = \|^R1 = \|^DIAG = " Track_2/submit/submission.py
+grep -H "^DIAG = " Track_1/submit_fno/submission.py; grep -H "^GRAPH_TOL = \|^R1 = \|^PREV_SPACE = \|^STATS_MASK = \|^DIAG = " Track_2/submit/submission.py
 grep -H "^ALPHA = " Track_1/submit_fno/submission.py Track_2/submit/submission.py
 grep -H "^BLEND_BETA = " Track_1/submit_fno/submission.py
 

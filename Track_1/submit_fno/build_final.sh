@@ -7,8 +7,14 @@
 #   Track 2  track2_<TAG>.zip == uploaded `T2_MRGP2_track2_MRGP2.zip` (board 82.055553)
 #
 # Members, twins and the band are inputs; nothing is fitted here. Every shipped constant is passed explicitly, because an
-# unset knob of build_round13.sh falls back to older behaviour. The archive bytes differ from the uploads (zip
-# timestamps); the FILES inside are byte-identical, which RPDE_REF_T1 / RPDE_REF_T2 check member by member.
+# unset knob of build_round13.sh falls back to older behaviour.
+#
+# RPDE_REF_T1 / RPDE_REF_T2 (the uploaded archives) turn on the identity checks:
+#   * the DATA inside the archives -- band.npz and the six members -- must be byte-identical to the upload;
+#   * the OUTPUTS must be bit-identical (Track_1/verify/final_identity.py: Track 1 at N = 14, 56, 99, 336 in one process,
+#     Track 2 over a full stream with revealed targets, under both normalisations of the revealed target).
+# The CODE files differ from the upload since 2026-09-28 (guards against non-finite values, dead knobs removed); commit
+# fdac00b is the tree that rebuilds them byte for byte (jobs 7569053, 7569179).
 #
 # build_round13.sh `sed`s constants into submission.py (both tracks) and _fno.py and leaves them there; this script
 # snapshots the three files and puts them back, so the tree is unchanged when it returns.
@@ -67,19 +73,33 @@ $PY -m zipfile -e "$OUT/track2_$TAG.zip" "$X" \
 grep -aq "CAUSALITY OK" "$LOG" || { echo "FAILED: the causality check did not pass"; RC=1; }
 rm -rf "$X"
 
-# Optional: member-by-member identity against the uploaded archives.
+# Optional: identity against the uploaded archives -- data byte for byte, outputs bit for bit.
 same() { $PY - "$1" "$2" <<'PE'
 import hashlib, sys, zipfile
 a, b = (zipfile.ZipFile(p) for p in sys.argv[1:3])
 h = lambda z: {n: hashlib.md5(z.read(n)).hexdigest() for n in sorted(z.namelist())}
 ha, hb = h(a), h(b)
 bad = [n for n in sorted(set(ha) | set(hb)) if ha.get(n) != hb.get(n)]
-print("IDENTITY", sys.argv[1], "vs", sys.argv[2], ":", "ALL %d FILES BYTE-IDENTICAL" % len(ha) if not bad else "DIFFER %s" % bad)
-sys.exit(1 if bad else 0)
+code = [n for n in bad if n.endswith(".py")]
+data = [n for n in bad if not n.endswith(".py")]
+print("IDENTITY", sys.argv[1], "vs", sys.argv[2], ":",
+      "ALL %d FILES BYTE-IDENTICAL" % len(ha) if not bad else
+      "data %s; code differs: %s" % ("BYTE-IDENTICAL" if not data else "DIFFERS %s" % data, code))
+sys.exit(1 if data else 0)
 PE
 }
 [ -n "${RPDE_REF_T1:-}" ] && { same "$OUT/track1_$TAG.zip" "$RPDE_REF_T1" || RC=1; }
 [ -n "${RPDE_REF_T2:-}" ] && { same "$OUT/track2_$TAG.zip" "$RPDE_REF_T2" || RC=1; }
+if [ -n "${RPDE_REF_T1:-}" ] && [ -n "${RPDE_REF_T2:-}" ]; then
+  I=$(mktemp -d)
+  for n in a1 b1 a2 b2; do mkdir -p "$I/$n"; done
+  $PY -m zipfile -e "$RPDE_REF_T1" "$I/a1" && $PY -m zipfile -e "$OUT/track1_$TAG.zip" "$I/b1" \
+    && $PY -m zipfile -e "$RPDE_REF_T2" "$I/a2" && $PY -m zipfile -e "$OUT/track2_$TAG.zip" "$I/b2" \
+    && $PY Track_1/verify/final_identity.py --t1-a "$I/a1" --t1-b "$I/b1" --t2-a "$I/a2" --t2-b "$I/b2" 2>&1 \
+       | tr -d '\000' | tee -a "$LOG" | grep -a "IDENTICAL\|DIFFER\|FAIL\|OK"
+  [ "${PIPESTATUS[0]}" = "0" ] || { echo "FAILED: outputs differ from the uploaded packages"; RC=1; }
+  rm -rf "$I"
+fi
 sha256sum "$OUT/track1_$TAG.zip" "$OUT/track2_$TAG.zip"
 [ "$RC" = "0" ] && echo "BUILD_FINAL OK" || echo "BUILD_FINAL FAILED"
 exit $RC

@@ -1,7 +1,7 @@
 """Gate: a Track-1 package with a baked GRAPH runs the graph, returns the eager path's arrays,
 and carries its fingerprint.
 
-    python Track_1/verify/graph_path.py --t1 EXTRACTED_T1_DIR        # GPU
+    python Track_1/closed/graph_path.py --t1 EXTRACTED_T1_DIR        # GPU; an archive from fdac00b or earlier
 
 WHY THIS EXISTS.  The CUDA graph on Track 1's `predict` path (round 26) is decided at IMPORT
 behind a verification against eager, so a package can silently fall back -- and a replayed graph
@@ -19,6 +19,13 @@ scales the band's `base` by (1 + GRAPH_FP).  This checks, on the archive itself:
   * graph against eager ms/window, interleaved in ONE process (evidence only on an idle node).
 """
 from __future__ import annotations
+
+import os as _os, sys as _sys  # noqa: E401  -- moved into closed/ 2026-09-28
+# This file used to sit in Track_1/verify/. The shim puts Track_1/ (the parent of closed/) on the path like every file
+# here; HERE / T1 below needed no change, because verify/ and closed/ are siblings, so T1 still resolves to Track_1/.
+# The feature it verifies (Track 1's GRAPH, R26/R27) was removed from submit_fno/submission.py on 2026-09-28, so it
+# runs only against an archive built from commit fdac00b or earlier.
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 
 import argparse
 import importlib.util

@@ -87,6 +87,9 @@ def main():
     ap.add_argument("--adaptive", action="store_true",
                     help="skip the statelessness assertion (a real TTT model is stateful)")
     ap.add_argument("--repeat", type=int, default=2)
+    ap.add_argument("--prev-space", choices=["target", "input"], default="target",
+                    help="normalization of the revealed previous target: 'target' = the official runner (kit t2_v6 "
+                         "local_eval, mean_tgt/std_tgt; default since 2026-09-28), 'input' = this gate before 09-28")
     a = ap.parse_args()
 
     print(f"=== archive {a.zip}")
@@ -125,14 +128,15 @@ def main():
         check(hasattr(model, "reset_ttt_state") and hasattr(model, "ttt_step"),
               "returns an object with reset_ttt_state and ttt_step")
 
-        print(f"=== stream {len(stream)} steps over {len(a.traj)} trajectories")
+        print(f"=== stream {len(stream)} steps over {len(a.traj)} trajectories "
+              f"(revealed target normalized with {a.prev_space.upper()} statistics)")
         preds, lows, ups, tgts, times = [], [], [], [], []
         bounds = None
         prev_t = None
         bad_shape = bad_dtype = bad_p = bad_order = bad_finite = 0
         for name, tid, x_raw, y_raw, first in stream:
             xn = torch.from_numpy(t2.normalize_in(x_raw)[None])
-            yn = torch.from_numpy(t2.normalize_in(y_raw)[None])
+            yn = torch.from_numpy(t2.normalize_prev(y_raw, a.prev_space)[None])
             rt = 0.0
             if first:
                 t0 = perf_counter(); model.reset_ttt_state()

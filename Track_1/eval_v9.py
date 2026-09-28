@@ -41,6 +41,7 @@ sc = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(sc)
 
 import _fno  # noqa: E402
+import opoint  # noqa: E402
 
 
 # --------------------------------------------------------------------------- scoring
@@ -110,7 +111,13 @@ def fit_scale(P, Y, w, grid):
 # --------------------------------------------------------------------------- inference
 
 
-def infer(models, X, dev, alpha=0.75):
+def infer(models, X, dev, alpha=opoint.ALPHA):
+    """(N,20,H,W,3) prediction, zero pressure channel. The compose follows _fno.JOINT_GAIN as the
+    CALLER left it (module state, default False); set it before calling for the 09-27 compose.
+
+    2026-09-28: the alpha default was 0.75 until today and is now opoint.ALPHA (0.80). About twenty
+    scripts in closed/ call this without an alpha; their recorded results used 0.75
+    (closed/README.md, EVALUATION.md section 4)."""
     uv = _fno.predict_fno(models, X, dev, alpha=alpha)
     return np.concatenate([uv, np.zeros_like(uv[..., :1])], -1).astype(np.float32)
 
@@ -118,13 +125,18 @@ def infer(models, X, dev, alpha=0.75):
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt", nargs="+", required=True)
-    ap.add_argument("--alphas", type=float, nargs="+", default=[0.75])
+    ap.add_argument("--alphas", type=float, nargs="+", default=[opoint.ALPHA],
+                    help=f"compose alphas to score (default [{opoint.ALPHA}], opoint.ALPHA)")
+    ap.add_argument("--joint-gain", action=argparse.BooleanOptionalAction, default=opoint.JOINT_GAIN,
+                    help="compose with _fno.JOINT_GAIN (sets the module flag predict_fno reads; default "
+                         f"{opoint.JOINT_GAIN}, opoint.JOINT_GAIN)")
     ap.add_argument("--ms", type=float, default=1.190,
                     help="end-to-end ms/window measured by validate_strict.py; eval_wp-style "
                          "forward-only timing understates time_score by ~3 points")
     args = ap.parse_args()
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
+    _fno.JOINT_GAIN = bool(args.joint_gain)
     models = [_fno.load(c if os.path.isabs(c) else os.path.join(HERE, c), dev)
               for c in args.ckpt]
 

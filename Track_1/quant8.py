@@ -38,6 +38,7 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, "submit_fno"))
 
 import _fno   # noqa: E402
+import opoint  # noqa: E402
 
 
 def q_int8(w, axes):
@@ -60,15 +61,28 @@ def q_int8(w, axes):
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt", nargs="+", required=True)
-    ap.add_argument("--alpha", type=float, default=0.60)
+    ap.add_argument("--alpha", type=float, default=opoint.ALPHA,
+                    help=f"compose alpha (default {opoint.ALPHA}, opoint.ALPHA)")
+    ap.add_argument("--joint-gain", action=argparse.BooleanOptionalAction, default=None,
+                    help="compose with _fno.JOINT_GAIN. Neither flag (default) = opoint.JOINT_GAIN "
+                         f"({opoint.JOINT_GAIN}), turned off when the --score band is not centred on y0")
     ap.add_argument("--n", type=int, default=96, help="val_unseen windows for the perturbation")
     ap.add_argument("--score", metavar="BAND.npz", default=None,
                     help="also SCORE every scheme through the official scorer with this band "
                          "held FIXED -- the band the package would actually ship. Forces "
-                         "--n to the whole split.")
+                         "--n to the whole split. Read through band_io.load_band (a SIGBLEND "
+                         f"npz needs its sidecar); the package of record's is {opoint.FINAL_BAND}")
+    ap.add_argument("--sidecar", default=None, help="SIGBLEND sidecar json of the --score band")
     args = ap.parse_args()
     if args.score:
         args.n = 10 ** 9
+    # 2026-09-28: the compose follows the operating point (module state read by predict_fno).
+    import band_io
+    band = band_io.load_band(args.score, args.sidecar) if args.score else None
+    _fno.JOINT_GAIN = band_io.joint_gain_for(band, args.joint_gain)
+    args.band = band
+    print(f"alpha {args.alpha}  joint_gain {_fno.JOINT_GAIN}"
+          + (f"  band {band.describe()}" if band is not None else ""))
 
     import torch
     dev = "cuda" if torch.cuda.is_available() else "cpu"
@@ -151,28 +165,31 @@ def score_schemes(args, blobs, X, du, dev, schemes) -> None:
     head too, and the band's per-window scaling reads it.
     """
     import numpy as np
+    import band_io
     import sps9
-    from sps9 import prep, sc, sps_score
+    from sps9 import sc
     import final_v9
 
     Y = du["y"]
-    z = np.load(args.score)
-    base, ref, pw = z["base"][..., :2], z["sigma_ref"][..., :2], float(z["p"])
+    band = args.band
 
     def scored(ms):
         # `sigma_out` is an OUT parameter, not a flag: predict_fno writes into it and returns
         # only the u,v field, which then needs the zero pressure channel the scorer expects.
+        # The interval is the package's (band_io, 2026-09-28): centre y0 = these models' alpha-0
+        # mean when the band says so, SIGBLEND's sigma-power factor included.
         sig = np.empty((len(X), 1, 32, 64, 2), dtype=np.float32)
-        uv = _fno.predict_fno(ms, X, dev, alpha=args.alpha, sigma_out=sig)
+        c0 = np.zeros((len(X), 20, 32, 64, 3), dtype=np.float32)
+        uv = _fno.predict_fno(ms, X, dev, alpha=args.alpha, sigma_out=sig, centre_out=c0)
         P = np.concatenate([uv, np.zeros_like(uv[..., :1])], -1).astype(np.float32)
         r = float(np.mean(sc.rel_l2_per_sample(P, Y, 2)))
         k = float(np.mean(sc.tke_rel_l2_per_sample(P, Y, 2)))
         mv = float(sc.mvpe_rel_l2(P, Y))
-        half = (base * np.clip(sig / ref, 0.3, 3.0) ** np.float32(pw)).astype(np.float32)
-        A, _, sc_, n = prep(P, Y)
+        lo, up = band_io.interval(band, c0[..., :2], P, sig, alpha=args.alpha,
+                                  joint_gain=_fno.JOINT_GAIN)
         dm, tk, mvv = sps9.sample_metrics(P, Y)
         a = sps9.weights_from_metrics(dm, tk, mvv)
-        s = float(sps_score(A, a, sc_, n, half))
+        s = float(sps9.sps_interval(a, Y, lo, up)[0])
         w = final_v9.predict([sc.score_error(r), sc.score_error(k), sc.score_error(mv),
                               95.92, s])[0]
         return r, k, mv, s, w

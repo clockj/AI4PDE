@@ -53,6 +53,7 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, "submit_fno"))
+import opoint  # noqa: E402
 DATA = "/users/PAS1187/qwu/RealPDE/train_real/train_real"
 OUT_DIR = os.environ.get("RPDE_KFOLD_DIR", "/fs/scratch/PAS1187/qwu/tmp/realpde/kfold")
 T_IN = T_OUT = INTERVAL = 20
@@ -296,8 +297,14 @@ def main():
     ap.add_argument("--a", nargs="+", default=None)
     ap.add_argument("--b", nargs="+", default=None)
     ap.add_argument("-k", type=int, default=K)
-    ap.add_argument("--alpha", type=float, default=0.90)
-    ap.add_argument("--inflate", type=float, default=1.39)
+    # 2026-09-28: default from opoint (was 0.90); the band is still this script's own fit.
+    ap.add_argument("--alpha", type=float, default=opoint.ALPHA,
+                    help=f"compose alpha (default {opoint.ALPHA}, opoint.ALPHA)")
+    ap.add_argument("--joint-gain", action=argparse.BooleanOptionalAction, default=opoint.JOINT_GAIN,
+                    help="compose with _fno.JOINT_GAIN (sets the module flag predict_fno reads; default "
+                         f"{opoint.JOINT_GAIN}, opoint.JOINT_GAIN)")
+    ap.add_argument("--inflate", type=float, default=opoint.INFLATE,
+                    help=f"error stretch the leave-one-fold-out band is fitted at (default {opoint.INFLATE})")
     ap.add_argument("--ms", type=float, default=1.02)
     ap.add_argument("--out-dir", default=OUT_DIR)
     ap.add_argument("--split", default="stratified", choices=["stratified", "re"],
@@ -327,6 +334,8 @@ def main():
     global LIMIT
     LIMIT = a.limit
     import torch
+    import _fno
+    _fno.JOINT_GAIN = bool(a.joint_gain)
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     if a.paired:
         if not (a.a and a.b) or len(a.a) != a.k or len(a.b) != a.k:

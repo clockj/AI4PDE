@@ -26,18 +26,27 @@ sys.path.insert(0, TRACK1)
 sys.path.insert(0, os.path.join(TRACK1, "submit_fno"))
 
 import _fno    # noqa: E402
+import opoint  # noqa: E402
 import sps9    # noqa: E402
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt", nargs="+", required=True)
-    ap.add_argument("--alpha", type=float, default=0.60)
-    ap.add_argument("--band", default=os.path.join(TRACK1, "submit_fno", "band.npz"))
+    # 2026-09-28: defaults from opoint (were 0.60 and submit_fno/band.npz, an untracked build
+    # by-product). The band is only packed into the staging archive; nothing here scores sps.
+    ap.add_argument("--alpha", type=float, default=opoint.ALPHA,
+                    help=f"compose alpha on both sides (default {opoint.ALPHA}, opoint.ALPHA)")
+    ap.add_argument("--joint-gain", action=argparse.BooleanOptionalAction, default=opoint.JOINT_GAIN,
+                    help="compose with _fno.JOINT_GAIN on both sides (default "
+                         f"{opoint.JOINT_GAIN}, opoint.JOINT_GAIN)")
+    ap.add_argument("--band", default=opoint.path(opoint.FINAL_BAND),
+                    help=f"band packed into the staging archive (default {opoint.FINAL_BAND})")
     args = ap.parse_args()
 
     import torch
     dev = "cuda" if torch.cuda.is_available() else "cpu"
+    _fno.JOINT_GAIN = bool(args.joint_gain)
     du = np.load(os.path.join(TRACK1, "val_unseen.npz"))
     X, Y = du["x"], du["y"]
 

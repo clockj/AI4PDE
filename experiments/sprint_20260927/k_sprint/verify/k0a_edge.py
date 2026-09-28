@@ -38,7 +38,7 @@ if mode == "one":
         print(f"  fresh-process {dt} N={n} CRASH {e!r}"); bad.append("crash")
     print("RESULT", "PASS" if not bad else "FAIL"); sys.exit(1 if bad else 0)
 
-print("EBAND", sub.EBAND, "SMALL_GRAPH", sub.SMALL_GRAPH, flush=True)
+print("EBAND", sub.EBAND, "SMALL_GRAPH", getattr(sub, "SMALL_GRAPH", "<removed 2026-09-28>"), flush=True)
 ref = check(sub.predict(X), 336, "full f32 (reference)")
 for dt in ("float32", "float64"):
     for rep in (1, 2):

@@ -92,6 +92,33 @@ def optimal_band(A, a, scored, cap=0.08):
     return np.minimum(h, cap).reshape((1,) + A.shape[1:]).astype(np.float32)
 
 
+def sps_interval(a, Y, lower, upper, scored=None, n_scored=None):
+    """SPS of an ARBITRARY interval (2026-09-28): (sps 0..100, containment C x100, coverage %).
+
+    `sps_score` assumes an interval symmetric about the scored prediction, which the packages of
+    record no longer ship: since 09-21 the interval is centred on the alpha-0 field and widened to
+    contain P (band_io.interval), so lower/upper are not P -/+ half. This is the kit's own per-
+    element rule -- target in [lower, upper] and non-zero contributes a_i * exp(-(upper-lower)/SIGMA),
+    width in float64 as aggregate_sps computes it -- with `a` given, so a stretched target (Y moved
+    about the centre, band_io.stretch_target) can be scored at board-level accuracy factors.
+    `scored` / `n_scored` default to Y != 0; pass the ORIGINAL target's mask when Y is stretched.
+    C is the a-free containment term (100 * mean over scored elements of exp(-width/SIGMA) * inside),
+    the `C` column of sigblend/bandlab.py and make_k0_band.py.
+    """
+    Y2 = np.asarray(Y)[..., :2]
+    lo, up = np.asarray(lower)[..., :2], np.asarray(upper)[..., :2]
+    if scored is None:
+        scored = Y2 != 0.0
+    if n_scored is None:
+        n_scored = int(np.count_nonzero(scored))
+    ins = (Y2 >= lo) & (Y2 <= up) & scored
+    con = np.where(ins, np.exp(-(up.astype(np.float64) - lo) / SIGMA), 0.0)
+    per_sample = con.reshape(len(Y2), -1).sum(axis=1)
+    a = np.broadcast_to(np.asarray(a, np.float64), (len(Y2),))
+    return (float(100.0 * (a @ per_sample) / n_scored), float(100.0 * con.sum() / n_scored),
+            float(100.0 * np.count_nonzero(ins) / n_scored))
+
+
 def self_check(P, Y, half):
     """The fast path must agree with the kit's own aggregate_sps."""
     A, a, scored, n = prep(P, Y)

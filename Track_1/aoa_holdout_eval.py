@@ -27,8 +27,13 @@ THE BAND.  A shipped band takes its error field from HELD-OUT TWINS of the shipp
 run's OWN in-distribution held-out windows (`--fit-set`) and reported on the held-out-AoA
 windows.  That is honest -- neither split was trained on -- but it is NOT the shipped
 construction, so `sps` here is comparable ACROSS ARMS of this screen and not against a board
-round.  Everything else matches what ships: ALPHA 0.60, `--band-p` 0.45, inflate 1.39,
-box-smooth 3, sigma_ref from the scored models.
+round.  Everything else matches what ships (2026-09-28: the defaults come from `opoint`, the
+packages of record): ALPHA 0.80 with JOINT_GAIN, the interval centred on the alpha-0 field and
+widened to contain the prediction (`--centre-alpha 0`, the band fitted on |y0 - y| as
+`fit_band.py --centre-alpha 0` does), `--band-p` 0.45, inflate 1.39, box-smooth 3, sigma_ref from
+the scored models. NOT replicated: `--fill-unscored` and the SIGBLEND sigma-power factor, both of
+which need data this screen does not have (a fit split per element, held-out twins).
+Until 09-27 the defaults were ALPHA 0.60, per-channel compose, the interval centred on P.
 
 THE MEAN-BLEND.  `submission.py`'s gated mean-blend (BLEND_BETA, `mean_blend_re.py`) replaces
 beta of the predicted 20-frame time-mean with the INPUT window's measured one, gated on windows
@@ -39,7 +44,7 @@ reports three rows: no blend, the gate as shipped (which on an AoA holdout is ex
 on ~no window, and that is the finding), and the blend applied UNGATED at the same beta.
 
     python aoa_holdout_eval.py --ckpt unet/a.pth unet/b.pth --holdout-aoa 20 \
-        --fit-set val_traj --alpha 0.60 --band-p 0.45 --beta 0.15
+        --fit-set val_traj --beta 0.15
 """
 from __future__ import annotations
 
@@ -53,6 +58,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, "submit_fno"))
 sys.path.insert(0, os.path.join(HERE, "unet"))
+
+import opoint  # noqa: E402
 
 DATA = "/users/PAS1187/qwu/RealPDE/train_real/train_real"
 T_IN = T_OUT = 20
@@ -135,9 +142,19 @@ def main() -> None:
                     help="which in-distribution held-out list the arm ALSO excluded; the band "
                          "is fitted on it. val_traj = model.VAL_TRAJ (the 09-14 screen "
                          "protocol, 8 trajectories); re_excluded = re_split.excluded() (26).")
-    ap.add_argument("--alpha", type=float, default=0.60, help="the shipped compose alpha")
-    ap.add_argument("--band-p", type=float, default=0.45)
-    ap.add_argument("--inflate", type=float, default=1.39)
+    ap.add_argument("--alpha", type=float, default=opoint.ALPHA,
+                    help=f"the shipped compose alpha (default {opoint.ALPHA}, opoint.ALPHA; was 0.60)")
+    ap.add_argument("--joint-gain", action=argparse.BooleanOptionalAction, default=None,
+                    help="compose with _fno.JOINT_GAIN. Neither flag (default) = opoint.JOINT_GAIN "
+                         f"({opoint.JOINT_GAIN}) when --centre-alpha is 0, else off")
+    ap.add_argument("--centre-alpha", default=str(opoint.CENTRE_ALPHA),
+                    help="interval centre, as fit_band.py --centre-alpha: 0 = the alpha-0 field y0, "
+                         "widened to contain the prediction; 'none' = the prediction (the pre-09-21 "
+                         f"band). Default {opoint.CENTRE_ALPHA} (opoint.CENTRE_ALPHA)")
+    ap.add_argument("--band-p", type=float, default=opoint.BAND_P,
+                    help=f"sigma-ratio exponent (default {opoint.BAND_P}, opoint.BAND_P)")
+    ap.add_argument("--inflate", type=float, default=opoint.INFLATE,
+                    help=f"error stretch the band is fitted at (default {opoint.INFLATE}, opoint.INFLATE)")
     ap.add_argument("--band-smooth", type=int, default=3)
     ap.add_argument("--inflate-sweep", type=float, nargs="*", default=[],
                     help="extra band stretches to report after the main table: the band is refitted "
@@ -158,10 +175,18 @@ def main() -> None:
 
     import torch
     import _fno
+    import band_io
     import final_v9
     import sps9
-    from sps9 import optimal_band, prep, sc, sps_score
+    from sps9 import optimal_band, prep, sc
     from mean_blend_re import blend, gate
+
+    ca = None if str(a.centre_alpha).lower() == "none" else float(a.centre_alpha)
+    # The fitted band carries the centre so band_io builds the package's interval around it.
+    proto = band_io.Band(path="(fitted here)", base=np.zeros(1, np.float32),
+                         sigma_ref=np.ones(1, np.float32), p=a.band_p, centre_alpha=ca)
+    jg = band_io.joint_gain_for(proto, a.joint_gain)
+    _fno.JOINT_GAIN = jg            # module state read by predict_fno's compose (2026-09-28)
 
     dev = a.device or ("cuda" if torch.cuda.is_available() else "cpu")
     held = names_at_aoa(a.holdout_aoa)
@@ -174,26 +199,29 @@ def main() -> None:
 
     Xh, Yh, idh = windows(held, limit=a.limit)
     Xf, Yf, idf = windows(fit, limit=a.limit)
-    print(f"  windows: held-out AoA {len(Xh)}   fit {len(Xf)}   device {dev}")
+    print(f"  windows: held-out AoA {len(Xh)}   fit {len(Xf)}   device {dev}   alpha {a.alpha}  "
+          f"joint_gain {jg}  centre_alpha {ca}")
 
     m = [_fno.load_any(c if os.path.isabs(c) else os.path.join(HERE, c), dev) for c in a.ckpt]
 
     def infer(X):
-        uv = _fno.predict_fno(m, X, dev, alpha=a.alpha)
-        return np.concatenate([uv, np.zeros_like(uv[..., :1])], -1).astype(np.float32)
-
-    def sigma(X):
+        """(P, sigma with a zero third channel, y0 = the pre-compose member mean), one pass."""
         s = np.empty((len(X), 1, 32, 64, 2), dtype=np.float32)
-        _fno.predict_fno(m, X, dev, alpha=a.alpha, sigma_out=s)
-        return np.concatenate([s, np.zeros_like(s[..., :1])], -1).astype(np.float32)
+        c0 = np.zeros((len(X), 20, 32, 64, 3), dtype=np.float32)
+        uv = _fno.predict_fno(m, X, dev, alpha=a.alpha, sigma_out=s, centre_out=c0)
+        return (np.concatenate([uv, np.zeros_like(uv[..., :1])], -1).astype(np.float32),
+                np.concatenate([s, np.zeros_like(s[..., :1])], -1).astype(np.float32), c0[..., :2])
 
-    Pf, Ph = infer(Xf), infer(Xh)
+    (Pf, sig_f, y0f), (Ph, sig_h, y0h) = infer(Xf), infer(Xh)
 
     # --- the band, exactly fit_band.py's construction, on the fit split ---------------------
-    sig_f = sigma(Xf)
     sigma_ref = np.maximum(sig_f.mean(0, keepdims=True), 1e-8).astype(np.float32)
     ratio_f = np.clip(sig_f / sigma_ref, 0.3, 3.0)
-    As, as_, scored_s, ns = prep(Pf, Yf)
+    # fit_band.py --centre-alpha: the error is measured about the interval CENTRE, the accuracy
+    # factors a_i about the scored prediction.
+    Cf = band_io.centre(proto, y0f, Pf[..., :2], a.alpha, jg)
+    As = np.abs(Cf - Yf[..., :2]).astype(np.float32)
+    _, as_, scored_s, ns = prep(Pf, Yf)
 
     def fit_base(inflate):
         Adef = np.float32(inflate) * As
@@ -212,19 +240,23 @@ def main() -> None:
         return base
 
     base = fit_base(a.inflate)
-    ratio_h = np.clip(sigma(Xh) / sigma_ref, 0.3, 3.0)
+    ratio_h = np.clip(sig_h / sigma_ref, 0.3, 3.0)
     half_h = (base * ratio_h[..., :2] ** a.band_p).astype(np.float32)
     half_f = (base * ratio_f[..., :2] ** a.band_p).astype(np.float32)
 
+    def sps_of(P, Y, half, y0):
+        """The package's interval about the band's centre (band_io), kit per-element rule."""
+        lo, up = band_io.interval(proto, y0, P, None, alpha=a.alpha, joint_gain=jg, half=half)
+        return sps9.sps_interval(sps9.sample_weights(P, Y), Y, lo, up)[0]
+
     t_score = sc.score_time(a.ms / 1000.0)
 
-    def row(tag, P, Y, half):
+    def row(tag, P, Y, half, y0):
         r = float(np.mean(sc.rel_l2_per_sample(P, Y, 2)))
         k = float(np.mean(sc.tke_rel_l2_per_sample(P, Y, 2)))
         mv = float(sc.mvpe_rel_l2(P, Y))
-        U = prep(P, Y)
         five = [sc.score_error(r), sc.score_error(k), sc.score_error(mv), t_score,
-                sps_score(U[0], U[1], U[2], U[3], half)]
+                sps_of(P, Y, half, y0)]
         wf = float(final_v9.predict(five)[0])
         print(f"{tag:34s} {r:7.4f} {k:7.4f} {mv:7.4f} | {five[0]:6.2f} {five[1]:6.2f} "
               f"{five[2]:6.2f} {five[3]:6.2f} {five[4]:6.2f} | {wf:7.3f}")
@@ -233,8 +265,8 @@ def main() -> None:
     hdr = (f"{'split':34s} {'relL2':>7s} {'TKE':>7s} {'MVPE':>7s} | {'rel':>6s} {'tke':>6s} "
            f"{'mvpe':>6s} {'time':>6s} {'sps':>6s} | {'wfinal':>7s}")
     print(); print(hdr); print("-" * len(hdr))
-    out = [row(f"fit ({a.fit_set}, in-distribution)", Pf, Yf, half_f),
-           row(f"HELD-OUT AoA {a.holdout_aoa}", Ph, Yh, half_h)]
+    out = [row(f"fit ({a.fit_set}, in-distribution)", Pf, Yf, half_f, y0f),
+           row(f"HELD-OUT AoA {a.holdout_aoa}", Ph, Yh, half_h, y0h)]
 
     # --- the gated mean-blend on the same windows ------------------------------------------
     lo, hi = speed_range(train)
@@ -242,27 +274,26 @@ def main() -> None:
     print(f"\ntraining per-window speed range [{lo:.6f}, {hi:.6f}] (ref {a.ref}); "
           f"gate fires on {int((g > 0).sum())}/{len(g)} held-out-AoA windows, "
           f"mean weight {float(g.mean()):.4f}")
-    out.append(row(f"  + blend beta={a.beta} GATED", blend(Ph, Xh, a.beta * g), Yh, half_h))
-    out.append(row(f"  + blend beta={a.beta} ungated", blend(Ph, Xh, a.beta), Yh, half_h))
+    # The blend moves the prediction, not the alpha-0 centre; a y0-centred interval is widened
+    # to contain the blended P, as submission.py's min/max would.
+    out.append(row(f"  + blend beta={a.beta} GATED", blend(Ph, Xh, a.beta * g), Yh, half_h, y0h))
+    out.append(row(f"  + blend beta={a.beta} ungated", blend(Ph, Xh, a.beta), Yh, half_h, y0h))
     # THE IN-DISTRIBUTION PRICE of shipping the blend ungated (forge 09-19, main). The gate fires on
     # 0/756 and 42/643 held-out-AoA windows -- a novel ANGLE is invisible to a SPEED gate -- so if the
     # blend is to help the private set it has to ship ungated, and then it also applies to every
     # in-distribution window. This row is what that costs, on the fit split, at the same beta.
-    out.append(row(f"  fit + blend beta={a.beta} ungated", blend(Pf, Xf, a.beta), Yf, half_f))
+    out.append(row(f"  fit + blend beta={a.beta} ungated", blend(Pf, Xf, a.beta), Yf, half_f, y0f))
     # THE BAND WIDTH A NOVEL ANGLE WANTS (main 09-19). `--inflate` 1.39 is the PUBLIC hidden set's
     # measured tail; the private set is out of distribution, where the error field is larger than
     # the fit split's by more than that, and `sps` is the subscore that pays for it (48 -> 38-40 on
     # the AoA-20 holdout). Same predictions, band refitted per stretch, both splits.
     sweep = []
     if a.inflate_sweep:
-        Uf, Uh = prep(Pf, Yf), prep(Ph, Yh)
         print(f"\n{'inflate':>8s} {'sps fit':>8s} {'sps HELD-OUT':>13s}")
         for f_ in a.inflate_sweep:
             b = fit_base(f_)
-            sf = sps_score(Uf[0], Uf[1], Uf[2], Uf[3],
-                           (b * ratio_f[..., :2] ** a.band_p).astype(np.float32))
-            sh = sps_score(Uh[0], Uh[1], Uh[2], Uh[3],
-                           (b * ratio_h[..., :2] ** a.band_p).astype(np.float32))
+            sf = sps_of(Pf, Yf, (b * ratio_f[..., :2] ** a.band_p).astype(np.float32), y0f)
+            sh = sps_of(Ph, Yh, (b * ratio_h[..., :2] ** a.band_p).astype(np.float32), y0h)
             print(f"{f_:8.2f} {sf:8.3f} {sh:13.3f}")
             sweep.append(dict(inflate=f_, sps_fit=float(sf), sps_held=float(sh)))
     print("\nThe band is fitted on this run's own in-distribution held-out windows, not on "
@@ -273,7 +304,8 @@ def main() -> None:
         import json
         with open(a.json, "w") as f:
             json.dump(dict(ckpt=a.ckpt, holdout_aoa=a.holdout_aoa, fit_set=a.fit_set,
-                           alpha=a.alpha, band_p=a.band_p, inflate=a.inflate, ms=a.ms,
+                           alpha=a.alpha, joint_gain=jg, centre_alpha=ca,
+                           band_p=a.band_p, inflate=a.inflate, ms=a.ms,
                            beta=a.beta, ref=a.ref, n_held=len(Xh), n_fit=len(Xf),
                            speed_range=[lo, hi], gate_fired=int((g > 0).sum()),
                            rows=out, inflate_sweep=sweep), f, indent=1)

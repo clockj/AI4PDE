@@ -1,38 +1,39 @@
-"""RealPDE Track 2 (LTTTA) submission: the Track-1 ensemble, streamed, frozen, CUDA-graphed.
+"""RealPDE Track 2 (LTTTA) submission: the Track-1 ensemble, streamed, with causal per-trajectory calibration.
 
-Round T2-1.  **No test-time adaptation at all.**  ``ttt_step`` runs the same forecaster Track 1
-ships and returns the same SPS band.  That is deliberate: it is the floor of this track, it
-puts a number on a board where we have none, and every adaptation arm afterwards is measured
-against it instead of against a guess.  The two backprop-free adaptation families that looked
-obvious were both measured first and both are dead -- see ``../ttt_offline.py`` (lag-1
-residual correlation is +0.05, so an EMA bias correction has nothing to correct).
+(Docstring refreshed 2026-09-28 to describe the final package of record, 2026-09-27. Until 09-25 this track shipped the
+forecaster FROZEN -- "Round T2-1, no test-time adaptation" -- and several comments below still date from then.)
 
-WHAT IS DIFFERENT FROM TRACK 1
-------------------------------
-* **Space.**  Track 1 hands ``predict()`` raw physical fields; Track 2 hands ``ttt_step``
-  tensors the evaluator has already normalized, and denormalizes the answer itself.  The
-  evaluator's ``mean_in``/``std_in`` are bit-identical to ``_fno.MEAN``/``_fno.STD`` (checked
-  against ``example_data/mean_std_real.pt``), so the normalized input IS what the trunk wants
-  -- no round trip.  The TARGET stats differ in the sixth decimal, so the output carries one
-  exact affine correction (``_A``, ``_B``).  ``../verify_space.py`` proves the whole path
-  reproduces Track 1's ``predict()`` to 4e-6 in physical units.
-* **Batch 1, and the step is what is timed.**  Track 1 amortizes one batched call over every
-  window; here each step pays the full launch cost.  Measured on an A100-PCIe, eagerly:
-  a single member costs **3.18 ms** of which the arithmetic is a small fraction, and each
-  extra INVOCATION costs **+2.4 ms** while an extra member inside a fused group costs 0.09.
-* **Hence the CUDA graph.**  The whole device-side step -- forward, ensemble average,
-  fluctuation rescaling, band -- is captured once at load time (which is not timed) and
-  replayed per step.  Measured bit-exact against the eager path (max abs difference 0.0) and
-  3.70 ms -> 1.04 ms for the fused 8-member group.  At the fitted `time` weight of 0.081 that
-  is worth about +0.25 `final`, for no change in any other subscore.  If capture fails for any
-  reason the eager path runs instead, so the graph is an optimization and never a dependency.
-* **Bounds go in ``info``**, in normalized space: ``half_norm = half_raw / std_tgt``.
+THE MODEL
+---------
+The same six members as Track 1: four F-FNO (w40 L8, sim co-trained) and two ViT (d384 L8), fused into a
+StackedFFNO(4) and a StackedViT(2), averaged uniformly; fp16 autocast (verified against fp32 at load); ALPHA 0.80 with
+one compose gain per pixel for u and v (JOINT_GAIN); the SIGBLEND band (band.npz + SIGPOW). The weights never move.
 
-WHAT IS THE SAME
-----------------
-The members, ``ALPHA`` and ``band.npz`` come from the Track-1 package.  Both tracks score the
-same windows with the same five subscores, so a band fitted to this ensemble's error field on
-Track 1 is the band for it here.
+WHAT ttt_step() DOES (batch 1; everything device-side is ONE CUDA graph, captured and verified at load)
+----------------------
+Inputs: this window's normalized input, and the previous window's target (revealed by the platform at this step).
+  1. The revealed target is sanitized (non-finite -> 0, and that step updates no statistic; nor does the step after a
+     non-finite forward; M3, 2026-09-28).
+  2. R1 (causal band calibration): the PREVIOUS window's interval is scored against its revealed target, element by
+     element, for a 9 x 9 grid of (lower, upper) multipliers; the running tables (per pixel, and per 4-frame lead block)
+     give this window's multipliers k_lo, k_hi, shrunk toward 1 while few windows have been seen (R1_ASYM/TSM/BLK).
+  3. D1c (causal bias removal): the running mean of (previous pre-compose mean - revealed target) over past windows,
+     shrunk by n/(n+30) or by an empirical-Bayes factor, with a lead-time profile -> this window's shift -b.
+  4. VARCAL: running revealed-target variance against the composed variance predicted for the same windows -> a
+     per-pixel gain on the composed fluctuation amplitude, shrunk toward 1.
+  5. Forward of both groups on side streams, member mean y0 and sigma; compose (ALPHA, JOINT_GAIN, VARCAL gain) -> y;
+     prediction P = y + shift (target-normalized space, exact affine from the model's input space).
+  6. Band: half = base * clip(sigma/sigma_ref, .3, 3)^p * (sigma + 1e-8)^q, times k_lo / k_hi; centred on y0 + shift
+     (CENTRE_ALPHA 0) and widened to contain P; non-finite elements sanitized (M3).
+  7. For a CPU input (the kit's runner), outputs are copied into their own slot of a pinned arena (caller-owned, no
+     clone; the first ARENA_STEPS steps, then pinned staging + clone) and returned as numpy.
+Nothing reads a window the platform has not shown: `stream_eval.py --causal-check` asserts it on every build.
+`reset_ttt_state()` clears every running statistic at a trajectory boundary.
+
+Space: the platform hands `ttt_step` INPUT-normalized tensors, which are exactly what the trunk wants
+(`_fno.MEAN/STD` are bit-identical to the evaluator's input stats); the answer and the bounds go back in TARGET
+normalization via one exact affine (`_A`, `_B`). The revealed target is normalized by the official runner with the
+TARGET statistics; PREV_SPACE below says which space this file assumes (audit M1, 2026-09-28).
 """
 from __future__ import annotations
 
@@ -79,7 +80,8 @@ _TF32 = os.environ.get("RPDE_TF32", "") not in ("", "0")
 torch.backends.cuda.matmul.allow_tf32 = _TF32
 torch.backends.cudnn.allow_tf32 = _TF32
 
-# ROUND 17 Q1g: the spectral fast path, baked in as a constant.  The evaluation container sets
+# ROUND 17 Q1g: the spectral fast path, baked in as a constant. (2026-09-28: INERT in the final package -- it steers only
+# FNO2d stacks and the final member set has none; the numbers below are the T2R5-era FNO package's.)  The evaluation container sets
 # no environment variables, so `_fno`'s env default cannot reach a submission -- this assignment
 # is what ships.  "bmm" runs the spectral product as one batched real 2x2-block matmul; at
 # BATCH 1 that deletes the complex einsum's per-call strided weight copy, which the profiler
@@ -150,16 +152,11 @@ GRAPH_ERR = None      # the exception text if capture raised (load-time report; 
 # AMP, graph captured or not, GRAPH_WORST / GRAPH_ERR -- plus one line on the first ttt_step (shape, dtype). Nobody had
 # ever read the Codabench logs; this makes them worth reading. Printing changes no tensor.
 DIAG = True
-# FALLBACK_FP (N2, audit 2 / Jonas 09-25): graph-fallback fingerprint. When the step runs EAGER (self.graph is None), the
-# RETURNED prediction becomes P + FALLBACK_FP * mean_t(P): the time mean scaled by (1 + eps), fluctuations untouched. mvpe
-# reads the time mean and is alpha-invariant, so the board's mvpe shows whether the graph ran. Applied to the returned
-# copy only (R1's state and the interval are untouched). 0.0 = off; with a graph it is never applied (bit-identical).
-FALLBACK_FP = 0.0
-# STACKED_OUT (Corin 09-26): on the CPU return path, pred / lower / upper are the dim-0 slices [0] / [1] / [2] of ONE freshly
-# allocated (3, 1, 20, H, W, 3) tensor instead of three separate clones. Each slice is contiguous with the same shape / dtype / device,
-# values bit-identical; the process boundary then carries one storage instead of three (t2_ipc: ~2.3 ms/step of transport).
-# False = three clones, exactly as before.
-STACKED_OUT = False
+# PRUNED 2026-09-28 (never shipped in a package of record, set by no reproduce.sh recipe; the last tree that has them is
+# commit fdac00b, and build_round13.sh now REFUSES their RPDE_SHIP_* variables at a non-default value): FALLBACK_FP (the
+# audit-2 graph-fallback fingerprint), STACKED_OUT (one stacked return storage, Corin 09-26), R1_SNAP (legacy snapping of
+# the R1 multiplier to its grid) and SIGEMA / SIGEMA_BETA / SIGEMA_N0 / SIGEMA_DDOF (ALPHA's sigma from an EMA of revealed
+# target variances, 09-27 arm).
 # ARENA_STEPS (K1, 09-27): > 0 = on the CPU return path every step's pred / lower / upper are written straight into
 # their OWN slot of a page-locked arena allocated at load (untimed), instead of pinned staging + three fresh clones per
 # step (the evaluator keeps every prediction, so each clone is a fresh mmap + first-touch faults). Same bits (md5 over 336
@@ -183,14 +180,14 @@ JOINT_GAIN = False
 # adaptation inside ttt_step; at step t the platform hands us the target of step t-1 and nothing later.
 # For every (y, x, c) keep, per candidate multiplier k in R1_KS, the running sum over PAST windows of the scorer's
 # element term 1[lo<=y<=hi]*exp(-(hi-lo)/SIGMA_G) on scored elements (unweighted). Current window: per-pixel argmax,
-# 3x3 replicate-padded box mean, shrink toward 1 by n/(n+R1_N0), snap to the grid; first window of a trajectory k=1.
+# 3x3 replicate-padded box mean, shrink toward 1 by n/(n+R1_N0), applied continuously (not snapped to the grid);
+# first window of a trajectory k=1.
 # base, sigma ratio, centre and the min/max clamp are untouched: only half -> k*half. Off (False) = bit-identical.
-# Reference: Ramesh's causal_band.py (numpy) / causal_band_t2.py (torch, this class verbatim minus its self-test).
+# Reference: Ramesh's causal_band.py (numpy) / r1_ref/causal_band_t2.py (torch) cover the SYMMETRIC estimator (update /
+# kfield) only; the shipped ASYM / TSM / BLK variants (update_gated_asym / kfield_asym) have no separate reference (2026-09-28).
 # NEVER port to Track 1: its batch holds future windows, so the same statistic would read their answers.
 R1 = False
 R1_KS = tuple(0.5 * 2 ** (j / 4) for j in range(9))        # K=9 log grid 0.5..2.0, contains 1.0 exactly (Jonas 01:41Z 09-25)
-R1_SNAP = False            # False: the smoothed, shrunk k is applied CONTINUOUSLY (the grid only indexes the running sums;
-                           # Jeff/Jonas 09-25: +0.016..0.019 sps over snapping, and K=9 == K=16 within 0.003). True = legacy snap
 R1_N0 = 2.0
 R1_ASYM = False            # True (Jonas 09-26, r1_asym.py): separate causal k_lo / k_hi per pixel from a K x K table of past windows
                            # (lower bound only matters when the target is below the centre, upper when above; the width term splits
@@ -199,27 +196,22 @@ D1C_N0 = 0.0              # D1c "PC" (Jeff d1c_extrap 09-27; Jonas build_d1c.py;
                            # Per trajectory, causal, per pixel and channel: b = sum over PAST revealed windows of mean_t(C - y) / (n + N0),
                            # n = revealed windows, C = the pre-compose (alpha-0) ensemble mean of that window BEFORE any correction; this
                            # window's P and interval centre both move by -b (R1 then scores the moved fields). Needs R1. 0.0 = off, bit-identical.
-SIGEMA = False             # sigma_EMA (owner michael 09-27 13:35Z; Jonas step-1 def): ALPHA's sigma = sqrt(w * ema + (1 - w) * sigma_head^2),
-                           # ema = S / W over REVEALED target windows, S <- b*S + v, W <- b*W + 1 (b = SIGEMA_BETA; 1.0 = equal-weight),
-                           # v = per-pixel/channel population variance over the 20 frames (model space), w = n / (n + SIGEMA_N0), n = revealed
-                           # windows. Only ALPHA's sigma changes (the band keeps sigma_head). Needs R1 (its revealed-target plumbing). False = off.
-SIGEMA_BETA = 0.8
-SIGEMA_N0 = 3.0
 SIGPOW = None              # SIGBLEND band (K-sprint design_0, 09-27): None = off, bit-identical. A tuple (q_u, q_v): the static band is
                            # multiplied by (sigma_phys + 1e-8) ** q_c per channel (sigma_phys = sig * std, the heads' PHYSICAL sigma, float32),
                            # AFTER base * clip(sigma/sigma_ref)^p and BEFORE the R1 gains; the band npz carries base' and p'. Static/drv band
                            # only: refuses with the err-head band.
-SIGEMA_DDOF = 0            # 0 = population variance over the 20 frames (as s_ in the compose); 1 = unbiased (x 20/19)
 VC_N0 = 0.0                # VARCAL (design C, 09-27): > 0 = on with this N0. Causal per-pixel/channel calibration of the composed fluctuation
                            # AMPLITUDE from this trajectory's revealed windows: g = box3(sum var_t(y)) / box3(sum vpred), both sums over PAST windows
-                           # (model space; vpred = (ALPHA*sigma_head + (1-ALPHA)*s_)^2 of that window, uncalibrated), clipped to VC_CLIP, shrunk to 1 by
-                           # n/(n+VC_N0); the compose target std is multiplied by sqrt(g). Band, centre and sigma_head untouched. Needs R1. 0.0 = off.
+                           # (model space; vpred = that window's uncalibrated composed variance: (ALPHA*sigma_head + (1-ALPHA)*s_)^2 per channel, or
+                           # (s_ * g_joint)^2 under JOINT_GAIN, the shipped case), clipped to VC_CLIP, shrunk to 1 by n/(n+VC_N0); the composed
+                           # fluctuation is multiplied by sqrt(g) PER CHANNEL, so once g moves, JOINT_GAIN's one-gain-per-pixel property no longer
+                           # holds exactly (comment corrected 2026-09-28). Band, centre and sigma_head untouched. Needs R1. 0.0 = off.
 VC_CLIP = (0.25, 4.0)
 FW_N0 = 0.0                # FAMW (design C, 09-27; the team's "family weights", per-pixel online mixing): > 0 = on with this N0. Needs exactly two
                            # fused groups A (first) and B (second). w = weight of B; w0 = n_B / n_members. Per pixel/channel, over PAST windows:
                            # w_ols = box3(sum_t d*(y - yA)) / box3(sum_t d*d), d = yB - yA (model space), clipped to [0, 1], shrunk to w0 by n/(n+FW_N0).
                            # The ensemble mean becomes yA + w*(yB - yA) BEFORE compose, so D1c accumulates the residual AFTER it. Needs R1. 0.0 = off.
-R1_TSM = 1                 # TSM (design B2, 09-27): 3 = the running K x K table is box-smoothed (3x3 over H, W, replicate-padded) BEFORE the
+R1_TSM = 1                 # TSM (design B2, 09-27): any value > 1 (3 by convention) = the running K x K table is box-smoothed (3x3 over H, W, replicate-padded) BEFORE the
                            # per-pixel argmax, i.e. the sufficient statistic is pooled over the 9 neighbours instead of only the argmax's output
                            # (which is still box-smoothed and shrunk as before). 1 = off, bit-identical. Needs R1_ASYM.
 R1_BLK_N0 = 0.0            # BLK (design B2, 09-27): > 0 = on with this N0. Needs R1_ASYM. A second causal table at LEAD-TIME-BLOCK resolution
@@ -229,6 +221,25 @@ R1_BLK_N0 = 0.0            # BLK (design B2, 09-27): > 0 = on with this N0. Need
                            # clamped to [min(R1_KS), max(R1_KS)], constant within a block. n = 0 -> exactly 1.0. 0.0 = off, bit-identical.
 R1_BLK = 4                 # BLK: output frames per lead-time block (must divide T_OUT = 20)
 R1_UNSCORED_TOL = 1e-6                                      # |yn - z_c| below this = an unscored (physical 0) element
+# PREV_SPACE (audit M1, 2026-09-28): the normalization of the REVEALED target (`prev_target_norm`). "input" = this file assumes
+# the evaluator normalized it with the INPUT statistics (_fno.MEAN/STD), which is what every local harness did until 09-28
+# (stream_eval / validate_t2 / pkg_identity called normalize_in) and what every uploaded package assumes: R1 and D1c map it
+# to target space with the affine (_A, _B), and an element is "unscored" iff it equals -MEAN/STD. "target" = it arrives
+# TARGET-normalized, which is what the official runner does (kit t2_v6 local_eval.py: Normalizer.preprocess(x, y) with
+# mean_tgt/std_tgt, then prev_target = that tgt_norm): R1 and D1c read it as it is, the unscored test is against
+# -MEAN_TGT/STD_TGT, and VARCAL / FAMW (model space) map it back with the inverse affine. Under "input" the board's
+# physical-0 elements miss the unscored test by 6e-5 / 2.3e-4 (60-230x R1_UNSCORED_TOL) and are counted as scored.
+# "input" = every package of record, bit for bit. Build knob RPDE_SHIP_PREV_SPACE.
+PREV_SPACE = "input"
+# STATS_MASK (audit M2, 2026-09-28, a measured arm): False = every package of record, bit for bit. True = the D1c error field
+# and VARCAL's sums skip UNSCORED (blanked, physical-0) target elements, the same test R1 uses (R1_UNSCORED_TOL against
+# r1_z, so it is only right on the board together with PREV_SPACE "target"): D1c's per-frame error is 0 at an unscored
+# element (so an always-blanked pixel gets no shift and adds 0 to both empirical-Bayes pools -- the EB factor is then the
+# one of the scored pixels, since a common dilution cancels in tau2 / (tau2 + se2)), and VARCAL accumulates a pixel's
+# variance pair only from windows where all 20 of its frames are scored; a pixel with no such window nearby keeps g = 1.
+# Without it, a blanked pixel's error is ~|C| (~1.6 normalized for u), which dominates D1c-EB's pooled bias, and its
+# target variance 0 clips VARCAL's gain to 0.25. Build knob RPDE_SHIP_STATS_MASK.
+STATS_MASK = False
 R1_FP32 = True             # True: width term + running sum in float32 (Ramesh 09-25: gains identical to 3 decimals, ~half the
                            # memory traffic and V100 fp32 rate); False: float64, bit-matching his numpy reference
 _SIGMA_G = 0.0563870259
@@ -332,9 +343,6 @@ class _CausalBandScalerT:
     def kfield(self):                        # -> (1,1,H,W,C) float32, from PAST windows only
         kh = _r1_box3(self.ks[self.cum.argmax(0)])
         k = 1.0 + (kh - 1.0) * self.n / (self.n + self.n0)          # n = 0 -> exactly 1.0
-        if R1_SNAP:
-            j = (self.ks[:, None, None, None] - k[None]).abs().argmin(0)
-            return self.ks32[j][None, None]
         return k.to(torch.float32)[None, None]
 
     @torch.no_grad()
@@ -430,6 +438,9 @@ class FrozenEnsemble:
             self.sigpow = torch.tensor([float(SIGPOW[0]), float(SIGPOW[1])], dtype=torch.float32, device=device)
         self.Ad = torch.from_numpy(_A).to(device)
         self.Bd = torch.from_numpy(_B).to(device)
+        if PREV_SPACE not in ("input", "target"):
+            raise RuntimeError(f"PREV_SPACE must be 'input' or 'target', not {PREV_SPACE!r}")
+        self.prev_in = PREV_SPACE == "input"
 
         # Static I/O buffers.  They are the graph's inputs and outputs, so they must be the
         # same storage on every step -- which is also why they are allocated once here.
@@ -437,8 +448,13 @@ class FrozenEnsemble:
         self.go = torch.zeros((1, T_OUT, H, W, 3), dtype=torch.float32, device=device)
         self.gl = torch.zeros_like(self.go)
         self.gh = torch.zeros_like(self.go)
-        self.host = [torch.empty((1, T_OUT, H, W, 3), dtype=torch.float32,
-                                 pin_memory=cuda) for _ in range(3)]
+        # m2 (2026-09-28): a runtime that refuses page-locked memory must not make get_ttt_model raise; pageable staging is
+        # slower (0.068 vs 0.031 ms per copy, the figure noted in _fetch) but correct. The arena below already had this fallback.
+        try:
+            self.host = [torch.empty((1, T_OUT, H, W, 3), dtype=torch.float32,
+                                     pin_memory=cuda) for _ in range(3)]
+        except Exception:
+            self.host = [torch.empty((1, T_OUT, H, W, 3), dtype=torch.float32) for _ in range(3)]
         self.arena, self.arena_i = None, 0
         if ARENA_STEPS and cuda:
             try:
@@ -464,10 +480,14 @@ class FrozenEnsemble:
             self.gk2 = torch.ones((1, kT, H, W, 2), dtype=torch.float32, device=device) if R1_ASYM else None   # k_hi (R1_ASYM)
             self.gH = torch.zeros((1, T_OUT, H, W, 2), dtype=torch.float32, device=device)
             self.gC = torch.zeros((1, T_OUT, H, W, 2), dtype=torch.float32, device=device)
-            self.r1_z = torch.from_numpy((-_fno.MEAN.astype(np.float64).reshape(-1)[:2]
-                                          / _fno.STD.astype(np.float64).reshape(-1)[:2]).astype(np.float32)).to(device)
+            # A physical-0 (blanked, unscored) target element, in the space the revealed target arrives in (PREV_SPACE).
+            if self.prev_in:
+                self.r1_z = torch.from_numpy((-_fno.MEAN.astype(np.float64).reshape(-1)[:2]
+                                              / _fno.STD.astype(np.float64).reshape(-1)[:2]).astype(np.float32)).to(device)
+            else:
+                self.r1_z = torch.from_numpy((-_MEAN_TGT / _STD_TGT).astype(np.float32)).to(device)
             self.r1_prev = False
-            self.gyp = torch.zeros((1, T_OUT, H, W, 3), dtype=torch.float32, device=device)   # revealed target (input norm)
+            self.gyp = torch.zeros((1, T_OUT, H, W, 3), dtype=torch.float32, device=device)   # revealed target (PREV_SPACE norm)
             self.gflag = torch.zeros((), dtype=torch.float64, device=device)                   # 1 = gyp is valid this step
             # R1 runs on its own CUDA stream, overlapping the member forwards (it only reads the PREVIOUS window's
             # go / gC / gH and the revealed target); joined back before go / gC / gH / gk are used or overwritten.
@@ -484,14 +504,6 @@ class FrozenEnsemble:
         if self.d1x:
             self.dsq = torch.zeros((1, 1, H, W, 2), dtype=torch.float64, device=device)       # sum of squared time-mean errors
             self.dsumf = torch.zeros((1, T_OUT, H, W, 2), dtype=torch.float64, device=device)  # per-frame error sum (lead profile)
-        # sigma_EMA state: vS / vW = forgetting sums of revealed-window variances and weights, vn = revealed windows, gEma = vS / vW.
-        self.sigema = bool(SIGEMA) and self.r1 is not None
-        if self.sigema:
-            self.vS = torch.zeros((1, 1, H, W, 2), dtype=torch.float64, device=device)
-            self.vW = torch.zeros((), dtype=torch.float64, device=device)
-            self.vn = torch.zeros((), dtype=torch.float64, device=device)
-            self.gEma = torch.zeros((1, 1, H, W, 2), dtype=torch.float32, device=device)
-            self.gWt = torch.zeros((), dtype=torch.float32, device=device)
         # VARCAL state: cT / cP = running sums of revealed target variance and of the matching windows' uncalibrated composed variance,
         # cn = revealed windows, gVp = the last window's uncalibrated composed variance (written in the graph), gG = this window's std gain.
         self.vc = bool(VC_N0) and self.r1 is not None and ALPHA > 0
@@ -513,6 +525,9 @@ class FrozenEnsemble:
             self.gYA = torch.zeros((1, T_OUT, H, W, 2), dtype=torch.float32, device=device)
             self.gYB = torch.zeros((1, T_OUT, H, W, 2), dtype=torch.float32, device=device)
             self.gW = torch.full((1, 1, H, W, 2), self.fw0, dtype=torch.float32, device=device)
+        # M3 (2026-09-28): gok = this window's forward was finite (read by the next step's flag; see _body).
+        if self.r1 is not None:
+            self.gok = torch.ones((), dtype=torch.bool, device=device)
         self._streams =([torch.cuda.Stream() for _ in models]
                          if cuda and PAR_STREAMS and len(models) > 1 else None)
         self.graph = None
@@ -540,7 +555,45 @@ class FrozenEnsemble:
         return yi, si, ei
 
     # -- the device-side step, written once and used by both paths ----------------------
+    def _yt(self, yp):
+        """The revealed target in TARGET-normalized space (R1, D1c). PREV_SPACE "input": the exact affine, the op every
+        package of record runs; "target": it already is."""
+        return yp * self.Ad + self.Bd if self.prev_in else yp
+
+    def _ym(self, yp):
+        """The revealed target in MODEL (input-normalized) space, float64 (FAMW). PREV_SPACE "target": the inverse affine."""
+        return yp.double() if self.prev_in else (yp.double() - self.Bd.double()) / self.Ad.double()
+
     def _body(self):
+        """The whole device-side step (captured as one CUDA graph): M3 guards around `_step`.
+
+        M3 (2026-09-28, shipping audit): the ingestion program zeroes every subscore on one non-finite element, and the
+        running statistics accumulate the revealed target with a 0/1 flag, so a single NaN in one revealed window would
+        poison the rest of the trajectory (NaN * 0 is NaN). Head: a revealed target that is not entirely finite updates
+        nothing this step (flag -> 0) and is replaced by zeros, so the flag-gated products stay finite. It sits here, at
+        the head of the captured step, rather than as eager ops in ttt_step: same effect, no extra host-side launches.
+        Tail: a non-finite prediction element becomes 0 and a non-finite bound becomes the prediction, then
+        lower <= P <= upper is re-imposed. A non-finite FORWARD (a NaN input window, an fp16 overflow) makes P non-finite,
+        so the tail also records that (gok), and `_step` writes the fields the NEXT step scores this window by (gC, gH,
+        gC0, gVp) through nan_to_num instead of copy_: that next step then updates nothing, exactly as for a bad target
+        (measured 2026-09-28: without this, one NaN input window zeroed every later prediction of its trajectory through
+        D1c). On finite values every op is the identity (flag * 1.0, gok True, nan_to_num / where pass them through,
+        min/max return the bound because lower <= P <= upper already holds), so the packages of record are unchanged bit
+        for bit. Written for few kernels -- in place, full tensors (channel p is 0 in go / gl / gh) -- because at batch 1
+        each one is a graph node on the critical path: a first version with ~22 extra kernels cost +0.10 ms/step (A100).
+        """
+        if self.r1 is not None:
+            self.gflag.mul_(torch.isfinite(self.gyp).all() & self.gok)
+            self.gyp.nan_to_num_(nan=0.0, posinf=0.0, neginf=0.0)
+        self._step()
+        if self.r1 is not None:
+            torch.all(torch.isfinite(self.go), out=self.gok)
+        self.go.nan_to_num_(nan=0.0, posinf=0.0, neginf=0.0)
+        if self.half0 is not None:
+            torch.where(torch.isfinite(self.gl), torch.minimum(self.gl, self.go), self.go, out=self.gl)
+            torch.where(torch.isfinite(self.gh), torch.maximum(self.gh, self.go), self.go, out=self.gh)
+
+    def _step(self):
         r1s = None
         if self.r1 is not None:
             # R1, inside the graph: score the PREVIOUS window (go / gC / gH are not yet overwritten) against the target
@@ -551,17 +604,22 @@ class FrozenEnsemble:
             with (torch.cuda.stream(r1s) if r1s is not None else contextlib.nullcontext()):
                 yp = self.gyp[..., :2]
                 if R1_ASYM:
-                    self.r1.update_gated_asym(self.go[..., :2], self.gC, self.gH, yp * self.Ad + self.Bd,
+                    self.r1.update_gated_asym(self.go[..., :2], self.gC, self.gH, self._yt(yp),
                                               (yp - self.r1_z).abs() >= R1_UNSCORED_TOL, self.gflag)
                     k_lo, k_hi = self.r1.kfield_asym()
                     self.gk.copy_(k_lo); self.gk2.copy_(k_hi)
                 else:
-                    self.r1.update_gated(self.go[..., :2], self.gC, self.gH, yp * self.Ad + self.Bd,
+                    self.r1.update_gated(self.go[..., :2], self.gC, self.gH, self._yt(yp),
                                          (yp - self.r1_z).abs() >= R1_UNSCORED_TOL, self.gflag)
                     self.gk.copy_(self.r1.kfield())
+        sm = None
+        if STATS_MASK and self.r1 is not None and (self.d1c or self.vc):
+            sm = (self.gyp[..., :2] - self.r1_z).abs() >= R1_UNSCORED_TOL          # scored elements of the revealed target
         if self.d1c:
             # Score the PREVIOUS window's uncorrected C against the target revealed this step (gated by gflag, no host branch).
-            ef = self.gC0 - (self.gyp[..., :2] * self.Ad + self.Bd)
+            ef = self.gC0 - self._yt(self.gyp[..., :2])
+            if sm is not None:
+                ef = ef * sm                          # STATS_MASK: an unscored element carries no error
             e = ef.mean(1, keepdim=True)
             self.dsum.add_(e.double() * self.gflag)
             self.dn.add_(self.gflag)
@@ -586,28 +644,29 @@ class FrozenEnsemble:
                 self.gD.copy_((-b_).to(torch.float32))
             else:
                 self.gD.copy_(-(self.dsum / (self.dn + D1C_N0)))
-        if self.sigema:
-            # The target revealed this step belongs to the PREVIOUS window: fold its per-pixel variance in (gated, no host branch).
-            v = self.gyp[..., :2].var(1, keepdim=True, unbiased=bool(SIGEMA_DDOF)).double()
-            fac = 1.0 + (SIGEMA_BETA - 1.0) * self.gflag
-            self.vS.mul_(fac).add_(v * self.gflag)
-            self.vW.mul_(fac).add_(self.gflag)
-            self.vn.add_(self.gflag)
-            self.gEma.copy_(self.vS / torch.clamp(self.vW, min=1e-12))
-            self.gWt.copy_(self.vn / (self.vn + SIGEMA_N0))
         if self.vc:
             # PREVIOUS window: revealed target variance against that window's uncalibrated composed variance (gVp not yet overwritten).
-            self.cT.add_(self.gyp[..., :2].var(1, unbiased=False)[0].double() * self.gflag)
-            self.cP.add_(self.gVp[0, 0].double() * self.gflag)
+            vt = self.gyp[..., :2].var(1, unbiased=False)[0].double()
+            if not self.prev_in:
+                vt = vt / (self.Ad.double() * self.Ad.double())          # target space -> model space (PREV_SPACE "target")
+            vp = self.gVp[0, 0].double()
+            if sm is not None:
+                full = sm.all(1)[0]                   # STATS_MASK: (H,W,2) pixel scored in all 20 frames of that window
+                vt = vt * full; vp = vp * full
+            self.cT.add_(vt * self.gflag)
+            self.cP.add_(vp * self.gflag)
             self.cn.add_(self.gflag)
-            g = torch.clamp(_r1_box3(self.cT) / torch.clamp(_r1_box3(self.cP), min=1e-12), VC_CLIP[0], VC_CLIP[1])
+            bP = _r1_box3(self.cP)
+            g = torch.clamp(_r1_box3(self.cT) / torch.clamp(bP, min=1e-12), VC_CLIP[0], VC_CLIP[1])
+            if sm is not None:
+                g = torch.where(bP > 0, g, torch.ones_like(g))                   # no scored window near this pixel: g = 1
             g = 1.0 + (g - 1.0) * (self.cn / (self.cn + VC_N0))          # n = 0 -> exactly 1.0
             self.gG.copy_(torch.sqrt(g).to(torch.float32)[None, None])
         if self.fw:
             # PREVIOUS window's family means (gYA / gYB not yet overwritten) against the target revealed this step.
             d_ = (self.gYB - self.gYA).double()
             self.fA.add_((d_ * d_).sum(1)[0] * self.gflag)
-            self.fB.add_((d_ * (self.gyp[..., :2].double() - self.gYA.double())).sum(1)[0] * self.gflag)
+            self.fB.add_((d_ * (self._ym(self.gyp[..., :2]) - self.gYA.double())).sum(1)[0] * self.gflag)
             self.fn.add_(self.gflag)
             w_ = torch.clamp(_r1_box3(self.fB) / torch.clamp(_r1_box3(self.fA), min=1e-12), 0.0, 1.0)
             w_ = self.fw0 + (w_ - self.fw0) * (self.fn / (self.fn + FW_N0))   # n = 0 -> exactly w0
@@ -661,8 +720,6 @@ class FrozenEnsemble:
             m_ = y.mean(1, keepdim=True)
             s_ = y.std(1, keepdim=True, unbiased=False)
             sa = sig
-            if self.sigema:                  # ALPHA's sigma only; the band below still reads sigma_head
-                sa = torch.where(self.gWt > 0, torch.sqrt(self.gWt * self.gEma + (1.0 - self.gWt) * sig * sig), sig)   # n = 0: sigma_head exactly
             if JOINT_GAIN:
                 w_ = (self.std * self.std).float()
                 t_ = ALPHA * sa + (1 - ALPHA) * s_
@@ -670,19 +727,13 @@ class FrozenEnsemble:
                        / (torch.sqrt((s_ * s_ * w_).sum(-1, keepdim=True)) + 1e-7))
                 if self.vc:
                     # E1 merge (09-27): VARCAL must see the variance of the field JOINT_GAIN actually composes: per channel it is
-                    # (s_ * gain)^2, the gain from sigma_head (uncalibrated, as in the per-channel branch: sig, not sa).
-                    if self.sigema:
-                        tu_ = ALPHA * sig + (1 - ALPHA) * s_
-                        gu_ = (torch.sqrt((tu_ * tu_ * w_).sum(-1, keepdim=True))
-                               / (torch.sqrt((s_ * s_ * w_).sum(-1, keepdim=True)) + 1e-7))
-                    else:
-                        gu_ = gj_
-                    self.gVp.copy_((s_ * gu_) ** 2)
+                    # (s_ * gain)^2, the gain from sigma_head (uncalibrated).
+                    torch.nan_to_num((s_ * gj_) ** 2, nan=0.0, posinf=0.0, neginf=0.0, out=self.gVp)          # M3: stored for the next step
                     y = m_ + (y - m_) * (gj_ * self.gG)
                 else:
                     y = m_ + (y - m_) * gj_
             elif self.vc:
-                self.gVp.copy_((ALPHA * sig + (1 - ALPHA) * s_) ** 2)       # uncalibrated composed variance of THIS window (read next step)
+                torch.nan_to_num((ALPHA * sig + (1 - ALPHA) * s_) ** 2, nan=0.0, posinf=0.0, neginf=0.0, out=self.gVp)   # uncalibrated composed variance of THIS window (read next step; M3)
                 y = m_ + (y - m_) * (((ALPHA * sa + (1 - ALPHA) * s_) * self.gG) / (s_ + 1e-6))
             else:
                 y = m_ + (y - m_) * ((ALPHA * sa + (1 - ALPHA) * s_) / (s_ + 1e-6))
@@ -693,7 +744,7 @@ class FrozenEnsemble:
         if r1s is not None:
             torch.cuda.current_stream().wait_stream(r1s)     # R1 has finished reading go / gC / gH and writing gk
         if self.d1c:
-            self.gC0.copy_(y0 * self.Ad + self.Bd)
+            torch.nan_to_num(y0 * self.Ad + self.Bd, nan=0.0, posinf=0.0, neginf=0.0, out=self.gC0)           # M3: stored for the next step
             self.go[..., :2] = y * self.Ad + self.Bd + self.gD
         else:
             self.go[..., :2] = y * self.Ad + self.Bd
@@ -716,7 +767,7 @@ class FrozenEnsemble:
                 half = half * torch.clamp((er * self.std) / self.eref, 0.3, 3.0) ** self.err["q"]
         half_hi = None
         if self.r1 is not None:
-            self.gH.copy_(half.expand_as(self.gH))
+            torch.nan_to_num(half.expand_as(self.gH), nan=0.0, posinf=0.0, neginf=0.0, out=self.gH)           # M3: stored for the next step
             if self.gk2 is not None:
                 half_hi = half * self.gk2
             half = half * self.gk
@@ -724,7 +775,7 @@ class FrozenEnsemble:
             half_hi = half                   # symmetric (R1 / no R1): the same tensor, so the ops below are unchanged
         if CENTRE_ALPHA == ALPHA or sig is None or HIST_BETA:
             if self.r1 is not None:
-                self.gC.copy_(self.go[..., :2])
+                torch.nan_to_num(self.go[..., :2], nan=0.0, posinf=0.0, neginf=0.0, out=self.gC)
             self.gl[..., :2] = self.go[..., :2] - half
             self.gh[..., :2] = self.go[..., :2] + half_hi
             return
@@ -736,7 +787,7 @@ class FrozenEnsemble:
         if CENTRE_ALPHA != 0.0:
             c = c + (CENTRE_ALPHA / ALPHA) * (self.go[..., :2] - c)
         if self.r1 is not None:
-            self.gC.copy_(c)
+            torch.nan_to_num(c, nan=0.0, posinf=0.0, neginf=0.0, out=self.gC)                                 # M3: stored for the next step
         self.gl[..., :2] = torch.minimum(c - half, self.go[..., :2])
         self.gh[..., :2] = torch.maximum(c + half_hi, self.go[..., :2])
 
@@ -775,13 +826,11 @@ class FrozenEnsemble:
             GRAPH_WORST = worst
             self.graph = g if worst <= GRAPH_TOL else None
             if self.r1 is not None:                  # warm-up / probe ran with gflag 0 (no update), but be exact
-                self.r1.reset(); self.gk.fill_(1.0); self.gflag.fill_(0.0)
+                self.r1.reset(); self.gk.fill_(1.0); self.gflag.fill_(0.0); self.gok.fill_(True)
                 if self.gk2 is not None:
                     self.gk2.fill_(1.0)
             if self.d1c:
                 self.dsum.zero_(); self.dn.zero_(); self.gD.zero_()
-            if self.sigema:
-                self.vS.zero_(); self.vW.zero_(); self.vn.zero_(); self.gEma.zero_(); self.gWt.zero_()
             self._reset_c()
         except Exception as e:
             global GRAPH_ERR
@@ -804,11 +853,10 @@ class FrozenEnsemble:
             if self.gk2 is not None:
                 self.gk2.fill_(1.0)
             self.gflag.fill_(0.0)
+            self.gok.fill_(True)
             self.r1_prev = False
         if self.d1c:
             self.dsum.zero_(); self.dn.zero_(); self.gD.zero_()
-        if self.sigema:
-            self.vS.zero_(); self.vW.zero_(); self.vn.zero_(); self.gEma.zero_(); self.gWt.zero_()
         self._reset_c()
 
     def _reset_c(self) -> None:          # VARCAL / FAMW / D1c-EB per-trajectory state (design C); no-op when all are off
@@ -850,8 +898,6 @@ class FrozenEnsemble:
             self.r1_prev = True
         srcs = (self.go,) if self.half0 is None else (self.go, self.gl, self.gh)
         out = self._fetch(srcs, x.is_cuda)
-        if FALLBACK_FP and self.graph is None:
-            out[0].add_(out[0].mean(1, keepdim=True), alpha=float(FALLBACK_FP))
         if NUMPY_OUT and not x.is_cuda:
             out = [o.numpy() for o in out]
         if DIAG and not getattr(self, "_diag_step", False):
@@ -867,12 +913,16 @@ class FrozenEnsemble:
 
         Two things this gets right that the obvious version does not.
 
-        **The clone is not optional.**  The evaluator keeps every prediction until the run
-        ends, and these buffers are overwritten on the next step, so handing them back makes
-        all N predictions equal to the last one -- rel-L2 0.67 instead of 0.074.  Every local
-        harness hides it, because the kit's `local_eval` and our `stream_eval` both copy out of
-        the returned tensor on the same line.  `validate_t2.py` asserts it, and caught exactly
-        this on its first GPU run.
+        **Never hand back a buffer that the next step overwrites.**  The evaluator keeps every
+        prediction until the run ends, so returning go/gl/gh (or one reused staging buffer)
+        makes all N predictions equal to the last one -- rel-L2 0.67 instead of 0.074.  Every
+        local harness hides it, because the kit's `local_eval` and our `stream_eval` both copy
+        out of the returned tensor on the same line.  `validate_t2.py` asserts it, and caught
+        exactly this on its first GPU run.  Each step therefore gets storage of its own: for a
+        CPU input, its own slot of the pinned arena (ARENA_STEPS, allocated at load -- the default
+        path of the final package, no clone), and once the arena is used up (or could not be
+        allocated) a clone of the pinned staging buffer; for a CUDA input, a device clone.
+        (Docstring corrected 2026-09-28: it used to say the clone is not optional.)
 
         **The device is matched to the input's**, not fixed.  The kit's `local_eval` holds its
         normalizer statistics on the CPU and would raise on a CUDA return; the kit's own
@@ -885,7 +935,7 @@ class FrozenEnsemble:
             return [s.clone() for s in srcs]
         if not self.device.startswith("cuda"):
             return [s.clone() for s in srcs]
-        if self.arena is not None and self.arena_i < int(ARENA_STEPS) and not STACKED_OUT:
+        if self.arena is not None and self.arena_i < int(ARENA_STEPS):
             j = self.arena_i
             self.arena_i = j + 1
             outs = [self.arena[i][j] for i in range(len(srcs))]
@@ -896,9 +946,6 @@ class FrozenEnsemble:
         for i, s in enumerate(srcs):
             self.host[i].copy_(s, non_blocking=True)   # pinned: 0.031 ms vs 0.068 pageable
         torch.cuda.synchronize()
-        if STACKED_OUT and len(srcs) > 1:
-            out = torch.stack([self.host[i] for i in range(len(srcs))], 0)     # one new storage, caller-owned
-            return [out[i] for i in range(len(srcs))]
         return [self.host[i].clone() for i in range(len(srcs))]
 
 def _load_band(submission_dir: str):
@@ -970,6 +1017,11 @@ def get_ttt_model(submission_dir: str, device: str):
     dev = str(device) if device else ("cuda" if torch.cuda.is_available() else "cpu")
     if dev.startswith("cuda") and not torch.cuda.is_available():
         dev = "cpu"
+    if dev.startswith("cuda") and torch.device(dev).index is not None:
+        # m1 (2026-09-28): the side streams, the graph capture and every torch.cuda.synchronize() in this file act on the
+        # CURRENT device. With device "cuda:N" != current they would target the wrong GPU, and _fetch's synchronize would not
+        # wait for the arena copy before the host reads it. Make the requested device current once, here (untimed).
+        torch.cuda.set_device(torch.device(dev))
     ckpts = [p for p in [os.path.join(submission_dir, "fno.pth")]
              + [os.path.join(submission_dir, f"fno_{i}.pth") for i in range(2, 17)]
              if os.path.exists(p)]
@@ -994,11 +1046,11 @@ def get_ttt_model(submission_dir: str, device: str):
     if DIAG:
         try:
             aff = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None
-            gpu = torch.cuda.get_device_name(0) if dev.startswith("cuda") else "cpu"
+            gpu = torch.cuda.get_device_name(torch.device(dev)) if dev.startswith("cuda") else "cpu"
             print(f"[rpde-t2] load: gpu {gpu!r} cpus {os.cpu_count()} affinity {aff} torch {torch.__version__} "
-                  f"cuda {torch.version.cuda} amp {AMP_ACTIVE} par_streams {PAR_STREAMS} r1 {R1} r1_asym {R1_ASYM} r1_tsm {R1_TSM} r1_blk_n0 {R1_BLK_N0} r1_blk {R1_BLK} d1c_n0 {D1C_N0} d1c_eb {D1C_EB} d1c_eb_n0 {D1C_EB_N0} d1c_lead_n0 {D1C_LEAD_N0} vc_n0 {VC_N0} fw_n0 {FW_N0} sigpow {SIGPOW} sigema {SIGEMA} b {SIGEMA_BETA} n0 {SIGEMA_N0} alpha {ALPHA} joint_gain {JOINT_GAIN} centre_alpha {CENTRE_ALPHA} "
+                  f"cuda {torch.version.cuda} amp {AMP_ACTIVE} par_streams {PAR_STREAMS} r1 {R1} r1_asym {R1_ASYM} r1_tsm {R1_TSM} r1_blk_n0 {R1_BLK_N0} r1_blk {R1_BLK} d1c_n0 {D1C_N0} d1c_eb {D1C_EB} d1c_eb_n0 {D1C_EB_N0} d1c_lead_n0 {D1C_LEAD_N0} vc_n0 {VC_N0} fw_n0 {FW_N0} sigpow {SIGPOW} prev_space {PREV_SPACE} stats_mask {STATS_MASK} alpha {ALPHA} joint_gain {JOINT_GAIN} centre_alpha {CENTRE_ALPHA} "
                   f"graph {'CAPTURED' if m.graph is not None else 'NONE'} graph_worst {GRAPH_WORST} graph_tol {GRAPH_TOL} "
-                  f"graph_err {GRAPH_ERR} fallback_fp {FALLBACK_FP} stacked_out {STACKED_OUT} numpy_out {NUMPY_OUT} members {len(ckpts)}", flush=True)
+                  f"graph_err {GRAPH_ERR} numpy_out {NUMPY_OUT} members {len(ckpts)}", flush=True)
         except Exception as e:
             print(f"[rpde-t2] load report failed: {e!r}", flush=True)
     return m

@@ -7,11 +7,16 @@ submission zip carries no path assumptions and no accidental h5py/scipy imports 
 present in the Track 1 evaluation container; `unet/model.py` imports h5py, lazily, and is
 therefore not importable material for a zip).
 
-Round 12 ships a MIXED ensemble: 8 FNO members plus one U-Net. Both classes expose the same
-`forward(prev, detach_var=False) -> (field, logstd)` contract, so `predict_fno` averages them
-without a special case and `fuse` gives the U-Net its own group (its state_dict keys differ
-from every FNO's, so it can never be folded into a StackedFNO). Use `load_any`, not `load`,
-anywhere a member list may contain one.
+Every family exposes the same `forward(prev, detach_var=False) -> (field, logstd)` contract, so
+`predict_fno` averages a MIXED ensemble without a special case and `fuse` gives each architecture
+its own group (state_dict keys differ across families, so they are never folded together). Use
+`load_any`, not `load`, anywhere a member list may contain more than one family.
+
+What the final packages (2026-09-27) run from this file: 4 F-FNO members (`FFNO2d`, w40 L8, fused
+into one `StackedFFNO`, dense spectral path) + 2 ViT members (`ViT2d`, d384 L8, one `StackedViT`),
+int8-packed (`dequant8`), averaged uniformly over the 6 members by `predict_fno` (Track 1) or by
+Track 2's own `_body`. The other families (FNO2d / StackedFNO, UNetTwoHead, UFNO2d, AFNO2d, Swin)
+do not ship; they stay because ~25 repo tools and `reproduce.sh` still load them (2026-09-28).
 """
 from __future__ import annotations
 
@@ -1669,7 +1674,8 @@ FFNO_VARIANTS = {"ffno": {"ff": True}, "ffno_nff": {"ff": False}}
 FFNO_IMPL = "auto"
 # The spectral path `load_any` gives every F-FNO member: None keeps the as-built one (the as-trained
 # FFTs); "dense" (1-D FFTs as matmuls on a precomputed real basis, fp16-native) or "fft". A package
-# bakes it per track, as SPEC_PATH is baked: dense for Track 1's batch, fft for Track 2's batch 1.
+# bakes it per track, as SPEC_PATH is baked. Both final packages (09-27) bake "dense" on BOTH tracks (fft was the
+# Track-2 choice of the T2R13 era; the batch-1 graph now runs dense too). (Comment refreshed 2026-09-28.)
 FFNO_PATH = None
 # FFNO_TILE: rows of the batch the FUSED F-FNO stack's dense spectral stage processes at a time.
 # Measured 09-18 (job 7370333, profiler + interleaved bench on the L8 twins at b64 fp16): the whole
@@ -1995,8 +2001,8 @@ class StackedFFNO(nn.Module):
     The P2-L8 package line (F-FNO L8 x4 + ViT x2) projects best on Track 1 only if the four F-FNOs
     cost one invocation (+1.151 board ms each otherwise). Structure is read off the members (modes,
     padding, feed-forward or point/GroupNorm, depth) and the spectral path is the members' own
-    (`set_spectral_path` switches the whole stack): dense for Track 1's batch, fft for Track 2's
-    batch 1. Channels are member-major throughout: the lift's first conv reads the shared input
+    (`set_spectral_path` switches the whole stack): both final packages run dense, on Track 1's batch
+    and on Track 2's batch-1 graph alike (fft was Track 2's choice before 09-27). Channels are member-major throughout: the lift's first conv reads the shared input
     once (K*128 outputs), every later conv is grouped by K, the LayerNorms normalize once with a
     per-member affine, and the 1x1 heads are batched matmuls on tokens (`_StkPoint`).
     `forward` returns the member mean of the field and log(mean(exp(clamped logstd))), the
@@ -2459,7 +2465,8 @@ def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
     # band_gpu (D2, 09-25): (base_dev (1,20,H,W,3), ref (1,1,H,W,>=2) host, p, lower_out, upper_out, centred).
     # The SPS interval is finished HERE, per chunk, on the GPU, instead of in five full-size host passes
     # after the loop (0.59 ms/window on one CPU core, d2_profile run 20260925-043642). Bit-identical to the
-    # host path: the only non-exact op, the sigma-ratio pow, stays on the HOST in numpy exactly as there
+    # host path WITHOUT an EBAND (with one, the host twin in Track 1's submission.py computes the same exp/log
+    # factor on the CPU and agrees to float rounding only -- 2026-09-28): the only non-exact op, the sigma-ratio pow, stays on the HOST in numpy exactly as there
     # (numpy f32 pow != a float64-rounded or CUDA pow on ~0.06 % of values); everything done on the GPU --
     # one multiply, then subtract/add and min/max as SEPARATE kernels (no FMA) -- is exact IEEE float32.
     # `centred` False: interval = pred -/+ half; True: centre = the pre-compose mean y0 (CENTRE_ALPHA 0).
@@ -2616,12 +2623,20 @@ def predict_fno(model, x_raw: np.ndarray, device: str, alpha: float = 0.75,
                     fac = torch.exp(eband_yhat(c_dev, sig * std, xb[:len(yp)], beta_dev, eb_clip))
                 h2 = half[..., :2] * fac if eb_mode == "mult" else fac
                 half = torch.cat([h2, half[..., 2:]], -1)
+            # M3 (2026-09-28, shipping audit): the ingestion program zeroes EVERY subscore on one non-finite element, and the
+            # private set is out of range in Re, where an fp16 overflow is no longer impossible. So: a non-finite prediction
+            # element becomes 0, a non-finite bound becomes the (finite) prediction, and the interval is widened to contain
+            # it. On finite values every op below is the identity (nan_to_num/where pass them through; lo <= p3 <= hi already
+            # holds on both branches, so min/max return lo/hi), which is why the packages of record are unchanged bit for bit.
+            yp = torch.nan_to_num(yp, nan=0.0, posinf=0.0, neginf=0.0)
             p3 = torch.zeros_like(half); p3[..., :2] = yp
             if centred:
                 c3 = torch.zeros_like(half); c3[..., :2] = c_dev
                 lo = torch.minimum(torch.sub(c3, half), p3); hi = torch.maximum(torch.add(c3, half), p3)
             else:
                 lo = torch.sub(p3, half); hi = torch.add(p3, half)
+            lo = torch.minimum(torch.where(torch.isfinite(lo), lo, p3), p3)
+            hi = torch.maximum(torch.where(torch.isfinite(hi), hi, p3), p3)
             torch.from_numpy(lo_out)[i:i + batch].copy_(lo)
             torch.from_numpy(hi_out)[i:i + batch].copy_(hi)
             if D2_DIRECT_PRED and dst.shape[-1] == 3 and dst.flags.c_contiguous:

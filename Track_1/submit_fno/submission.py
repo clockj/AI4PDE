@@ -1,42 +1,48 @@
-"""RealPDE Track 1 submission: 0.90M FNO trained with a velocity-gradient matching loss.
+"""RealPDE Track 1 submission: a 6-member ensemble (4 F-FNO + 2 ViT) with a sigma-scaled SPS band.
 
 This is a plain forecaster. It reads only its own input window, uses no cross-window
 information, and would score the same if the evaluator called it one window at a time.
 
 Zip layout (all at the archive ROOT):
 
-    submission.py      <- this file
-    _fno.py            <- self-contained FNO2d, mirrors Track_1/unet/models_alt.py
-    fno.pth            <- the checkpoint (see README.md for which run)
-    band.npy           <- per-element SPS half-widths from fit_band.py
+    submission.py      <- this file (constants baked by build_round13.sh / build_final.sh)
+    _fno.py            <- self-contained model code (FFNO2d, ViT2d, their fused stacks, predict_fno)
+    fno.pth, fno_2..6.pth  <- the members, int8-packed; each blob names its own architecture
+    band.npz           <- the SPS band: per-element `base`, `sigma_ref`, `p`, `centre_alpha`
 
 Needs only torch + numpy, both present in the evaluation image
 (pytorch/pytorch:2.2.2-cuda12.1-cudnn8-runtime). It imports no scipy / h5py / matplotlib /
 pandas / einops, none of which exist there.
 
-WHAT THE MODEL IS
------------------
-A 4-layer Fourier neural operator, width 24, modes (8, 12) -- 0.90M parameters, 3.6 MB,
-0.109 ms/window. It carries a per-pixel log-std head alongside the field head; at inference the
-predicted fluctuation is rescaled toward that std (ALPHA below), which trades rel-L2 for TKE at
-a rate the scorer likes.
+THE MODEL (final package of record, 2026-09-27; this docstring refreshed 2026-09-28)
+---------
+fno.pth .. fno_4.pth are four F-FNO members (w40, 8 layers, modes 16 x 32, trained with sim
+co-training) and fno_5 / fno_6 two ViTs (d384, 8 layers, 6 heads). `_fno.fuse` folds them into
+two invocations, a StackedFFNO(4) and a StackedViT(2). Each member has a field head and a
+per-pixel log-std (sigma) head.
 
-It was trained with an extra loss term matching the TARGET's velocity-gradient tensor. Measured
-on 8 held-out trajectories (336 windows), that term is worth +0.74 final over the same network
-without it, and it is the only class of change in five rounds that improves rel-L2, TKE and MVPE
-at the same time. Ablation: constraining one invariant of grad(u) alone (divergence OR
-vorticity) gives 86.53-86.57; constraining both gives 86.67-86.68; adding the strain rates on
-top changes nothing.
-
-Local score on those held-out trajectories: 86.68. The hidden test set has historically run
-~1.7 points below local, so expect ~85.
+WHAT predict() DOES (GPU, the shipped path -- `_fno.predict_fno` with `band_gpu`)
+------------------
+Per chunk of at most BATCH_CAP = 56 windows:
+  1. upload, normalize with _fno.MEAN / STD, run both groups under fp16 autocast (AMP, verified
+     against fp32 at import), and average the six members uniformly -> y0 (field) and sigma;
+  2. compose: rescale each pixel's temporal fluctuation toward ALPHA*sigma + (1-ALPHA)*std_t(y0),
+     ONE gain per pixel for u and v (JOINT_GAIN), ALPHA = 0.80 -> the prediction P;
+  3. band: half = base * clip(sigma/sigma_ref, 0.3, 3)^p * (sigma + 1e-8)^q_c (EBAND, the
+     SIGBLEND factor), centred on y0 (CENTRE_ALPHA 0) and widened to contain P:
+     lower = min(y0 - half, P), upper = max(y0 + half, P); pressure bounds are 0;
+  4. a non-finite element is sanitized (P -> 0, bound -> P) -- the identity on finite values;
+  5. P and the bounds are written straight into caller-owned (pinned, PIN_OUT) host buffers.
+Everything load-time (members, fuse, the AMP probe, the batch pick, the pinned pool, warm-up of
+every tail shape) runs at import, which the evaluator does not time. Without CUDA the same model
+runs in fp32 on the CPU and the band is finished on the host (`_predict`'s host path).
 
 WHAT IT IS NOT
 --------------
 Track 1 tiles its windows at a stride equal to the output horizon and passes them all to
 predict() at once, so window k's target is window k+1's input and a submission can read the
-answers out of its own argument. This file deliberately does not. See ../submit_trick/ for the
-measurement of that leak and the disclosure sent to the organizers.
+answers out of its own argument. This file deliberately does not. See Track_1/archive/submit_trick/
+for the measurement of that leak and the disclosure sent to the organizers.
 """
 from __future__ import annotations
 
@@ -107,6 +113,9 @@ torch.backends.cudnn.allow_tf32 = _TF32
 #   27.6 % of a Track-2 step, and is worth -16.6 % there -- while on Track 1's batched path it
 #   is +1.6 % SLOWER, because the copy it removes is O(1) in batch and the `cat` it adds is
 #   O(batch). One switch, opposite signs on the two tracks; set it per track, never globally.
+# (2026-09-28) Both are INERT in the final package: the GPU-band path writes the prediction with one direct copy
+# (D2_DIRECT_PRED) and never reaches the HOST_WRITE branch, and SPEC_PATH steers only FNO2d stacks, of which the final
+# member set has none. Kept because the recipes before it (reproduce.sh r25) do use them.
 HOST_WRITE = "torch"
 SPEC_PATH = "bmm"
 # FUSE = False  keeps every member as its own module instead of collapsing same-architecture
@@ -138,50 +147,32 @@ _AMP_DT = {"fp16": torch.float16}.get(AMP) if AMP is not None else _fno._AMP
 AMP_ACTIVE = None
 AMP_PROBE_DIFF = None
 
-# GRAPH is BAKED like AMP (round 26). The board charges Track 1 ~1.15 ms per model INVOCATION
-# (R23) -- kernel launches, not FLOPs -- and xfam6 is two invocations per chunk. Track 2 removed
-# exactly that cost with a CUDA graph. True captures the whole device-side chunk of
-# `_fno.predict_fno` -- normalization, every fused group, the member average, compose,
-# denormalization and sigma -- once at import (untimed), at `_pick_batch`'s chunk size, and
-# VERIFIES it against the shipped eager `predict_fno` on a probe: anything that raises, or any
-# disagreement at all, keeps the eager path. `GRAPH_ACTIVE` records what runs. Full chunks replay
-# the graph; a tail shorter than a chunk runs eager at its own size, so every window gets the eager
-# path's numbers bit for bit (a padded tail moved fp16 predictions by 1.5e-3, job 7281411).
+# PRUNED 2026-09-28 (none ever shipped in a package of record, and no reproduce.sh recipe sets them; the last tree that has
+# them is commit fdac00b, and build_round13.sh now REFUSES their RPDE_SHIP_* variables at a non-default value):
+#   GRAPH / GRAPH_FP / _Graphed / _capture_graph  -- R26/R27's CUDA graph of predict()'s chunk (+0.565 board ms, closed);
+#   SMALL_GRAPH / SMALL_N / SMALL_GRAPH_LAZY       -- the L3 batch-1 graph for tiny calls (09-26 arms);
+#   BATCH_FP / GPU_FP                              -- the audit-2 batch-size fingerprints on the time mean;
+#   LN_MANUAL                                      -- K1's hand-written LayerNorm (not bit-identical; _fno.LN_MANUAL stays
+#                                                     False and its code is left in _fno.py, unreachable from here);
+#   the legacy band.npy fallback                   -- July packages; every package since carries band.npz.
 #
-# THE FINGERPRINT. A replayed graph is bit-exact, so a board result could not tell a graph that
-# ran from one that silently fell back. The graph path therefore scales the SPS band's `base`
-# by (1 + GRAPH_FP), once at import: rel_l2 / tke / mvpe cannot move, and sps moves by a small,
-# locally measured amount (`verify/graph_path.py`). Board sps identical to the eager package's
-# means the fallback ran.
-GRAPH = False
 # GPU_BAND (D2, 2026-09-25): finish the SPS interval on the GPU inside predict_fno's chunk loop (see _fno.predict_fno
 # band_gpu) and hand a float64 input to the GPU unconverted. Measured on one CPU core (d2_profile run 20260925-043642):
-# the host-side band cost 0.59 ms/window and a float64->float32 host conversion 0.17. Used only where it is BIT-IDENTICAL
-# to the host path (sigma-scaled static band, no err head, no blend, centre = pred or CENTRE_ALPHA 0, no graph); else the
-# host path below runs unchanged.
+# the host-side band cost 0.59 ms/window and a float64->float32 host conversion 0.17. Used whenever CUDA is available and
+# the band is a sigma-scaled static band (no err head, no blend, centre = pred or CENTRE_ALPHA 0). Otherwise the host path
+# in _predict runs; with EBAND set it applies the same factor there when EBAND is logsig-only (M4, 2026-09-28: the shipped
+# case, e.g. a container without CUDA) and raises for any other EBAND, which only the GPU path implements.
 GPU_BAND = True
 _BAND_DEV = None
 # DIAG (N1, audit 2, 09-25): one line of load-time facts on stdout at the end of _load() (NOT timed) -- GPU, CPUs, torch/
-# CUDA, batch, AMP, graph, band path -- and one line on the first predict() call (N, dtype). Changes no array.
+# CUDA, batch, AMP, band path -- and one line on the first predict() call (N, dtype). Changes no array.
 DIAG = True
 _DIAG_CALLS = 0
-# BATCH_FP (N1): batch-size fingerprint on the TIME MEAN. For a call with N windows, N < 14 -> eps = BATCH_FP[0],
-# 14 <= N < 100 -> BATCH_FP[1], N >= 100 -> nothing: prediction u,v become P + eps * mean_t(P) (the time mean scaled by
-# 1 + eps, fluctuations untouched). mvpe reads the time mean and is alpha-invariant, so the board's mvpe row says how the
-# evaluator batches predict(). (0.0, 0.0) = off; at N >= 100 the output is bit-identical to the unfingerprinted package.
-BATCH_FP = (0.0, 0.0)
-# GPU_FP (09-26, t1_curve): apply BATCH_FP on the GPU inside predict_fno's GPU-band chunk loop, to each chunk's prediction
-# just before its device->host copy (the band is already computed, as on the host path), instead of on the host after the
-# call. The host version is a single-threaded numpy mean + in-place add over (N,20,32,64,2): ~0.7 ms/window on V100S for
-# N < 100 (t1_curve 09-26: N=98 342 ms/call vs N=111 310). Same eps, same formula (mean_t in fp32, times eps, added);
-# differs from the host version only in the last bit of some elements (reduction order). N >= 100 (eps 0): identical.
-# Used only when the GPU-band path with D2_DIRECT_PRED runs; otherwise the host version applies as before.
-GPU_FP = False
-_GPU_FP_DONE = False
 # EBAND (09-27 T1 arm, #Leaders task #2): None = off. Else (beta, mode, clip): beta = ((6 floats for u), (6 for v)) over the
 # five band_feats.py features + intercept, mode "mult" (half = static half * exp(yhat); variant B) or "replace"
-# (half = exp(yhat)), clip = (lo, hi) on yhat or None. Runs only on the GPU-band path (centred on the alpha-0 field);
-# the prediction is untouched. Baked by build_round13.sh from RPDE_SHIP_EBAND.
+# (half = exp(yhat)), clip = (lo, hi) on yhat or None. Centred on the alpha-0 field; the prediction is untouched. The
+# final package bakes the SIGBLEND literal (features 1..4 zero: half *= (sigma + 1e-8)^beta_c0). Baked by
+# build_round13.sh from RPDE_SHIP_EBAND.
 EBAND = None
 _EBAND_DEV = None
 # WARM_TAILS (Corin / Ilse 09-26): cold-start fix. predict() sees one real input, whose last chunk has N mod batch rows -- a shape
@@ -189,42 +180,20 @@ _EBAND_DEV = None
 # timed call. True: at import, run predict() once for every row count 1..batch, in float32 and float64 (not timed). Outputs of the
 # real call are unchanged bit for bit (same kernels, same inputs); only untimed load time grows.
 WARM_TAILS = False
-# LN_MANUAL (K1, 09-27): the fused stacks' LayerNorm from var_mean + elementwise kernels (see _fno._StkLN). Not bit-identical
-# (6.6e-4 relative on the prediction). Build knob RPDE_SHIP_LN_MANUAL.
-LN_MANUAL = False
-_fno.LN_MANUAL = LN_MANUAL
 # BATCH_CAP (K1, 09-27): > 0 caps the chunk _pick_batch chose. On the A100 the probe picks 112 (one chunk for every
 # N <= 99) but the shipped path at N 99 runs 1.59 ms/window in one chunk against 1.37 in chunks of 56; N <= 56 is unchanged.
 # Same bits (md5 at N 99). Build knob RPDE_SHIP_BATCH_CAP.
 BATCH_CAP = 0
-# SMALL_GRAPH (L3, audit 2 N5, 09-26): if the evaluator calls predict() with few windows at a time (H1), each call runs the
-# batched eager path at a tiny batch. True: at import, also capture predict_fno's device chunk as a CUDA graph at batch 1
-# (verified bit-exact against eager predict_fno at batch 1, prediction / sigma / centre), and serve every call with
-# N < SMALL_N by replaying it window by window; the interval is then finished by the unchanged host path. Outputs equal
-# the eager batch-1 numbers, which differ from the batched ones only by fp16 kernel choice (~1e-4). Off = no change.
-SMALL_GRAPH = False
-SMALL_N = 4                 # l3_test (09-26): batch-1 graph 6.3-6.6 ms/window vs eager 14.96 at N=1 but 4.5 at N=7 and 4.4 at N=13 -> only N <= 3
-SMALL_GRAPH_ACTIVE = None
-# SMALL_GRAPH_LAZY (Jonas / Corin / Ilse 09-26, #Leaders:ab48d221): capture the batch-1 graph not at import but on the SECOND real
-# call with N < SMALL_N (warm-up calls excluded); the first such call runs eager. A process that sees at most one small call never
-# holds a graph and runs exactly the no-L3 code; repeated small calls pay the one-off capture + probe once. Failure -> eager, same outputs.
-SMALL_GRAPH_LAZY = False
-_G1_TRIED = False
 _WARMING = False
-_SMALL_SEEN = 0
-SMALL_GRAPH_DIFF = None
-GRAPH_FP = 1e-4
-GRAPH_ACTIVE = None
-GRAPH_PROBE_DIFF = None
 
 _BAND = os.path.join(_HERE, "band.npz")
 _ERR = None       # err-head band settings read from band.npz by _load(); None = no head term
-_BAND_LEGACY = os.path.join(_HERE, "band.npy")
 
 # fno.pth, then fno_2.pth, fno_3.pth ... as many as were packaged, averaged in raw field space
 # inside _fno.predict_fno. The names are positional only -- build_zip.py numbers members in the
 # order it was given them and `_fno.load_any` reads each one's real architecture out of the
-# blob, so the list is a MIXED ensemble (FNO seeds, mode/width variants, and one U-Net).
+# blob, so the list may be a MIXED ensemble. The final package (09-27) is fno.pth..fno_4.pth = four F-FNO w40 L8 and
+# fno_5 / fno_6 = two ViT d384 L8 (comment refreshed 2026-09-28).
 #
 # Ensembling looked NEGATIVE for four rounds (-0.07 / -0.10) because latency was accounted as
 # forward-pass-only, where a 2nd member nearly doubles the cost. End to end, the forward pass is
@@ -379,7 +348,8 @@ def _pick_batch(models, dev):
     of one card's memory hierarchy. On a larger GPU the fixed per-launch cost (which falls as
     1/batch) should dominate instead and push the optimum back up, so guessing either way risks
     giving back more than the ~0.5 ms it is worth. Any failure falls back to 64, the value four
-    rounds of board results were measured with.
+    rounds of board results were measured with. _load() then clips the result to BATCH_CAP (56 in
+    the final package, 2026-09-27), so on the A100 every chunk of the shipped path is <= 56 rows.
     """
     if dev != "cuda":
         return 64
@@ -400,177 +370,6 @@ def _pick_batch(models, dev):
         return best_b
     except Exception:
         return 64
-
-
-class _Graphed:
-    """The device-side chunk of `_fno.predict_fno`, replayed as one CUDA graph at a fixed size.
-
-    `body` repeats `predict_fno`'s per-chunk arithmetic op for op (same modules, same autocast,
-    same member weighting, same compose, same affine), so a capture that verifies bit-exact
-    against the eager function on a full chunk returns the eager path's arrays.
-    """
-
-    def __init__(self, models, dev, batch, band):
-        self.models, self.batch = models, int(batch)
-        self.mean = torch.from_numpy(_fno.MEAN).to(dev)
-        self.std = torch.from_numpy(_fno.STD).to(dev)
-        B = self.batch
-        self.gx = torch.zeros((B, 20, 32, 64, 3), dtype=torch.float32, device=dev)
-        self.gy = torch.zeros((B, 20, 32, 64, 2), dtype=torch.float32, device=dev)
-        self.gs = torch.zeros((B, 1, 32, 64, 2), dtype=torch.float32, device=dev)
-        self.graph = None
-        self.band_fp = None if band is None else (band * np.float32(1.0 + GRAPH_FP)).astype(np.float32)
-        self.gc = None                   # pre-compose mean (interval centre); only the SMALL_GRAPH instance sets it
-
-    def body(self):
-        B = self.batch
-        xb = self.gx[..., :2].float()
-        prev = ((xb - self.mean) / self.std).permute(0, 1, 4, 2, 3).reshape(B, 40, 32, 64)
-        y = sig = None
-        total = 0
-        for m in self.models:
-            nm = getattr(m, "n_members", 1)
-            total += nm
-            if _AMP_DT is None:
-                raw, logstd = m(prev)[:2]
-            else:
-                with torch.autocast("cuda", dtype=_AMP_DT):
-                    raw, logstd = m(prev)[:2]
-                raw = raw.float()
-                logstd = None if logstd is None else logstd.float()
-            yi = raw.reshape(B, 20, 2, 32, 64).permute(0, 1, 3, 4, 2) * nm
-            y = yi if y is None else y + yi
-            if logstd is not None:
-                si = logstd.clamp(-8.0, 2.0).exp().permute(0, 2, 3, 1).unsqueeze(1) * nm
-                sig = si if sig is None else sig + si
-        if total > 1:
-            y = y / total
-            if sig is not None:
-                sig = sig / total
-        if self.gc is not None:
-            self.gc.copy_((y * self.std + self.mean).float())
-        if sig is not None and ALPHA > 0:
-            m_ = y.mean(1, keepdim=True)
-            f_ = y - m_
-            s_ = y.std(1, keepdim=True, unbiased=False)
-            if JOINT_GAIN:
-                w_ = (self.std * self.std).float()
-                t_ = ALPHA * sig + (1 - ALPHA) * s_
-                y = m_ + f_ * (torch.sqrt((t_ * t_ * w_).sum(-1, keepdim=True))
-                               / (torch.sqrt((s_ * s_ * w_).sum(-1, keepdim=True)) + 1e-7))
-            else:
-                y = m_ + f_ * ((ALPHA * sig + (1 - ALPHA) * s_) / (s_ + 1e-6))
-        if sig is not None:
-            self.gs.copy_((sig * self.std).float())
-        self.gy.copy_((y * self.std + self.mean).float())
-
-    def run1(self, x, pred, sig, centre):
-        """Batch-1 replay, window by window (SMALL_GRAPH). Fills pred[..., :2], sig and centre[..., :2]."""
-        for i in range(len(x)):
-            self.gx.copy_(torch.from_numpy(x[i:i + 1]))
-            self.graph.replay()
-            if sig is not None:
-                sig[i:i + 1] = self.gs.cpu().numpy()
-            torch.from_numpy(pred)[i:i + 1, ..., :2].copy_(self.gy.cpu())
-            if centre is not None:
-                torch.from_numpy(centre)[i:i + 1, ..., :2].copy_(self.gc.cpu())
-
-    def run(self, x, pred, sig):
-        B, n = self.batch, len(x)
-        full = n - n % B
-        for i in range(0, full, B):
-            self.gx.copy_(torch.from_numpy(x[i:i + B]))
-            self.graph.replay()
-            if sig is not None:
-                sig[i:i + B] = self.gs.cpu().numpy()
-            torch.from_numpy(pred)[i:i + B, ..., :2].copy_(self.gy.cpu())
-        if full < n:
-            # The tail runs EAGER, at its own size, exactly as the eager path runs it. fp16 kernels
-            # are chosen per batch size, and a tail padded to the chunk size moved the prediction by
-            # 1.5e-3 (graph_path.py, job 7281411); this way every window gets the eager numbers.
-            _fno.predict_fno(self.models, x[full:], "cuda", alpha=ALPHA, batch=B, out=pred[full:],
-                             sigma_out=None if sig is None else sig[full:], amp=_AMP_DT)
-
-
-def _capture_graph(models, dev, batch, band):
-    """A verified `_Graphed`, or None. Never raises; only ever called at import."""
-    global GRAPH_PROBE_DIFF
-    if not GRAPH or dev != "cuda":
-        return None
-    try:
-        if any(getattr(m, "self_norm", False) for m in models):
-            return None
-        G = _Graphed(models, dev, batch, band)
-        s = torch.cuda.Stream()
-        s.wait_stream(torch.cuda.current_stream())
-        with torch.no_grad(), torch.cuda.stream(s):
-            for _ in range(3):
-                G.body()
-        torch.cuda.current_stream().wait_stream(s)
-        torch.cuda.synchronize()
-        g = torch.cuda.CUDAGraph()
-        with torch.no_grad(), torch.cuda.graph(g):
-            G.body()
-        G.graph = g
-        # Verify against the SHIPPED eager function, on exactly one full chunk.
-        rng = np.random.default_rng(1)
-        probe = np.zeros((G.batch, 20, 32, 64, 3), dtype=np.float32)
-        probe[..., :2] = (_fno.MEAN + _fno.STD * rng.standard_normal((G.batch, 20, 32, 64, 2))).astype(np.float32)
-        ref = np.zeros_like(probe)
-        sref = np.zeros((G.batch, 1, 32, 64, 2), dtype=np.float32)
-        with torch.no_grad():
-            _fno.predict_fno(models, probe, dev, alpha=ALPHA, batch=G.batch, out=ref, sigma_out=sref,
-                             amp=_AMP_DT)
-        outp = np.zeros_like(probe)
-        outs = np.zeros_like(sref)
-        with torch.no_grad():
-            G.run(probe, outp, outs)
-        torch.cuda.synchronize()
-        d = max(float(np.abs(outp - ref).max()), float(np.abs(outs - sref).max()))
-        GRAPH_PROBE_DIFF = d
-        return G if d == 0.0 else None
-    except Exception:
-        return None
-
-
-def _capture_graph1(models, dev, band):
-    """SMALL_GRAPH: a verified batch-1 `_Graphed` with the centre buffer, or None. Never raises; import only."""
-    global SMALL_GRAPH_DIFF
-    if not SMALL_GRAPH or dev != "cuda":
-        return None
-    try:
-        if any(getattr(m, "self_norm", False) for m in models):
-            return None
-        G = _Graphed(models, dev, 1, band)
-        G.band_fp = band                                  # no band fingerprint on this path
-        G.gc = torch.zeros((1, 20, 32, 64, 2), dtype=torch.float32, device=dev)
-        s = torch.cuda.Stream()
-        s.wait_stream(torch.cuda.current_stream())
-        with torch.no_grad(), torch.cuda.stream(s):
-            for _ in range(3):
-                G.body()
-        torch.cuda.current_stream().wait_stream(s)
-        torch.cuda.synchronize()
-        g = torch.cuda.CUDAGraph()
-        with torch.no_grad(), torch.cuda.graph(g):
-            G.body()
-        G.graph = g
-        rng = np.random.default_rng(2)
-        probe = np.zeros((3, 20, 32, 64, 3), dtype=np.float32)
-        probe[..., :2] = (_fno.MEAN + _fno.STD * rng.standard_normal((3, 20, 32, 64, 2))).astype(np.float32)
-        ref, sref, cref = np.zeros_like(probe), np.zeros((3, 1, 32, 64, 2), np.float32), np.zeros_like(probe)
-        with torch.no_grad():
-            _fno.predict_fno(models, probe, dev, alpha=ALPHA, batch=1, out=ref, sigma_out=sref, amp=_AMP_DT, centre_out=cref)
-        outp, outs, outc = np.zeros_like(probe), np.zeros_like(sref), np.zeros_like(probe)
-        with torch.no_grad():
-            G.run1(probe, outp, outs, outc)
-        torch.cuda.synchronize()
-        d = max(float(np.abs(outp - ref).max()), float(np.abs(outs - sref).max()), float(np.abs(outc - cref).max()))
-        SMALL_GRAPH_DIFF = d
-        return G if d == 0.0 else None
-    except Exception as e:
-        SMALL_GRAPH_DIFF = repr(e)[:200]
-        return None
 
 
 def _load():
@@ -603,8 +402,7 @@ def _load():
     # band.npz carries `base` (per-element half-widths), `sigma_ref` (the per-element mean of
     # the variance head's sigma over the fitting split) and `p`. The half-width actually used
     # is base * (sigma_i / sigma_ref)**p, i.e. a per-WINDOW interval: windows the model itself
-    # expects to be turbulent get a wider band. Falls back to the legacy band.npy, where p = 0
-    # reproduces the old fixed band exactly.
+    # expects to be turbulent get a wider band. (The July band.npy fallback was removed 2026-09-28.)
     band = ref = None
     p = 0.0
     if os.path.exists(_BAND):
@@ -628,13 +426,13 @@ def _load():
                         "k": float(z["err_k"]) if "err_k" in z.files else 1.0,
                         "floor": float(z["err_floor"]) if "err_floor" in z.files else 0.0,
                         "ref": None if er is None else er[..., :2]}
-    elif os.path.exists(_BAND_LEGACY):
-        band = np.load(_BAND_LEGACY).astype(np.float32)
     # The ingestion program rejects a non-finite or reversed interval by zeroing EVERY
     # subscore, so the band is checked -- but here, at import, where it is 0.5 MB and free,
     # not inside the timed call where the same guarantee would cost a scan of two 165 MB
-    # arrays. Nothing downstream can break it: subtracting a non-negative half-width from a
-    # finite prediction cannot reorder the bounds, and the sigma scaling is clipped positive.
+    # arrays. With a finite band, subtracting a non-negative half-width cannot reorder the bounds
+    # and the sigma scaling is clipped positive -- but that holds only for a FINITE prediction and
+    # sigma. The GPU path (the shipped one) sanitizes non-finite elements per chunk (M3, 2026-09-28,
+    # _fno.predict_fno); the host path below does not.
     if band is not None and not (np.all(np.isfinite(band)) and np.all(band >= 0.0)):
         band = None
     if band is not None and p and not (ref is not None and np.all(ref > 0.0)):
@@ -658,26 +456,17 @@ def _load():
     batch = _pick_batch(models, dev)
     if BATCH_CAP:
         batch = min(int(batch), int(BATCH_CAP))
-    # Captured AFTER the batch is chosen and AFTER AMP is decided, so the graph records the
-    # chunk size and the precision that will run.
-    global GRAPH_ACTIVE
-    graphed = None if _ERR is not None else _capture_graph(models, dev, batch, band)
-    GRAPH_ACTIVE = (graphed is not None) if GRAPH else None
-    global SMALL_GRAPH_ACTIVE
-    lazy = SMALL_GRAPH and SMALL_GRAPH_LAZY
-    g1 = None if (_ERR is not None or BLEND_BETA or lazy) else _capture_graph1(models, dev, band)
-    SMALL_GRAPH_ACTIVE = ("lazy" if lazy else (g1 is not None)) if SMALL_GRAPH else None
     if DIAG:
         try:
             aff = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None
             gpu = torch.cuda.get_device_name(0) if str(dev).startswith("cuda") else "cpu"
             print(f"[rpde-t1] load: gpu {gpu!r} cpus {os.cpu_count()} affinity {aff} torch {torch.__version__} "
-                  f"cuda {torch.version.cuda} batch {batch} amp {AMP_ACTIVE} graph {GRAPH_ACTIVE} gpu_band {GPU_BAND} "
+                  f"cuda {torch.version.cuda} batch {batch} amp {AMP_ACTIVE} gpu_band {GPU_BAND} eband {EBAND is not None} "
                   f"direct_pred {getattr(_fno, 'D2_DIRECT_PRED', None)} alpha {ALPHA} centre_alpha {CENTRE_ALPHA} "
-                  f"joint_gain {JOINT_GAIN}/{getattr(_fno, 'JOINT_GAIN', None)} batch_fp {BATCH_FP} small_graph {SMALL_GRAPH_ACTIVE} small_graph_diff {SMALL_GRAPH_DIFF} members {len(_CKPTS)}", flush=True)
+                  f"joint_gain {JOINT_GAIN}/{getattr(_fno, 'JOINT_GAIN', None)} members {len(_CKPTS)}", flush=True)
         except Exception as e:
             print(f"[rpde-t1] load report failed: {e!r}", flush=True)
-    return models, dev, band, ref, p, batch, graphed, g1
+    return models, dev, band, ref, p, batch
 
 
 try:
@@ -741,47 +530,50 @@ _pool_init()
 
 def predict(input_array, metadata=None):
     """(N, 20, 32, 64, 3) raw physical -> dict with prediction, lower, upper."""
-    global _GPU_FP_DONE
-    _GPU_FP_DONE = False
     out = _predict(input_array, metadata)
-    n = len(out["prediction"])
-    eps = BATCH_FP[0] if n < 14 else (BATCH_FP[1] if n < 100 else 0.0)
-    if eps and not _GPU_FP_DONE:
-        pu = out["prediction"][..., :2]
-        pu += np.float32(eps) * pu.mean(axis=1, keepdims=True, dtype=np.float32)
     if DIAG:
         global _DIAG_CALLS
         _DIAG_CALLS += 1
         if _DIAG_CALLS == 1:
-            print(f"[rpde-t1] first predict: N {n} dtype {getattr(input_array, 'dtype', type(input_array))}", flush=True)
+            print(f"[rpde-t1] first predict: N {len(out['prediction'])} dtype {getattr(input_array, 'dtype', type(input_array))}",
+                  flush=True)
     return out
 
 
+def _eband_host_factor(sig):
+    """M4 (2026-09-28): the EBAND factor for the HOST band path, or raise.
+
+    Only a logsig-only EBAND (features 1..4 exactly zero, mode "mult", no clip -- the SIGBLEND literal the final package
+    bakes) has a host twin: half_uv *= exp(log(sigma + 1e-8) * beta_c0 + beta_c5), the expression of _fno.predict_fno's
+    fast path, evaluated in float32 torch on the CPU. It agrees with the GPU path to float rounding, not bitwise (CPU and
+    CUDA exp/log differ in the last ulp). Any other EBAND needs the feature stack that only the GPU path builds, so it
+    still raises -- a silently different band would be worse than a loud failure.
+    """
+    beta = np.asarray(EBAND[0], dtype=np.float32)
+    if not (EBAND[1] == "mult" and EBAND[2] is None and beta.shape == (2, 6) and np.all(beta[:, 1:5] == 0.0)):
+        raise RuntimeError("EBAND needs the GPU-band path (cuda, static sigma band, no err head / blend) unless it is "
+                           "logsig-only ('mult', no clip)")
+    b = torch.from_numpy(beta)
+    return torch.exp(torch.log(torch.from_numpy(sig) + 1e-8) * b[:, 0] + b[:, 5])
+
+
 def _predict(input_array, metadata=None):
-    global _state, _G1_TRIED, SMALL_GRAPH_ACTIVE, _SMALL_SEEN
+    global _state
     if _state is None:
         _state = _load()
     models, dev, band, ref, p, batch = _state[:6]
-    graphed = _state[6] if len(_state) > 6 else None
-    g1 = _state[7] if len(_state) > 7 else None
-    if (SMALL_GRAPH and SMALL_GRAPH_LAZY and g1 is None and not _G1_TRIED and not _WARMING
-            and len(input_array) < SMALL_N and _ERR is None and not BLEND_BETA):
-        _SMALL_SEEN += 1
-    if (SMALL_GRAPH and SMALL_GRAPH_LAZY and g1 is None and not _G1_TRIED and not _WARMING and _SMALL_SEEN >= 2
-            and len(input_array) < SMALL_N):
-        _G1_TRIED = True
-        g1 = _capture_graph1(models, dev, band)
-        SMALL_GRAPH_ACTIVE = g1 is not None
-        _state = tuple(_state[:7]) + (None,) * max(0, 7 - len(_state)) + (g1,)
-        if DIAG:
-            print(f"[rpde-t1] lazy small_graph capture at N {len(input_array)}: {SMALL_GRAPH_ACTIVE} diff {SMALL_GRAPH_DIFF}", flush=True)
-    use_small = g1 is not None and len(input_array) < SMALL_N
 
-    use_gpu_band = (not use_small and GPU_BAND and graphed is None and band is not None and _ERR is None and not BLEND_BETA
+    use_gpu_band = (GPU_BAND and band is not None and _ERR is None and not BLEND_BETA
                     and p and str(dev).startswith("cuda") and band.shape[1:] == (20, 32, 64, 3)
                     and (CENTRE_ALPHA == ALPHA or CENTRE_ALPHA == 0.0))
     if EBAND is not None and not use_gpu_band:
-        raise RuntimeError("EBAND needs the GPU-band path (cuda, static sigma band, no graph / err head / blend)")
+        # M4 (2026-09-28): the host path below applies a logsig-only EBAND itself (a container without CUDA used to raise
+        # here on every call). It needs the per-window sigma band, so everything else the GPU path requires but the device
+        # must still hold; any other case raises exactly as before.
+        if not (band is not None and _ERR is None and not BLEND_BETA and p and band.shape[1:] == (20, 32, 64, 3)
+                and (CENTRE_ALPHA == ALPHA or CENTRE_ALPHA == 0.0)):
+            raise RuntimeError("EBAND needs the GPU-band path (cuda, static sigma band, no err head / blend)")
+        _eband_host_factor(np.ones((1, 1, 1, 1, 2), dtype=np.float32))      # raises now for a non-logsig EBAND
     if use_gpu_band:
         global _BAND_DEV
         if _BAND_DEV is None:
@@ -803,22 +595,8 @@ def _predict(input_array, metadata=None):
             if _EBAND_DEV is None:
                 _EBAND_DEV = torch.tensor(EBAND[0], dtype=torch.float32, device=dev)
             eb_ = (_EBAND_DEV, EBAND[1], EBAND[2])
-        n_ = len(xin)
-        eps_ = (BATCH_FP[0] if n_ < 14 else (BATCH_FP[1] if n_ < 100 else 0.0)) if GPU_FP else 0.0
-        _fno._PRED_FP, _fno._PRED_FP_HITS = float(eps_), 0
-        try:
-            _fno.predict_fno(models, xin, dev, alpha=ALPHA, batch=batch, out=pred, sigma_out=sig, amp=_AMP_DT,
-                             band_gpu=(_BAND_DEV, ref, p, lower, upper, CENTRE_ALPHA != ALPHA, eb_))
-        finally:
-            _fno._PRED_FP = 0.0
-        if eps_:
-            # every chunk takes the same branch (same dst), so either all chunks were fingerprinted on the GPU or none
-            hits, chunks = _fno._PRED_FP_HITS, -(-n_ // batch)
-            if hits == chunks:
-                global _GPU_FP_DONE
-                _GPU_FP_DONE = True
-            elif hits:
-                raise RuntimeError(f"GPU_FP applied to {hits} of {chunks} chunks")
+        _fno.predict_fno(models, xin, dev, alpha=ALPHA, batch=batch, out=pred, sigma_out=sig, amp=_AMP_DT,
+                         band_gpu=(_BAND_DEV, ref, p, lower, upper, CENTRE_ALPHA != ALPHA, eb_))
         return {"prediction": pred, "lower": lower, "upper": upper}
 
     x = np.ascontiguousarray(input_array, dtype=np.float32)
@@ -834,21 +612,11 @@ def _predict(input_array, metadata=None):
     # np.empty: _load() guarantees at least one err-bearing member when _ERR is set, so every row
     # is written by predict_fno (as the finished band FACTOR, computed on the GPU via err_xform).
     err = np.empty((len(x), 20, 32, 64, 2), dtype=np.float32) if _ERR is not None else None
-    # Pre-compose mean, only when the interval is centred away from the prediction. The graph
-    # path (off since R27) does not produce it, so the centre falls back to `pred` there.
-    centre = (np.zeros_like(pred) if (CENTRE_ALPHA != ALPHA and band is not None
-                                       and graphed is None) else None)
-    if use_small:
-        with torch.no_grad():
-            g1.run1(x, pred, sig, centre)
-    elif graphed is not None:
-        with torch.no_grad():
-            graphed.run(x, pred, sig)
-        band = graphed.band_fp            # the fingerprint: base * (1 + GRAPH_FP)
-    else:
-        _fno.predict_fno(models, x, dev, alpha=ALPHA, batch=batch, out=pred, sigma_out=sig,
-                         amp=_AMP_DT, centre_out=centre, err_out=err,
-                         err_xform=None if _ERR is None else _ERR["xform"])
+    # Pre-compose mean, only when the interval is centred away from the prediction.
+    centre = np.zeros_like(pred) if (CENTRE_ALPHA != ALPHA and band is not None) else None
+    _fno.predict_fno(models, x, dev, alpha=ALPHA, batch=batch, out=pred, sigma_out=sig,
+                     amp=_AMP_DT, centre_out=centre, err_out=err,
+                     err_xform=None if _ERR is None else _ERR["xform"])
     # Before the band: the interval has to bracket what is actually returned.
     _apply_blend(pred, x)
 
@@ -892,6 +660,9 @@ def _predict(input_array, metadata=None):
                 t_hi[..., :2].copy_(t_e)                                        # half = k * H
             else:
                 t_hi[..., :2].mul_(t_e)                          # half *= clip(H/ref)^q
+        if EBAND is not None:
+            # M4 (2026-09-28): the SIGBLEND factor, in the GPU path's order ((base * r3) * fac); checked in _predict above.
+            t_hi[..., :2].mul_(_eband_host_factor(sig))
         if centre is None:
             torch.sub(t_pred, t_hi, out=t_lo)
             torch.add(t_pred, t_hi, out=t_hi)

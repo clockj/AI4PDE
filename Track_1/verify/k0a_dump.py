@@ -4,11 +4,11 @@ formula can be verified.  usage: k0a_dump.py <pkgdir> <out.npz>"""
 import importlib.util, os, sys, time
 import numpy as np
 pkg, out = sys.argv[1], sys.argv[2]
-d = np.load("/users/PAS1187/qwu/workspace/realpde/main/Track_1/val_unseen.npz")
+d = np.load(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "val_unseen.npz"))
 X, ids = d["x"], d["ids"]
 spec = importlib.util.spec_from_file_location("submission", os.path.join(pkg, "submission.py"))
 sub = importlib.util.module_from_spec(spec); spec.loader.exec_module(sub)
-print("EBAND", sub.EBAND, "SMALL_GRAPH", sub.SMALL_GRAPH, "GPU_BAND", sub.GPU_BAND, "ALPHA", sub.ALPHA,
+print("EBAND", sub.EBAND, "SMALL_GRAPH", getattr(sub, "SMALL_GRAPH", "<removed 2026-09-28>"), "GPU_BAND", sub.GPU_BAND, "ALPHA", sub.ALPHA,
       "CENTRE_ALPHA", sub.CENTRE_ALPHA, "p", sub._state[4], flush=True)
 sub.predict(X[:32])
 t0 = time.perf_counter(); o = sub.predict(X); print(f"predict N=336 {1e3*(time.perf_counter()-t0)/336:.3f} ms/window (not latency evidence)")

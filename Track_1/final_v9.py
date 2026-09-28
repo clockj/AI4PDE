@@ -61,9 +61,10 @@ set, one rule (ROADMAP 1.16).
 **CLOSING REFIT, 2026-09-27 (48 rounds): THE RULE IS NOT EXACTLY LINEAR IN THE FIVE SUBSCORES.**
 The last six rounds (R35-R37, T2R22-T2R24) left the range the first 42 had spanned -- tke 79.5-80.7 against
 <= 78.95, sps 43.0-44.4 against <= 42.26 -- and three of them are ADAPTIVE Track-2 packages, the first rows in
-which containment moves without the errors moving. The 42-round weights (0.4778 / 0.1010 / 0.0921 / 0.0965 /
-0.2498, the weights of record for every prediction registered during development) read all six HIGH, by
-+0.005 ... +0.013. Refit on all 48: **0.4819 / 0.0981 / 0.0911 / 0.0961 / 0.2491**, sum 1.0164, max residual
+which containment moves without the errors moving. The exact 42-round fit (the weights of record for every
+prediction registered during development; 0.4778 / 0.1010 / 0.0921 / 0.0965 / 0.2498 to four decimals) reads all
+six HIGH, by +0.005 ... +0.013. Quote W0, not the rounded vector: a weight rounded in the fourth decimal moves a
+level by up to 0.009. Refit on all 48: **0.4819 / 0.0981 / 0.0911 / 0.0961 / 0.2491**, sum 1.0164, max residual
 0.0058; the three Track-1 rows sit at <= 0.0007 and the three adaptive Track-2 rows at 0.0026 - 0.0049. Until
 09-20 `sps` was very nearly a function of the three error subscores, so its weight and theirs were never
 separated by the data; these rows separate them. An intercept does not remove the residual (max 0.0054), so
