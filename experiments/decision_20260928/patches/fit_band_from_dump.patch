@@ -1,0 +1,125 @@
+--- a/Track_1/submit_fno/fit_band.py	2026-09-28 06:25:10.620133183 -0400
++++ b/Track_1/submit_fno/fit_band.py	2026-09-28 06:25:32.595555000 -0400
+@@ -180,46 +180,64 @@
+                          "below base*clip_lo^p; the direct QD band has no such floor. Pass e.g. 0.3**0.45 = 0.5817 to give it the "
+                          "static band's floor. 0 = no floor (the 09-24 QD package).")
+     ap.add_argument("--out", default=os.path.join(HERE, "band.npz"))
++    # Decision-phase arm I6 (patch, experiments/decision_20260928/patches/fit_band_from_dump.patch): solve the SAME static
++    # band from errors that were dumped by other ensembles (ood_i6dump.py, pooled by ood_i6.py) instead of running models.
++    ap.add_argument("--from-dump", default=None,
++                    help="npz with P (alpha-0.80 compose), C (the centre, alpha 0), Y, R (clip(sigma/sigma_ref)) over u, v, "
++                         "each ensemble's sigma already divided by ITS OWN sigma_ref; replaces the model runs and the fit "
++                         "split. Needs --centre-alpha 0 and --sigma-ref-from; the report section is skipped.")
++    ap.add_argument("--sigma-ref-from", default=None,
++                    help="--from-dump: the band npz whose sigma_ref the new band carries (the target ensemble's scale)")
+     args = ap.parse_args()
+ 
+-    import torch
+-    dev = "cuda" if torch.cuda.is_available() else "cpu"
+-    # load_any: both lists may contain the U-Net member of the round-12 mixed package.
+-    m = [_fno.load_any(c, dev) for c in args.ckpt]
+-    m_err = m if args.err_ckpt is None else [_fno.load_any(c, dev) for c in args.err_ckpt]
+-
+-    ds = np.load(os.path.join(TRACK1, "val_seen.npz"))
+-    du = np.load(os.path.join(TRACK1, "val_unseen.npz"))
+-
+-    def infer(models, X, sigma_out=None, alpha=None):
+-        uv = _fno.predict_fno(models, X, dev, alpha=args.alpha if alpha is None else alpha,
+-                              sigma_out=sigma_out)
+-        return np.concatenate([uv, np.zeros_like(uv[..., :1])], -1).astype(np.float32)
+-
+-    def err_of(models, X):
+-        e = np.zeros((len(X), 20, 32, 64, 2), dtype=np.float32)
+-        _fno.predict_fno(models, X, dev, alpha=args.alpha, err_out=e)
+-        if not np.any(e):
+-            raise SystemExit("--err-mode set but no --ckpt member carries an err head (H is all zero)")
+-        return e
+-
+-    def sigma_of(models, X):
+-        s = np.empty((len(X), 1, 32, 64, 2), dtype=np.float32)
+-        _fno.predict_fno(models, X, dev, alpha=args.alpha, sigma_out=s)
+-        return np.concatenate([s, np.zeros_like(s[..., :1])], -1).astype(np.float32)
+-
+-    fit_d = ds if args.fit_on == "seen" else du
+-    keep = np.isin(np.array([int(str(i).split(":")[0].split("_")[1]) for i in fit_d["ids"]]),
+-                   args.fit_aoa)
+-    Pf, Yf = infer(m_err, fit_d["x"])[keep], fit_d["y"][keep]
+-    Pu, Yu = infer(m, du["x"]), du["y"]
+-
+-    # sigma_ref comes from --ckpt, NOT --err-ckpt: it normalizes the sigma the SHIPPED models
+-    # will emit at test time, so it has to be their scale. The error field below still comes
+-    # from --err-ckpt, because that is about how big the errors honestly are.
+-    sig_fit = sigma_of(m, fit_d["x"])[keep]
+-    sigma_ref = np.maximum(sig_fit.mean(0, keepdims=True), 1e-8).astype(np.float32)
+-    ratio_f = np.clip(sig_fit / sigma_ref, CLIP_LO, CLIP_HI)
++    if args.from_dump:
++        if args.centre_alpha != 0.0 or not args.sigma_ref_from or args.err_mode != "none":
++            raise SystemExit("--from-dump needs --centre-alpha 0, --sigma-ref-from and --err-mode none")
++        dd = np.load(args.from_dump)
++        z3 = lambda a: np.concatenate([a, np.zeros_like(a[..., :1])], -1).astype(np.float32)  # noqa: E731
++        Pf, Yf, Cfd = z3(dd["P"]), z3(dd["Y"]), z3(dd["C"])
++        ratio_f = z3(dd["R"])
++        sigma_ref = np.load(args.sigma_ref_from)["sigma_ref"].astype(np.float32)
++        print(f"--from-dump {args.from_dump}: {len(Pf)} windows; sigma_ref from {args.sigma_ref_from}")
++    else:
++        import torch
++        dev = "cuda" if torch.cuda.is_available() else "cpu"
++        # load_any: both lists may contain the U-Net member of the round-12 mixed package.
++        m = [_fno.load_any(c, dev) for c in args.ckpt]
++        m_err = m if args.err_ckpt is None else [_fno.load_any(c, dev) for c in args.err_ckpt]
++
++        ds = np.load(os.path.join(TRACK1, "val_seen.npz"))
++        du = np.load(os.path.join(TRACK1, "val_unseen.npz"))
++
++        def infer(models, X, sigma_out=None, alpha=None):
++            uv = _fno.predict_fno(models, X, dev, alpha=args.alpha if alpha is None else alpha,
++                                  sigma_out=sigma_out)
++            return np.concatenate([uv, np.zeros_like(uv[..., :1])], -1).astype(np.float32)
++
++        def err_of(models, X):
++            e = np.zeros((len(X), 20, 32, 64, 2), dtype=np.float32)
++            _fno.predict_fno(models, X, dev, alpha=args.alpha, err_out=e)
++            if not np.any(e):
++                raise SystemExit("--err-mode set but no --ckpt member carries an err head (H is all zero)")
++            return e
++
++        def sigma_of(models, X):
++            s = np.empty((len(X), 1, 32, 64, 2), dtype=np.float32)
++            _fno.predict_fno(models, X, dev, alpha=args.alpha, sigma_out=s)
++            return np.concatenate([s, np.zeros_like(s[..., :1])], -1).astype(np.float32)
++
++        fit_d = ds if args.fit_on == "seen" else du
++        keep = np.isin(np.array([int(str(i).split(":")[0].split("_")[1]) for i in fit_d["ids"]]),
++                       args.fit_aoa)
++        Pf, Yf = infer(m_err, fit_d["x"])[keep], fit_d["y"][keep]
++        Pu, Yu = infer(m, du["x"]), du["y"]
++
++        # sigma_ref comes from --ckpt, NOT --err-ckpt: it normalizes the sigma the SHIPPED models
++        # will emit at test time, so it has to be their scale. The error field below still comes
++        # from --err-ckpt, because that is about how big the errors honestly are.
++        sig_fit = sigma_of(m, fit_d["x"])[keep]
++        sigma_ref = np.maximum(sig_fit.mean(0, keepdims=True), 1e-8).astype(np.float32)
++        ratio_f = np.clip(sig_fit / sigma_ref, CLIP_LO, CLIP_HI)
+ 
+     # Solve on the fitting split's error field -- an offline quantity that uses no test target
+     # and no per-window information -- with |error| scaled to board magnitude. Deflating by
+@@ -228,7 +246,7 @@
+     As, as_, scored_s, ns = prep(Pf, Yf)
+     if args.centre_alpha is not None:
+         # a_i and the scored mask stay those of the PREDICTION; only |E| moves to the centre.
+-        Cf = infer(m_err, fit_d["x"], alpha=args.centre_alpha)[keep]
++        Cf = Cfd if args.from_dump else infer(m_err, fit_d["x"], alpha=args.centre_alpha)[keep]
+         As = np.abs(Cf[..., :2] - Yf[..., :2]).astype(np.float32)
+         print(f"--centre-alpha {args.centre_alpha}: base solved on |y({args.centre_alpha}) - y|; "
+               f"median |E| {np.median(As):.5f} vs {np.median(prep(Pf, Yf)[0]):.5f} at alpha "
+@@ -329,6 +347,10 @@
+                 extra.update(err_floor=np.float32(args.err_floor))
+     np.savez(args.out, base=band, sigma_ref=sigma_ref, p=np.float32(args.band_p),
+              clip_lo=np.float32(CLIP_LO), clip_hi=np.float32(CLIP_HI), **extra)
++    if args.from_dump:
++        print(f"band        base {band.shape}  half-width min {uv_band.min():.5f} median {np.median(uv_band):.5f} "
++              f"max {uv_band.max():.5f}   (from dump)\nwrote {args.out}")
++        return
+ 
+     U = prep(Pu, Yu)
+     hi = np.isin(np.array([int(str(i).split(":")[0].split("_")[1]) for i in du["ids"]]),

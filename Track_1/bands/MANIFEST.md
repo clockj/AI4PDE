@@ -252,3 +252,60 @@ trajectories; the evidence for them is the leave-one-trajectory-out read that sc
 
 **Not in this directory:** the bands of R31 – R34 and T2R18 – T2R21 (r35 is `r35_centre0_fill.npz`; r37's widened band and
 the two QD bands stayed on the agent team's server). None of them is on the path to the packages of record.
+
+## 2026-09-28: the bands of the Decision-phase candidates (`reproduce.sh decision`, REPRODUCE.md §14)
+
+| band file | md5 (12) | rounds that shipped it | ids |
+|---|---|---|---|
+| `dp_resim_all_sigblend_lam0.5.npz` | `4d1777c8bf82` | none (a candidate, not uploaded) | — |
+| `dp_resim_ffno_sigblend_lam0.5.npz` | `42026ad8158a` | none (a candidate, not uploaded) | — |
+
+Both are SIGBLEND bands made exactly as `k27_sigblend_lam0.5.npz` was (see the 09-25 … 09-27 entry above), from the twins
+of the candidate's own recipe. Each npz ships with its json in `Track_1/sigblend/` (`EBAND` for Track 1, `T2_sigpow` for
+Track 2). The build uses the npz and the json together or neither. `reproduce.sh decision` reuses them by default;
+`RPDE_REPRO_FITBAND=1` refits instead.
+
+**Construction, the same for both** (`reproduce.sh` stage `dp_band` with `RPDE_REPRO_FITBAND=1`):
+
+```
+fit_band.py --ckpt <6 members> --err-ckpt <5 twins> --alpha 0.80 --band-p 0.45 --fit-on seen --fit-aoa 15 20 \
+    --inflate 1.39 --fill-unscored --centre-alpha 0 --out band_<tag>_static.npz            # smoothing 3 (default)
+dump_twins.py dump_unseen.npz --val Track_1/val_unseen.npz --twins <5 twins>
+cd Track_1/sigblend && B_DUMP=dump_unseen.npz K0_BAND=band_<tag>_static.npz K0_INFL=1.29 K0_NB=16 PYTHONPATH=.. \
+    python make_k0_band.py k0             # λ 0.5 -> k0/band_k0_sigblend_lam0.5.{npz,json}, copied here byte for byte
+```
+
+**The static base is fitted on `val_seen` AoA 15–20, which the twins trained on, exactly as the record's is.** That is
+3 trajectories and 126 windows, in sample, with the 1.39 inflation on top
+(`experiments/decision_20260928/results/ood_chunk2.md` part A). κ and q are fitted on the eight `val_unseen` trajectories,
+which the twins never saw. The evidence for κ and q is the leave-one-trajectory-out read, not the in-sample one.
+
+**`dp_resim_all_sigblend_lam0.5.npz`** — recipe "T4 all" (`RPDE_DP_RESIM_FFNO` = `RPDE_DP_RESIM_VIT` = 0.25, tag
+`dp_resim_all`).
+* Members: `ffno_all_w40l8_sim_resim_s1..s4`, `arch_vit_all_resim_s1`, `arch_vit_all_cmb3sim_resim_s3`.
+* Twins: `p2_ffno_l8_sim_resim_s1..s3`, `arch_vit_d384_resim`, `arch_vit_cmb3sim_resim`.
+* md5: npz `4d1777c8bf826382ee9f8af3dcac071f`; json (`band_dp_resim_all_sigblend_lam0.5.json`)
+  `ce4ef04b89106ad5bd332dda0a1355b9`; static base (not committed) `4c3ae51e9b49d33a12e12d926290501d`.
+* q (u, v) = (0.4741, 0.4813) against the record's (0.4847, 0.4907). log κ over the 20 lead frames: u −2.516 … −2.002,
+  v −2.802 … −2.138, 0.03 – 0.05 below the record's. `EBAND` / `T2_sigpow` = λq = (0.2371, 0.2407).
+* Leave-one-trajectory-out, λ 0.5, stretch 1.29, against the static band alone:
+  * all eight: ΔC×100 **+0.495 (7 of 8)**, Δsps +0.382;
+  * AoA 15–20: ΔC×100 −0.001 (2 of 3).
+* Made in the from-scratch run of `reproduce.sh decision` from a clean clone of commit `467769d`: trainings 7577300 – 7577310,
+  band and build 7577311. The build ended `BUILD_FINAL OK`. Archives `track1_dp_resim.zip` / `track2_dp_resim.zip` on
+  scratch (tag before the rename, sha256 `99b843c6…` / `909c6cd5…`).
+
+**`dp_resim_ffno_sigblend_lam0.5.npz`** — recipe "T4 F-FNO only" (`RPDE_DP_RESIM_FFNO` = 0.25, `RPDE_DP_RESIM_VIT` empty,
+tag `dp_resim_ffno`).
+* Members: `ffno_all_w40l8_sim_resim_s1..s4` plus the record's `arch_vit_all_s1`, `arch_vit_all_cmb3sim_s3`.
+* Twins: `p2_ffno_l8_sim_resim_s1..s3` plus the record's `arch_vit_d384`, `arch_vit_cmb3sim`.
+* The F-FNO checkpoints are the same files as "T4 all"'s (identical md5), and the ViTs are the record's (identical md5).
+* md5: npz `42026ad8158a5b84a7c9059b2f8f8837`; json (`band_dp_resim_ffno_sigblend_lam0.5.json`)
+  `30312f89f81dc8843d9dee0518575c46`; static base (not committed) `1a06729b4aa8b3a38294b5898a889cdd`.
+* q (u, v) = (0.4786, 0.4881). log κ: u −2.499 … −1.982, v −2.775 … −2.104. `EBAND` / `T2_sigpow` = (0.2393, 0.2440).
+* Leave-one-trajectory-out, λ 0.5, stretch 1.29:
+  * all eight: ΔC×100 **+0.491 (7 of 8)**, Δsps +0.379;
+  * AoA 15–20: ΔC×100 +0.009 (2 of 3).
+* Made at commit `467769d` from the F-FNO checkpoints of jobs 7577302 – 7577304 (twins) and 7577307 – 7577310 (members), band and build in job 7580836
+  (`RPDE_DP_RESIM_VIT=` empty). The build ended `BUILD_FINAL OK`. Archives `track1_dp_resim_v.zip` / `track2_dp_resim_v.zip`
+  on scratch (tag before the rename, sha256 `5463cc12…` / `42e18eb3…`).

@@ -36,3 +36,9 @@ is the output of the packages of record unchanged, and does the package still lo
 * **Latency**: the evaluator sends Track 1 14–99 windows per call; Track 2 is one window per step with a fixed cost of
   about 2.3 ms per step for moving data between processes. Measure only interleaved, on an idle node.
 * Never edit these files, or a build script, while a build runs. Build in a scratch worktree.
+* **One build per tree.** Two builds in one tree on different nodes overwrote each other's baked constants and the
+  build still ended `BUILD_FINAL OK` (`flock` does not serialise across nodes on scratch). Since 09-28 `build_final.sh`
+  takes a lock file (`Track_1/submit_fno/.build_final.lock`, `noclobber`, removed on exit) and, after the gates, reads
+  every `RPDE_SHIP_*` knob, ALPHA, AMP, the path constants and the band's md5 back out of both archives
+  (`Track_1/verify/baked_constants.py`, 41 checks); a mismatch fails the build. A lock left by a killed job names its
+  host and pid.

@@ -33,6 +33,14 @@ is what the rule below asked for.
 **What a reproduction must not expect:** identical weights (§7), or identical archive bytes (zip timestamps). Acceptance
 is by score (§7, §12).
 
+**The release of 09-27 is the annotated tag `final-20260927`** on commit `4e5ed37` (main after pull request #3). For
+archives byte-identical to the uploads, code files included, build from `fdac00b` (§13.5).
+
+**The Decision-phase candidate is §14**: `RPDE_REPRODUCE_GO=1 bash reproduce.sh decision`, recipe "T4 all" (the owner's
+choice of 2026-09-29), which trains every member and twin with `--aug-resim 0.25` and builds with `PREV_SPACE = "target"`.
+It is reproduced from a clean clone (§14) and has not been uploaded; the packages of record above are what the board
+shows.
+
 ---
 
 **The rule the final recipe was chosen by (Ilse / audit 2 N7, 2026-09-26), kept as written:** FINAL_RECIPE = the members AND every baked inference constant AND the
@@ -875,6 +883,9 @@ or is inference code, and `Track_1/submit_fno/build_final.sh` bakes it.
 
 1. **Static band** (recipe A's, §3): `fit_band.py --ckpt <6 members> --err-ckpt <5 twins> --alpha 0.80 --band-p 0.45
    --centre-alpha 0 --fill-unscored`, inflate 1.39 by default → `Track_1/bands/r38_a080_c0_fill.npz` (md5 `0cb37d82`).
+   *2026-09-28: the defaults `--fit-on seen --fit-aoa 15 20` fit the error field on the twins' errors on the three
+   AoA 15 – 20 trajectories of `val_seen`, which the twins trained on: in sample. Fitted out of sample the composite
+   moves by 0.002 – 0.012 (`experiments/decision_20260928/results/ood_chunk2.md`, part A).*
 2. **Twin dump**: `python Track_1/sigblend/dump_twins.py <dump.npz>` runs the five twins at alpha 0 on the eight
    `val_unseen` trajectories and stores each member's field and σ.
 3. **SIGBLEND**: `cd Track_1/sigblend && B_DUMP=<dump.npz> K0_BAND=<static band> K0_INFL=1.29 K0_NB=16 PYTHONPATH=..
@@ -946,6 +957,9 @@ inputs and differs in three ways, none of which changes the method:
 * **Two knobs, both off**, so the default build is the uploaded behaviour: `PREV_SPACE` (`"target"` makes the package
   read the revealed target in the normalisation the official runner uses) and `STATS_MASK` (the online statistics skip
   unscored elements). Their measured reads are in `experiments/audit_20260927/refactor_pkg.md`.
+  *2026-09-28: `PREV_SPACE = "target"` passed in every held-out regime and the candidate (§14) is built with it. `STATS_MASK`
+  stays off: the scorer counts zero-target elements in rel, tke, mvpe and the accuracy factor of `sps`, and masked
+  statistics lost on every re-blanked trajectory (`experiments/decision_20260928/STATE.md`).*
 * **Fewer knobs.** Code paths that no package of record and no recipe of `reproduce.sh` uses were removed;
   `build_round13.sh` refuses their variables.
 
@@ -957,3 +971,94 @@ inputs and differs in three ways, none of which changes the method:
 (09-21 … 09-27) and were not brought over. None of them is needed to reproduce FINAL: the environment is
 `environment.yml`, the QD candidate is not the final recipe, and the acceptance read of §12 is reproduced by building
 the package from the retrained twins and scoring it with `Track_1/ens_v9.py --aoa 15 20`.
+
+## 14. DECISION (2026-09-28): the candidate — FINAL plus the Re-similarity augmentation
+
+`RPDE_REPRODUCE_GO=1 bash reproduce.sh decision`. Not the default (that stays `final`) and not a package of record: the
+Decision-phase candidate of arm T4 (`experiments/decision_20260928/STATE.md`), made buildable so the owner can decide on
+a real package. Everything that is not named below is §13.
+
+**2026-09-29, owner:** the candidate's recipe is **"T4 all"**, the default of both variables below (tag `dp_resim_all`).
+"T4 F-FNO only" stays reproducible and is not the choice. No upload is decided and nothing is staged. The eleven
+checkpoints of the from-scratch run below were promoted (copied, md5 checked) into `Track_1/unet/`:
+`ffno_all_w40l8_sim_resim_s1..s4`, `arch_vit_all_resim_s1`, `arch_vit_all_cmb3sim_resim_s3` (members) and
+`p2_ffno_l8_sim_resim_s1..s3`, `arch_vit_d384_resim`, `arch_vit_cmb3sim_resim` (twins). Its two archives are kept in
+`/fs/scratch/PAS1187/qwu/tmp/realpde/dec0928/candidate/` (`track1_dp_resim_all.zip` sha256 `53291df1…`,
+`track2_dp_resim_all.zip` sha256 `bd0a3fb4…`, `SHA256SUMS` beside them); their contents equal the from-scratch run's
+archives file by file.
+
+**Training.** The eleven runs of `final` (§1.2–1.5) with `--aug-resim S` appended, under new names so nothing of the record
+is overwritten. `train2.py --aug-resim S` (default 0 = off, bit-identical to a run without the flag) replaces a real
+window, with probability `--aug-resim-p` (0.5), by the same trajectory resampled in time by a factor s from the window's
+own start, every velocity multiplied by s, s log-uniform in [1/(1+S), 1+S]: to first order the recording at Re·s. Its
+draws come from a generator of its own, so the default random stream keeps its order; the verifier is
+`experiments/decision_20260928/patches/t4_aug_resim_check.py`.
+
+| variable | default | applies to | names |
+|---|---|---|---|
+| `RPDE_DP_RESIM_FFNO` | 0.25 | the four F-FNO members, the three F-FNO twins | `ffno_all_w40l8_sim_resim_s1..4`, `p2_ffno_l8_sim_resim_s1..3` |
+| `RPDE_DP_RESIM_VIT` | 0.25 | the two ViT members, the two ViT twins | `arch_vit_all_resim_s1`, `arch_vit_all_cmb3sim_resim_s3`, `arch_vit_d384_resim`, `arch_vit_cmb3sim_resim` |
+
+Empty means the record's recipe and the record's file name (reused if it exists); another S gives `_resim<S without the
+dot>`. Stage functions for `RPDE_REPRO_STAGE`: `dp_twins_vit_p`, `dp_twins_vit_c`, `dp_twins_ffno`, `dp_members_vit_p`,
+`dp_members_vit_c`, `dp_members_ffno` (narrow the seed loops with `RPDE_REPRO_SEEDS`), then `dp_band`, `dp_build`.
+
+**The two recipes.** The variables select one, and the recipe names the tag, the committed band and the archives:
+
+| recipe | variables | tag, archives | committed band (npz, json) |
+|---|---|---|---|
+| "T4 all" | both 0.25 (the default) | `dp_resim_all`: `track1_dp_resim_all.zip`, `track2_dp_resim_all.zip` | `Track_1/bands/dp_resim_all_sigblend_lam0.5.npz`, `Track_1/sigblend/band_dp_resim_all_sigblend_lam0.5.json` |
+| "T4 F-FNO only" | `RPDE_DP_RESIM_VIT=` (empty) | `dp_resim_ffno`: `track1_dp_resim_ffno.zip`, `track2_dp_resim_ffno.zip` | `Track_1/bands/dp_resim_ffno_sigblend_lam0.5.npz`, `Track_1/sigblend/band_dp_resim_ffno_sigblend_lam0.5.json` |
+
+Any other pair gets the tag `dp_resim_f<S_ffno>_v<S_vit>`, with the dot dropped and `none` for an empty variable
+(e.g. `dp_resim_f05_v025`), and has no committed band. `_SMOKE` is appended to the tag at any epoch count but 400.
+"T4 F-FNO only" trains seven runs; its four ViTs are the record's (§1.2, §1.3), taken from `RPDE_REPRO_OUT` under their own
+names.
+
+**Band: the committed one is reused by default**, as `final` reuses `k27_sigblend_lam0.5`. A refit is not bit-reproducible,
+and a reproduction of a proposed package must not depend on one. The two bands and how they were made are in
+`Track_1/bands/MANIFEST.md`. A recipe with no committed band is refused, and the refusal names `RPDE_REPRO_FITBAND=1`.
+With `RPDE_REPRO_FITBAND=1`, `dp_band` refits from this run's twins, exactly as the committed bands were made (§13.1), into
+`RPDE_DP_BAND_DIR` (default `$RPDE_REPRO_LOG/decision/band`), and `dp_build` uses that refit:
+
+```
+fit_band.py --ckpt <6 members> --err-ckpt <5 twins> --alpha 0.80 --band-p 0.45 --fit-on seen --fit-aoa 15 20 \
+    --inflate 1.39 --fill-unscored --centre-alpha 0 --out band_<tag>_static.npz
+dump_twins.py dump_unseen.npz --val Track_1/val_unseen.npz --twins <5 twins>
+cd Track_1/sigblend && B_DUMP=dump_unseen.npz K0_BAND=band_<tag>_static.npz K0_INFL=1.29 K0_NB=16 PYTHONPATH=.. \
+    python make_k0_band.py k0            # -> k0/band_k0_sigblend_lam0.5.{npz,json}
+```
+
+`--fit-on seen --fit-aoa 15 20 --inflate 1.39` are `fit_band.py`'s defaults, written out. The static error field comes
+from the twins on the SEEN AoA 15–20 windows, which the twins trained on (as for the record,
+`experiments/decision_20260928/results/ood_chunk2.md` part A); κ and q come from `val_unseen`. The refit barely matters:
+the from-scratch twins' own refit, the campaign twins' band and the committed band give the same composite to 1e-4
+(`experiments/decision_20260928/results/ood_chunk6.md`, R1b).
+
+**Build.** `dp_build` runs `build_final.sh` with the band and json chosen above, the record's constants and
+`RPDE_SHIP_PREV_SPACE=target` (arm I1). Archives go to `RPDE_REPRO_PKG` (default `$RPDE_REPRO_LOG/decision/pkg`), never to
+`../sub_candidates`. When `RPDE_REPRO_STAGE` contains `dp_build`, the closing line says that both archives were built and
+gated, and where they are.
+
+**Gates.** Those of §13.4, plus two that `build_final.sh` gained on 2026-09-28 for every build:
+* `Track_1/verify/baked_constants.py` reads back from both archives ALPHA, every `RPDE_SHIP_*` knob (the value passed, or the
+  tree's default), `AMP`, `SPEC_PATH`, `HOST_WRITE`, `FFNO_PATH` and the band's md5, and fails the build on any mismatch.
+* A lock file refuses a second build in the same tree.
+
+**Accepting a from-scratch rebuild.** Retraining is not bit-identical (§7), so acceptance is a score test: the rebuilt
+package's composite (the fitted `final` without `time`, `W0`, read on `Track_2/stream_eval.py` with the revealed target
+normalised as the official runner does) within **0.005** of the package built from the campaign's checkpoints.
+
+**Done for "T4 all"** (2026-09-28, commit `467769d`, clean clone, jobs 7577300 – 7577311, 41.8 A100 GPU-h):
+* The from-scratch twins against the campaign's twins, stream, all eight `val_unseen` trajectories: composite **77.2817
+  against 77.2821** (Δ −0.0003). The largest per-trajectory difference is 0.0012; the bar is 0.005.
+* One level down, the two ViT twins retrained bit-identically and the F-FNO twins differ at 0.4–0.5 % of their weight norm.
+* The "T4 F-FNO only" twins read −0.0003 against the campaign's F-FNO-only twins.
+* A different card (V100) and the forced fallbacks pass for both candidates.
+* Details: `experiments/decision_20260928/results/ood_chunk6.md`.
+
+**Not verified:**
+* The organizers' hardware and stack (8× A800). There, the ViTs will not retrain bit-identically either; the scale to expect
+  is the reseeding spread, about 0.012 in distribution, not the −0.0003 above.
+* The six all-data members have no second training to compare with. Only the twins were checked against an independent
+  training; the members were trained once, in the run above.

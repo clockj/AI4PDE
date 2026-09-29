@@ -59,5 +59,9 @@ sbatch ${DESK:+--exclude="$DESK"} --output=/fs/scratch/PAS1187/qwu/tmp/realpde/l
 
 ## Pitzer
 
-Training overflow: V100, partition `gpu-exp`, waits under a minute, about 1.25× slower than the A100. Interpreter
-`/users/PAS1187/qwu/envs/mural_osc/bin/python` (torch 2.7.1).
+**Ascend comes first whenever it is idle** (owner, 2026-09-28: the two cost the same and the A100 is faster), training
+included. Pitzer is the overflow: send work there only when a real job on Ascend is still pending after about 15
+minutes. **`sbatch --test-only` does not tell**: on 09-28 it printed a start 24 hours away while real `nextgen` jobs
+started within 4 – 21 seconds; submit one job as a probe instead. Slurm dependencies do not cross clusters.
+V100, partition `gpu-exp`, waits under a minute; the A100 is about 1.3× faster for the F-FNO. Interpreter
+`/users/PAS1187/qwu/envs/mural_osc/bin/python` (torch 2.7.1); the `realpde` conda env also runs there.

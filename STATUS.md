@@ -1,4 +1,4 @@
-# Status — 2026-09-28, Main Development closed
+# Status — 2026-09-29, Decision phase
 
 The only file that changes after a board result. Keep it under 40 lines; detail goes to `ROUNDS.md`.
 
@@ -7,35 +7,33 @@ The only file that changes after a board result. Keep it under 40 lines; detail 
 | Track 1 | **81.671149** (R37, 09-27) | `track1_k27fin_a080.zip` | 81.67 [81.58, 81.79] |
 | Track 2 | **82.055553** (T2R24, 09-27) | `T2_MRGP2_track2_MRGP2.zip` | 82.000 [81.885, 82.219] |
 
-* **Both are built by one command**, `bash Track_1/submit_fno/build_final.sh OUTDIR`. At commit `fdac00b` the rebuild is
-  byte-identical to the uploads, file by file (jobs 7569053, 7569179). Since the refactor of 09-28 the code files carry
-  guards and fewer dead knobs, and the rebuild is **output-identical at tolerance 0** (`Track_1/verify/final_identity.py`,
-  jobs 7569409, 7569482); `band.npz` and the six members are still byte-identical.
-* **Final ranks (owner's read, 09-28): Track 1 #20, Track 2 #8.** The top ten are shortlisted, so **Track 2 is in the
-  Decision phase and Track 1 is not.** The cut read at 21:39Z on 09-27 was T1 81.885 / T2 81.988.
-* **Decision phase, to 2026-10-25.** Organizers retrain shortlisted methods from scratch (8× A800) and score a private
-  set at novel AoA / Re. **One submission per track for the whole phase.** Nothing is staged.
-* **The method of record** (both tracks): recipe-A members (4 F-FNO w40 L8 + sim, 2 ViT d384 L8), ALPHA 0.80 with
-  JOINT_GAIN, interval centred on the alpha-0 field, SIGBLEND band. Track 2 adds the causal stream stack: asymmetric R1
-  with TSM and BLK, D1c with the empirical-Bayes shrink and the lead-time profile, VARCAL.
+* **The packages of record** (method: `CLAUDE.md` "What ships") rebuild by `bash Track_1/submit_fno/build_final.sh
+  OUTDIR`, data byte-identical and outputs identical at tolerance 0; from `fdac00b` the code files too. The release is
+  the annotated tag **`final-20260927`** on `4e5ed37` (main after pull request #3).
+* **Final ranks: Track 1 #20, Track 2 #8.** Track 2 is shortlisted: the organizers retrain from scratch (8× A800) and
+  score a private set at novel AoA / Re. **One submission per track for the phase** (to 2026-10-25).
+* **The candidate (owner, 09-29): "T4 all"**, the method of record with all six members and five twins trained with
+  `--aug-resim 0.25`, plus `PREV_SPACE = "target"`. Built by `RPDE_REPRODUCE_GO=1 bash reproduce.sh decision`
+  (defaults), tag `dp_resim_all`, band `Track_1/bands/dp_resim_all_sigblend_lam0.5.npz` with its sidecar json. Against
+  the control: +0.206 out of distribution (mean of A20, A10, relo, rehi), +0.031 in distribution (twins, 7 of 8).
+  Checkpoints: the eleven `*_resim*` in `Track_1/unet/`. Archives on scratch, `dec0928/candidate/track1_dp_resim_all.zip`
+  (53291df1…) and `track2_dp_resim_all.zip` (bd0a3fb4…). "T4 F-FNO only" (`RPDE_DP_RESIM_VIT=`) stays reproducible
+  and is not the choice. Zero propagation (arm I7) is not added. Record: `experiments/decision_20260928/`.
+* **No upload is decided and nothing is staged** in `../sub_candidates/`. The board shows the packages of record.
 
 ## Open before a Decision-phase upload
 
-1. **The revealed target's normalisation.** The official Track-2 runner normalises `prev_target` with the TARGET
-   statistics; the uploaded package assumes the input statistics, so its unscored-element test never fires on the
-   board. `PREV_SPACE = "target"` fixes it: on the twins +0.0064 composite on all 8 trajectories (8 of 8 positive),
-   +0.0027 on AoA 15–20, all of it in `sps`. **The default is still `"input"`, the uploaded behaviour; ship `"target"`.**
-2. **Masked pixels in the online statistics.** D1c's pooled variance and VARCAL's sums include elements that are never
-   scored. `STATS_MASK = True` excludes them; on the twins it is null (−0.0012, 3 of 8). The risk it addresses, a
-   recording that blanks a different region, cannot be tested on our data. Undecided.
-3. **SIGBLEND constants** were fitted on the eight validation trajectories; re-derived from a fresh dump they move by
-   0.4 % (job 7569179). Their evidence is the leave-one-trajectory-out read.
-4. **The guards cost latency on Track 2**: +0.08 ms per step locally (+2.4 %), about −0.002 to −0.005 `final` by the
-   measured slopes. They sit on the critical path of the graph; moving them to the side stream is not done.
-5. **Which online corrections the private set wants.** The stream stack reads +0.03 … +0.09 in distribution and
-   +0.45 … +0.55 at a held-out AoA; FAMW (family weights) is off in the upload and reads +0.15 out of distribution.
+1. **The owner's decision to upload**, per track. HOLD is valid.
+2. **Registration and staging first** (rules 1, 2): five subscores with brackets, in distribution and held out, in
+   `../sub_candidates/<date>/README.md` and a PENDING row of `leaderboard/board.jsonl`. Neither exists.
+3. **The guards cost Track 2 latency**: +0.08 ms per step (+2.4 %), about −0.002 … −0.005 `final`; still on the critical path.
+4. **Not verified:** the organizers' hardware and stack (only A100 and V100, torch 2.2.2; expect the reseeding spread,
+   about 0.012 in distribution, not our retrain's 0.0003); the all-data members were trained once.
 
-## Reports
+## Settled 09-28
 
-`../artifacts/20260927_realpde_phase_report.html` (the four phases, with the recommendations for the finals package) and
-`20260927_realpde_final_method.html` (the method). The newest handoff is `../handoffs/HANDOFF_20260927.md`.
+* `PREV_SPACE = "target"`: +0.002 … +0.009 in every regime, never worse on a trajectory. `STATS_MASK` stays off.
+* FAMW (+0.007 out of distribution) and the stream constants (a plateau) are closed; the shipped stack stays.
+* The band: a refit from other twins moves the composite by about 1e-4; its static field is fitted in sample, as shipped.
+* Reports: `../artifacts/20260927_realpde_phase_report.html` (its `STATS_MASK` advice is superseded) and
+  `20260927_realpde_final_method.html`. The newest handoff is `../handoffs/HANDOFF_20260928.md`.

@@ -20,7 +20,13 @@
 # snapshots the three files and puts them back, so the tree is unchanged when it returns.
 #
 # Exit 0 only if Track 1 is SUBMITTABLE, Track 2 is SUBMITTABLE as an adaptive package, no Track-2 step reads a window
-# it has not been shown, and the identity checks (when asked for) pass.
+# it has not been shown, both archives carry exactly the constants and the band this call asked for
+# (Track_1/verify/baked_constants.py), and the identity checks (when asked for) pass.
+#
+# Knobs of build_round13.sh that this script does not set (e.g. RPDE_SHIP_PREV_SPACE=target, RPDE_SHIP_STATS_MASK) pass
+# through from the caller's environment and are checked like the rest. One build per tree at a time: a lock file
+# (host, pid) refuses a second one, because the `sed` edits and the restore below are not safe to share -- a restore by
+# one build under another once shipped an archive of the unsubstituted defaults (decision_20260928/results/ood_instrument.md).
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 _PY=/users/PAS1187/qwu/.conda/envs/realpde/bin/python
@@ -44,28 +50,44 @@ EBAND=$($PY -c "import json;print(json.load(open('$SB'))['EBAND'])") || exit 1
 SIGPOW=$($PY -c "import json;q=json.load(open('$SB'))['T2_sigpow'];print('(%r, %r)' % (float(q[0]), float(q[1])))") || exit 1
 echo "band $BAND  md5 $(md5sum < "$BAND" | cut -c1-8)  EBAND $EBAND  SIGPOW $SIGPOW"
 
+# One build per tree. noclobber makes the creation atomic on any filesystem, scratch included (flock does not serialise
+# across nodes there). A lock left by a killed job names its host and pid: check that it is gone, then delete the file.
+LOCK=Track_1/submit_fno/.build_final.lock
+if ! ( set -o noclobber; echo "$(hostname) pid $$ job ${SLURM_JOB_ID:-none} $(date '+%F %T') $OUT" > "$LOCK" ) 2>/dev/null; then
+  echo "REFUSING: another build holds $PWD/$LOCK: $(cat "$LOCK" 2>/dev/null)"
+  echo "Two builds in one tree overwrite each other's baked constants. Wait for it, or delete the lock if its job is gone."
+  exit 1
+fi
 KEEP=$(mktemp -d); LOG="$OUT/build_$TAG.log"
 FILES="Track_1/submit_fno/submission.py Track_1/submit_fno/_fno.py Track_2/submit/submission.py"
 for f in $FILES; do mkdir -p "$KEEP/$(dirname $f)"; cp -p $f "$KEEP/$f"; done
-restore() { for f in $FILES; do cp -p "$KEEP/$f" $f; done; rm -rf "$KEEP"; }
+restore() { for f in $FILES; do cp -p "$KEEP/$f" $f; done; rm -rf "$KEEP"; rm -f "$LOCK"; }
 trap restore EXIT
 
-env RPDE_FORCE=${RPDE_FORCE:-0} RPDE_SUB="$OUT" RPDE_TAG="$TAG" RPDE_A="$A" RPDE_M="$M" RPDE_BAND="$BAND" \
-    RPDE_CENTRE_ALPHA=0 RPDE_INT8=1 RPDE_LINEAR=tensor RPDE_SHIP_AMP='"fp16"' \
-    RPDE_SPEC_PATH=bmm RPDE_HOST_WRITE=torch RPDE_FFNO_PATH=dense \
-    RPDE_SHIP_JOINT_GAIN=True "RPDE_SHIP_EBAND=$EBAND" "RPDE_SHIP_SIGPOW=$SIGPOW" \
-    RPDE_SHIP_DIRECT_PRED=True RPDE_SHIP_SMALL_GRAPH=False RPDE_SHIP_SMALL_GRAPH_LAZY=False \
-    RPDE_SHIP_WARM_TAILS=True RPDE_SHIP_PIN_OUT=128 RPDE_SHIP_BATCH_CAP=56 RPDE_SHIP_ARENA_STEPS=1024 \
-    RPDE_SHIP_R1=True RPDE_SHIP_R1_ASYM=True RPDE_SHIP_NUMPY_OUT=True \
-    RPDE_SHIP_R1_TSM=3 RPDE_SHIP_R1_BLK_N0=20.0 RPDE_SHIP_R1_BLK=4 \
-    RPDE_SHIP_D1C_N0=30.0 RPDE_SHIP_D1C_EB=True RPDE_SHIP_D1C_EB_N0=1.0 RPDE_SHIP_D1C_LEAD_N0=5.0 \
-    RPDE_SHIP_VC_N0=30.0 RPDE_T2_ADAPTIVE=1 \
-    bash Track_1/submit_fno/build_round13.sh 0.80 2>&1 | tee "$LOG"
+# The constants of record, one list: passed to the build and, after it, checked against the archives.
+SHIP=(RPDE_FORCE=${RPDE_FORCE:-0} RPDE_SUB="$OUT" RPDE_TAG="$TAG" RPDE_A="$A" RPDE_M="$M" RPDE_BAND="$BAND"
+    RPDE_CENTRE_ALPHA=0 RPDE_INT8=1 RPDE_LINEAR=tensor RPDE_SHIP_AMP='"fp16"'
+    RPDE_SPEC_PATH=bmm RPDE_HOST_WRITE=torch RPDE_FFNO_PATH=dense
+    RPDE_SHIP_JOINT_GAIN=True "RPDE_SHIP_EBAND=$EBAND" "RPDE_SHIP_SIGPOW=$SIGPOW"
+    RPDE_SHIP_DIRECT_PRED=True RPDE_SHIP_SMALL_GRAPH=False RPDE_SHIP_SMALL_GRAPH_LAZY=False
+    RPDE_SHIP_WARM_TAILS=True RPDE_SHIP_PIN_OUT=128 RPDE_SHIP_BATCH_CAP=56 RPDE_SHIP_ARENA_STEPS=1024
+    RPDE_SHIP_R1=True RPDE_SHIP_R1_ASYM=True RPDE_SHIP_NUMPY_OUT=True
+    RPDE_SHIP_R1_TSM=3 RPDE_SHIP_R1_BLK_N0=20.0 RPDE_SHIP_R1_BLK=4
+    RPDE_SHIP_D1C_N0=30.0 RPDE_SHIP_D1C_EB=True RPDE_SHIP_D1C_EB_N0=1.0 RPDE_SHIP_D1C_LEAD_N0=5.0
+    RPDE_SHIP_VC_N0=30.0 RPDE_T2_ADAPTIVE=1)
+ALPHA_SHIP=0.80
+env "${SHIP[@]}" bash Track_1/submit_fno/build_round13.sh $ALPHA_SHIP 2>&1 | tee "$LOG"
 
 RC=0
 N=$(grep -ac '^SUBMITTABLE$' "$LOG")
 echo "gates: $N/2 SUBMITTABLE   (log $LOG)"
 [ "$N" = "2" ] || { echo "FAILED: a gate did not pass"; RC=1; }
+
+# The archives must carry what was asked for: every constant above (and any knob passed through), ALPHA, the band.
+env "${SHIP[@]}" $PY Track_1/verify/baked_constants.py --t1 "$OUT/track1_$TAG.zip" --t2 "$OUT/track2_$TAG.zip" \
+    --alpha $ALPHA_SHIP --band "$BAND" --tree-t1 "$KEEP/Track_1/submit_fno/submission.py" \
+    --tree-fno "$KEEP/Track_1/submit_fno/_fno.py" --tree-t2 "$KEEP/Track_2/submit/submission.py" 2>&1 | tee -a "$LOG"
+[ "${PIPESTATUS[0]}" = "0" ] || { echo "FAILED: the archives do not carry the constants this build asked for"; RC=1; }
 
 X=$(mktemp -d)
 $PY -m zipfile -e "$OUT/track2_$TAG.zip" "$X" \
