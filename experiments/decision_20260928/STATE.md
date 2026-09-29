@@ -12,6 +12,8 @@ Plan and criteria: `PLAN.md`. Update this file at every wave; keep job ids, path
 | 2026-09-28 10:57 | every training finished (24 wave 1, 8 T3, 4 T4), instrument chunks 1 – 4 so far | wave 1 60.3 · T3 20.9 · T4 10.6 · instrument 5.7 · other 0.2 | **97.7** | 33 % |
 | 2026-09-28 15:08 | wave 3 (T4 on A20 / A10, twins, T4v on RE done; T4b, T4v second stage running) and instrument chunks 4 – 5 | sacct over `rp_dp_*` / `pz_dp_*`, running jobs counted to 15:08 | **156.5** | 52 % |
 | 2026-09-28 18:02 | every training of wave 3 finished (24 jobs COMPLETED); instrument chunk 5 | sacct, 170 GPU jobs | **171.6** | 57 % |
+| 2026-09-28 22:38 | the from-scratch run of the candidate (41.8) and the last instrument reads | sacct, 185 GPU jobs | **213.7** | 71 % |
+| 2026-09-28 23:03 | the closing gates (R1, R1b, the second candidate, R2) | sacct, 199 GPU jobs | **214.4** | 71 % |
 
 Estimates made at 05:15 (A100): wave 1 about 60, arms T3 + T4(RE) about 31; both held. Read the ledger with
 `sacct -M ascend,pitzer -X -n -S 2026-09-28 -o jobname%26,elapsed,state,alloctres%40 | grep -E 'rp_dp_|pz_dp_'`.
@@ -392,7 +394,72 @@ the shipping way. "T4 F-FNO only" = four augmented F-FNO with the control's two 
 | unchanged | member composition, ALPHA, JOINT_GAIN, the band's construction, every stream constant, `STATS_MASK` off, FAMW off |
 | code | `patches/candidate_release.patch` applied to the tree: `train2.py` (the flag, inert at 0), `reproduce.sh decision`, `build_final.sh` (lock, constant check), `Track_1/verify/baked_constants.py`, documents. `results/candidate_release.md` |
 | verified | the candidate code rebuilds both packages of record, data byte for byte and outputs bit for bit (job 7575926); the constant check passes 41 of 41 and fails when it should; `reproduce.sh decision` runs end to end at 2 epochs (job 7575939) |
-| not verified | the 400-epoch run from a clean clone (about 43 GPU-h); the candidate band does not exist yet; `decision` refits the band on every run, where `final` reuses the committed one: to be aligned once the band is committed |
+| not verified at the time (467769d) | the 400-epoch run from a clean clone, the candidate band, the band's reuse path: all three done since, see the three sections below |
+
+## The from-scratch run of the candidate (2026-09-28 18:12 → 22:38 EDT, 41.8 GPU-h)
+
+`reproduce.sh decision` from a clean clone of commit `467769d` (`R/cand/repro/repo`), eleven trainings as eleven jobs
+(7577300 – 7577310), then the band refit and the build (7577311). Recipe "T4 all": `RPDE_DP_RESIM_FFNO` and
+`RPDE_DP_RESIM_VIT` at their default 0.25.
+
+| | result |
+|---|---|
+| trainings | 11 of 11 COMPLETED; F-FNO members 4.3 h, F-FNO and ViT-C twins 3.9 h, ViT-C member 4.3 h, ViT-P 2.2 / 2.4 h (A100) |
+| band | refitted from the new twins with the record's flags: `R/cand/repro/log/decision/band/k0/band_k0_sigblend_lam0.5.npz`, md5 `4d1777c8bf82…`; SIGBLEND q = (0.4741, 0.4813) against the record's (0.4847, 0.4907), log κ lower by 0.03 – 0.05: a slightly narrower band, as the twins' errors are smaller |
+| build | `BUILD_FINAL OK`: gates 2 of 2 SUBMITTABLE, causality OK (176 steps, largest difference 0), baked constants 41 of 41 with `PREV_SPACE 'target'` |
+| archives | `R/cand/repro/pkg/track1_dp_resim.zip` (sha256 `99b843c6…4a588d`), `track2_dp_resim.zip` (sha256 `909c6cd5…b8e58b`), 30 MB each. **On scratch only; nothing is staged.** |
+
+Still to do before the candidate can be proposed: the reproducibility read (these twins against the campaign's twins,
+within 0.005), the "T4 F-FNO only" build from the same checkpoints, the package on a different card, the band committed
+with its `MANIFEST.md` entry, the registered predictions.
+
+## The closing gates (2026-09-28 22:40 → 23:00 EDT, 0.71 GPU-h; `results/ood_chunk6.md`)
+
+(a) = the five twins of the from-scratch run, (b) = the campaign's five augmented twins, (c) = the five twins of record;
+8 `VAL_TRAJ` trajectories, band refitted the shipping way.
+
+| gate | read | verdict |
+|---|---|---|
+| **R1 reproducibility** | (a) 77.2817 against (b) 77.2821: **0.0003**, bar 0.005; per trajectory within ±0.0012; frozen −0.0017. The two ViT twins retrained bit-identically on this hardware, the F-FNO twins differ by 0.4 – 0.5 % of weight norm and by at most 2.2e-5 in rel / tke / mvpe | **pass** |
+| the candidate's gain, read a second time | (a) − (c): **+0.0311** all 8 (7 of 8; 26700_0 −0.022), +0.0508 on AoA 15 – 20; frozen +0.0060 / +0.0397 | agrees with the campaign's +0.0315 |
+| **R1b the band** | three refits (from-scratch, shipping-way on (a), campaign twins) agree to 1e-4 composite; the band of record is 2.4 % wider and reads +0.002 (stream), +0.020 (frozen) on (a) | an organizer's own refit changes nothing measurable |
+| **the second candidate**, "T4 F-FNO only" | built by `reproduce.sh decision` with `RPDE_DP_RESIM_VIT=` from a clean clone: `BUILD_FINAL OK`, 41 of 41. Its twins +0.0329 (8/8) against the record, +0.0450 on AoA 15 – 20. Archives `R/ood/cand2/pkg/track{1,2}_dp_resim_v.zip` (sha256 `5463cc12…`, `42e18eb3…`) | built |
+| **R2 a different card** | A100 and V100S: the same load-time choices for all three archives (fp16 accepted, graph captured, arena on; Track 1's batch probe 56 / 28 as intended); gates SUBMITTABLE on both; V100 − A100 at most 2.4e-3 relative L2 per window, forced fp32 2.9e-3 (the package's own bar is 2e-2), forced eager and no arena bit-identical; composite moves by at most 0.0006 | **pass** |
+
+* The reproducibility read is on one hardware and stack; for the organizers' retrain the scale to expect is the
+  reseeding spread (0.012 in distribution, 0.034 at relo).
+* R1 compares twins. The candidate's all-data members have no second training to compare with.
+* The uploaded Track-2 package returns a non-finite prediction on a NaN input (it predates the guards); both
+  candidates do not.
+* Two defects of `reproduce.sh decision` found by the second build, in repair: the tag of the empty-variable recipe
+  (`dp_resim_v`), and a closing message that says "no build" after a build.
+
+**In distribution, expected on a board-like set** (the project's correction rules; not a registered prediction):
+
+| change | all 8 | AoA 15 – 20 |
+|---|---|---|
+| T4 all | +0.0125 [+0.0062, +0.0311] | +0.0191 [+0.0095, +0.0508] |
+| T4 F-FNO only | +0.0139 [+0.0069, +0.0329] | +0.0178 [+0.0089, +0.0450] |
+| `PREV_SPACE` target against the uploaded `input` | 0.0000 [0, +0.0064] | 0.0000 [0, +0.0027] |
+
+`PREV_SPACE` banks nothing under the rules because it moves only the interval; its mechanism is a certain fix.
+
+## The candidate bands committed (2026-09-28 23:13 EDT; `patches/candidate_band.patch`, `results/candidate_band.md`)
+
+| recipe | selected by | tag | committed band | npz md5 | q (u, v) |
+|---|---|---|---|---|---|
+| T4 all | both variables at their default 0.25 | `dp_resim_all` | `Track_1/bands/dp_resim_all_sigblend_lam0.5.npz` + `Track_1/sigblend/band_dp_resim_all_sigblend_lam0.5.json` | `4d1777c8bf82…` | 0.4741, 0.4813 |
+| T4 F-FNO only | `RPDE_DP_RESIM_VIT=` (empty) | `dp_resim_ffno` | `…/dp_resim_ffno_sigblend_lam0.5.npz` + `…/band_dp_resim_ffno_sigblend_lam0.5.json` | `42026ad8158a…` | 0.4786, 0.4881 |
+
+* `reproduce.sh decision` now reuses the committed band of the selected recipe, as `final` reuses its own, and refits
+  only with `RPDE_REPRO_FITBAND=1`; a recipe without a committed band is refused. The tags name the recipe; the closing
+  message after a build is true.
+* **Identity (jobs 7580924, 7580925):** rebuilt from the committed bands through the reuse path, both candidates'
+  archives equal the existing ones **file by file, byte for byte** (9 of 9 files, both tracks, both recipes), with
+  `BUILD_FINAL OK` and 41 of 41 baked constants. `build_final.sh` with default arguments still rebuilds the packages of
+  record: data byte-identical to the uploads, outputs identical at tolerance 0.
+* The candidates on scratch keep the tags they were built with (`dp_resim`, `dp_resim_v`); the rebuilt, identical
+  archives are `R/cand/band_commit/{all,ffno}/pkg/track{1,2}_dp_resim_{all,ffno}.zip`.
 
 ## Decisions
 

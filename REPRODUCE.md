@@ -980,8 +980,23 @@ Empty means the record's recipe and the record's file name (reused if it exists)
 dot>`. Stage functions for `RPDE_REPRO_STAGE`: `dp_twins_vit_p`, `dp_twins_vit_c`, `dp_twins_ffno`, `dp_members_vit_p`,
 `dp_members_vit_c`, `dp_members_ffno` (narrow the seed loops with `RPDE_REPRO_SEEDS`), then `dp_band`, `dp_build`.
 
-**Band: always refitted** (the members changed), exactly as the record's was made (§13.1), into `RPDE_DP_BAND_DIR`
-(default `$RPDE_REPRO_LOG/decision/band`):
+**The two recipes.** The variables select one, and the recipe names the tag, the committed band and the archives:
+
+| recipe | variables | tag, archives | committed band (npz, json) |
+|---|---|---|---|
+| "T4 all" | both 0.25 (the default) | `dp_resim_all`: `track1_dp_resim_all.zip`, `track2_dp_resim_all.zip` | `Track_1/bands/dp_resim_all_sigblend_lam0.5.npz`, `Track_1/sigblend/band_dp_resim_all_sigblend_lam0.5.json` |
+| "T4 F-FNO only" | `RPDE_DP_RESIM_VIT=` (empty) | `dp_resim_ffno`: `track1_dp_resim_ffno.zip`, `track2_dp_resim_ffno.zip` | `Track_1/bands/dp_resim_ffno_sigblend_lam0.5.npz`, `Track_1/sigblend/band_dp_resim_ffno_sigblend_lam0.5.json` |
+
+Any other pair gets the tag `dp_resim_f<S_ffno>_v<S_vit>`, with the dot dropped and `none` for an empty variable
+(e.g. `dp_resim_f05_v025`), and has no committed band. `_SMOKE` is appended to the tag at any epoch count but 400.
+"T4 F-FNO only" trains seven runs; its four ViTs are the record's (§1.2, §1.3), taken from `RPDE_REPRO_OUT` under their own
+names.
+
+**Band: the committed one is reused by default**, as `final` reuses `k27_sigblend_lam0.5`. A refit is not bit-reproducible,
+and a reproduction of a proposed package must not depend on one. The two bands and how they were made are in
+`Track_1/bands/MANIFEST.md`. A recipe with no committed band is refused, and the refusal names `RPDE_REPRO_FITBAND=1`.
+With `RPDE_REPRO_FITBAND=1`, `dp_band` refits from this run's twins, exactly as the committed bands were made (§13.1), into
+`RPDE_DP_BAND_DIR` (default `$RPDE_REPRO_LOG/decision/band`), and `dp_build` uses that refit:
 
 ```
 fit_band.py --ckpt <6 members> --err-ckpt <5 twins> --alpha 0.80 --band-p 0.45 --fit-on seen --fit-aoa 15 20 \
@@ -993,18 +1008,34 @@ cd Track_1/sigblend && B_DUMP=dump_unseen.npz K0_BAND=band_<tag>_static.npz K0_I
 
 `--fit-on seen --fit-aoa 15 20 --inflate 1.39` are `fit_band.py`'s defaults, written out. The static error field comes
 from the twins on the SEEN AoA 15–20 windows, which the twins trained on (as for the record,
-`experiments/decision_20260928/results/ood_chunk2.md` part A); κ and q come from `val_unseen`.
+`experiments/decision_20260928/results/ood_chunk2.md` part A); κ and q come from `val_unseen`. The refit barely matters:
+the from-scratch twins' own refit, the campaign twins' band and the committed band give the same composite to 1e-4
+(`experiments/decision_20260928/results/ood_chunk6.md`, R1b).
 
-**Build.** `build_final.sh` with the refitted npz and json, the record's constants and `RPDE_SHIP_PREV_SPACE=target`
-(arm I1), tag `dp_resim` (`_SMOKE` appended at any epoch count but 400). Archives go to `RPDE_REPRO_PKG` (default
-`$RPDE_REPRO_LOG/decision/pkg`), never to `../sub_candidates`.
+**Build.** `dp_build` runs `build_final.sh` with the band and json chosen above, the record's constants and
+`RPDE_SHIP_PREV_SPACE=target` (arm I1). Archives go to `RPDE_REPRO_PKG` (default `$RPDE_REPRO_LOG/decision/pkg`), never to
+`../sub_candidates`. When `RPDE_REPRO_STAGE` contains `dp_build`, the closing line says that both archives were built and
+gated, and where they are.
 
-**Gates.** Those of §13.4, plus two that `build_final.sh` gained on 2026-09-28 for every build: `Track_1/verify/baked_constants.py`
-reads back ALPHA, every `RPDE_SHIP_*` knob (passed, or the tree's default), `AMP`, `SPEC_PATH`, `HOST_WRITE`, `FFNO_PATH`
-and the band's md5 from both archives and fails the build on any mismatch; and a lock file refuses a second build in the
-same tree.
+**Gates.** Those of §13.4, plus two that `build_final.sh` gained on 2026-09-28 for every build:
+* `Track_1/verify/baked_constants.py` reads back from both archives ALPHA, every `RPDE_SHIP_*` knob (the value passed, or the
+  tree's default), `AMP`, `SPEC_PATH`, `HOST_WRITE`, `FFNO_PATH` and the band's md5, and fails the build on any mismatch.
+* A lock file refuses a second build in the same tree.
 
 **Accepting a from-scratch rebuild.** Retraining is not bit-identical (§7), so acceptance is a score test: the rebuilt
 package's composite (the fitted `final` without `time`, `W0`, read on `Track_2/stream_eval.py` with the revealed target
-normalised as the official runner does) within **0.005** of the package built from the campaign's checkpoints. The job plan of the full run, one job per training and one build job after them
-(about 40 A100 GPU-hours), is `experiments/decision_20260928/results/candidate_release.md`.
+normalised as the official runner does) within **0.005** of the package built from the campaign's checkpoints.
+
+**Done for "T4 all"** (2026-09-28, commit `467769d`, clean clone, jobs 7577300 – 7577311, 41.8 A100 GPU-h):
+* The from-scratch twins against the campaign's twins, stream, all eight `val_unseen` trajectories: composite **77.2817
+  against 77.2821** (Δ −0.0003). The largest per-trajectory difference is 0.0012; the bar is 0.005.
+* One level down, the two ViT twins retrained bit-identically and the F-FNO twins differ at 0.4–0.5 % of their weight norm.
+* The "T4 F-FNO only" twins read −0.0003 against the campaign's F-FNO-only twins.
+* A different card (V100) and the forced fallbacks pass for both candidates.
+* Details: `experiments/decision_20260928/results/ood_chunk6.md`.
+
+**Not verified:**
+* The organizers' hardware and stack (8× A800). There, the ViTs will not retrain bit-identically either; the scale to expect
+  is the reseeding spread, about 0.012 in distribution, not the −0.0003 above.
+* The six all-data members have no second training to compare with. Only the twins were checked against an independent
+  training; the members were trained once, in the run above.
