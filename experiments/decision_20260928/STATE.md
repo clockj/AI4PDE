@@ -510,6 +510,12 @@ with its `MANIFEST.md` entry, the registered predictions.
   `R/jobs/cleanup_20260929.py` (dry run first), every path with its size and reason in
   `/fs/scratch/PAS1187/qwu/tmp/realpde/CLEANUP_20260929.md`. Kept: every final checkpoint, training log, json and eval
   text, the instrument's reports and json, every band, job scripts, Slurm logs. Nothing outside `R/` was touched.
-* **Not done, because it was not asked:** the scratch areas of the sprint and the wrap-up of 09-27 (`final0927` 50 GB,
-  `trick0927` 38 GB, `wrap0927` 5.4 GB), which the handoff of 09-27 calls disposable, and `distill` (28 GB).
+* **The older scratch areas, done later on 09-29 at the owner's request:** the sprint and the wrap-up of 09-27
+  (`final0927` 50 GB, `trick0927` 38 GB, `wrap0927` 5.4 GB) and `distill` (28 GB) went from 120.2 GB to 61 MB:
+  working trees and clones, the checkpoints of closed arms (194 distinct, none of them in `Track_1/unet/`), dumps and
+  archives deleted; notes, job scripts, logs, json and named bands kept in place. Nothing read those areas; the
+  shipped bands and the two uploads have byte-identical copies in the repository and in `../sub_candidates/final/`.
+  The eight heads of the K-sprint's clones that the repository does not hold are kept as git bundles
+  (`trick0927/clones/`). Every path, with md5 and training arguments of each checkpoint:
+  `/fs/scratch/PAS1187/qwu/tmp/realpde/CLEANUP_20260929_sprint.md`.
 
