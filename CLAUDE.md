@@ -15,8 +15,10 @@ and rules that only matter inside one directory in `.claude/rules/` (loaded when
 
 | need | read |
 |---|---|
-| re-create the method from the release | `REPRODUCE.md`, `reproduce.sh` (default target `final`) |
+| re-create the method from the release | `REPRODUCE.md`, `reproduce.sh` (default target `final`; release tag `final-20260927`) |
 | how local evaluation works and how the board corrects it | `EVALUATION.md` |
+| out-of-distribution reads (whole AoA or Re band held out, real package path) | `experiments/decision_20260928/ood/README.md` |
+| the Decision-phase campaign: criteria, every table, decisions | `experiments/decision_20260928/` (`PLAN.md`, `STATE.md`) |
 | what is closed, with the evidence | `ROADMAP.md` Part 2 — **check it before proposing an experiment** |
 | what a round did and why | `ROUNDS.md` (append-only, indexed at the top) |
 | every scored round, and the fitted `final` rule | `Track_1/board_rounds.py`, `Track_1/final_v9.py` (print `W0`; never quote weights from prose) |
@@ -31,7 +33,9 @@ and rules that only matter inside one directory in `.claude/rules/` (loaded when
 2. **Predict before upload.** All five subscores, each with a bracket, go into `../sub_candidates/<date>/README.md` and a
    PENDING row of `leaderboard/board.jsonl` before the upload. A prediction written afterwards is worthless.
 3. **Evidence comes only from held-out twins.** All-data checkpoints supply weights, never numbers, and never the band's
-   error field. Derive held-out lists in code (`re_split.excluded()`, `kfold.py --folds`); never type an `--exclude`.
+   error field (that field is the twins' error on `val_seen` AoA 15–20, which they trained on, ×1.39, `--fit-on seen`;
+   SIGBLEND's constants are out of sample). Derive held-out lists in code (`re_split.excluded()`, `kfold.py --folds`);
+   never type an `--exclude`.
 4. **Track 1: each window is forecast from its own input only.** The windows tile (window *k*'s target is window
    *k*+1's input), so any statistic pooled across the windows of one `predict()` call contains targets, even when it
    passes a permutation check. The disclosed exploit (`Track_1/archive/submit_trick/`) is never shipped, and nothing
@@ -83,7 +87,9 @@ Under `/users/PAS1187/qwu/RealPDE/` (not in git); mirror `AI4Science-WestlakeU/R
   Never mix raw arrays: `Track_1/unet/simreal.py` maps sim into the real measurement space.
 * Windows: subsample `[::2, ::2]`, 20 in + 20 out, stride 20, tail padded by repeating the last frame; 42 windows per
   full trajectory. Held-out trajectories: `model.VAL_TRAJ` (8), the authority for every split.
-* About 9 % of `u, v` targets are exactly 0 (outside the field of view or inside the airfoil) and are not scored.
+* About 10 % of `u, v` targets are exactly 0 (outside the field of view, the airfoil's shadow), 3–16 % of pixels in some
+  frames only. Only the interval average and the coverage of `sps` skip them; `rel`, `tke`, `mvpe` and `sps`'s accuracy
+  factor are computed without a mask, zeros included (`scoring.py`: `rel_l2_per_sample`, `aggregate_sps`).
 
 ## Scoring
 
@@ -97,7 +103,10 @@ containment as the board does: state every band change in ΔC as well as in `fin
 Six members, fused by family into two invocations → mean field y₀ and mean σ head → compose at ALPHA with one gain for
 `u` and `v` → prediction P. Interval: centre y₀, half-width from `band.npz` (SIGBLEND), widened to contain P. Track 2 runs
 the same path inside one CUDA graph and corrects the interval width, the time-mean bias and the fluctuation amplitude
-from revealed targets. `Track_1/submit_fno/build_final.sh` is the authority for every constant.
+from revealed targets. `Track_1/submit_fno/build_final.sh` is the authority for every constant. Release: tag
+`final-20260927` (4e5ed37); for archives byte-identical to the uploads, code included, build from `fdac00b`.
+**The Decision-phase candidate (not uploaded)** trains all six members and five twins with `--aug-resim 0.25` and adds
+`PREV_SPACE = "target"`: `RPDE_REPRODUCE_GO=1 bash reproduce.sh decision` (`REPRODUCE.md` §14; `STATUS.md`).
 
 ## Traps
 
@@ -111,11 +120,16 @@ from revealed targets. `Track_1/submit_fno/build_final.sh` is the authority for 
   `submission.py` or a build script while a build runs.
 * **torch ≥ 2.6 refuses the checkpoints** unless `TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1` (the scripts export it).
 * **If an arm scores worse than the worst case of its own hypothesis, suspect the harness.**
+* **One build per tree.** Two builds in one tree overwrote each other's baked constants and still ended `BUILD_FINAL OK`;
+  `build_final.sh` now takes a lock file and checks the archive's constants (`Track_1/verify/baked_constants.py`).
+* **`sbatch --test-only` is not evidence that Ascend is busy** (it said 24 h; jobs started in seconds). Probe with a job.
+* **`STATS_MASK` stays off.** The scorer counts zero targets in rel, tke and mvpe, and unmasked D1c and VARCAL learn a
+  recording's own blank; masked, a re-blanked recording lost on every trajectory.
 
 ## Environment
 
-* **OSC.** Ascend (A100): `-A PAS1186 -M ascend -p nextgen --gpus-per-node=1`, builds, gates and timing. Pitzer (V100):
-  training overflow. Login nodes have no GPU. `--output` on scratch. Details and job templates: the `osc-jobs` skill.
+* **OSC.** Ascend (A100): `-A PAS1186 -M ascend -p nextgen --gpus-per-node=1`, first whenever it is idle, training
+  included. Pitzer (V100): the overflow. Login nodes have no GPU. `--output` on scratch. Templates: the `osc-jobs` skill.
 * Python: `~/.conda/envs/realpde/bin/python` (torch 2.2.2, numpy 1.26.4 — the evaluators' stack); `environment.yml`.
 * Repo `~/workspace/realpde/main` · data and kits `~/RealPDE/` · scratch `/fs/scratch/PAS1187/qwu/tmp/realpde/`.
 * User-facing summaries are written in Chinese; repository documents in English.
@@ -136,11 +150,11 @@ Track_1/     instruments at top level: predict_board, compare_v9, ens_v9, kfold,
   unet/        model.py, models_alt.py, train2.py, simreal.py; *.pth (untracked)
   submit_fno/  submission.py, _fno.py, fit_band.py, build_zip.py, validate_strict.py, build_round13.sh, build_final.sh
   sigblend/    the SIGBLEND band recipe and its constants      bands/   scored bands + MANIFEST.md
-  verify/      gates and identity checks                       qd_k/    the QD error-head derivation (not shipped)
+  verify/      gates, identity checks, baked_constants.py      qd_k/    the QD error-head derivation (not shipped)
   closed/      closed experiments, one verdict each            archive/ the first two months
   plan/ report/  dated plans and write-ups
 Track_2/     submit/submission.py, build_t2.py, validate_t2.py, stream_eval.py, t2_common.py, r1_ref/, closed/
-experiments/ cross-track campaigns (sprint_20260927/, audit_20260927/)
+experiments/ cross-track campaigns (sprint_20260927/, audit_20260927/, decision_20260928/ with ood/ the instrument)
 leaderboard/ board.jsonl, runs.jsonl, screen.jsonl, lb.py
 outside the repo: ../sub_candidates/ · ../handoffs/ · ../artifacts/
 ```

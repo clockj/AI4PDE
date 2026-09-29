@@ -30,11 +30,13 @@ track record. Where a document disagreed with the code, the code is what is prin
         v
    INSTRUMENTS (local, every number a SIGN)
         compare_v9 -> ens_v9 -> kfold --split re --bands 1 2 3      (in-distribution)
-        aoa_holdout_eval --holdout-aoa                              (out-of-distribution)
+        aoa_holdout_eval --holdout-aoa                              (out-of-distribution, single checkpoints)
+        experiments/decision_20260928/ood/  (held-out AoA / Re regimes, ensembles, real package path, §3b)
         screen_sets / screen_eval -> leaderboard/screen.jsonl       (screen arms)
         |
         v
-   BAND   submit_fno/fit_band.py  (per-element SPS half-widths, error field from the TWINS)
+   BAND   submit_fno/fit_band.py  (per-element SPS half-widths, error field from the TWINS on val_seen AoA 15-20,
+        |                          which they trained on: in sample, x1.39)
         |  sigblend/make_k0_band.py (the sigma power law, fitted on the twins' val_unseen errors)
         v
    PACKAGE  submit_fno/build_final.sh -> build_round13.sh -> build_zip.py + Track_2/build_t2.py
@@ -42,7 +44,7 @@ track record. Where a document disagreed with the code, the code is what is prin
         v
    GATES  submit_fno/validate_strict.py (T1, GPU, TIMES the package)
           Track_2/validate_t2.py --adaptive | Track_2/stream_eval.py --causal-check
-          verify/*.py (scorer diff, fusion, packing, AMP, blend, package identity)
+          verify/*.py (scorer diff, fusion, packing, AMP, blend, package identity, baked constants)
         |
         v
    PREDICTION OF RECORD  predict_board.py --anchor <recent round of the same shape>
@@ -82,7 +84,7 @@ is a re-implementation and is not trusted (`CLAUDE.md`, *Engineering traps*).
 
 | subscore | formula | what it reads |
 |---|---|---|
-| `rel_l2` | `100/(1 + 0.5·e)` | relative L2 per window, `u, v` only |
+| `rel_l2` | `100/(1 + 0.5·e)` | relative L2 per window, `u, v` only, over the whole field (zero targets included) |
 | `tke` | `100/(1 + 0.5·e)` | rel-L2 of `0.5·(var_t u + var_t v)` over the 20 output frames — phase-free |
 | `mvpe` | `100/(1 + 0.5·e)` | rel-L2 of the time-mean at probes x ∈ {13,21,29,37}, y ∈ {8,10,…,24}, **per x-station**, averaged |
 | `time` | `100/(1 + sqrt(t/0.72896))` | mean board **seconds** per step; 0 or non-finite ⇒ 0 |
@@ -90,6 +92,14 @@ is a re-implementation and is not trusted (`CLAUDE.md`, *Engineering traps*).
 
 `sps9.SIGMA = 0.0563870259` (it is `sc.SIGMA_GLOBAL`, read from the kit, not typed here).
 Malformed bounds — wrong shape, non-finite, `lower > upper` — zero **every** subscore.
+
+**Zero targets are scored, except by the interval** (corrected 2026-09-28; earlier text here and in `CLAUDE.md` said
+they "are not scored"). About 10 % of `u, v` targets are exactly 0: outside the field of view or in the airfoil's
+shadow. `rel_l2`, `tke`, `mvpe` and the accuracy factor `a_i` of `sps` are computed without a mask (over the whole field;
+`mvpe` over its probes), zero-target elements included (`scoring.py`: `rel_l2_per_sample`, `tke_rel_l2_per_sample`, `mvpe_rel_l2_per_sample`, and `a` in
+`aggregate_sps`). Only the interval average and the coverage of `sps` leave them out (`scored = Y != 0` in
+`aggregate_sps`). The zero set is not static: 1.2 – 6 % of pixels are zero in every frame and 3.2 – 16 % in some frames
+only. This is why `STATS_MASK` stays off (`ROADMAP.md` §1.46).
 
 ### SPS factorizes, so the band is a sort
 
@@ -139,9 +149,9 @@ board tail applied, band refit at every scale).
 | `VAL_TRAJ` | `Track_1/unet/model.py` | 8 trajectories: `3750_0 6300_10 8850_20 11400_20 13950_10 16500_5 21600_15 26700_0` | the default honest split; `val_unseen.npz` is its cache, `val_seen.npz` the matched in-training control |
 | AoA 15–20 subset of `val_unseen` | `--aoa 15 20` on `compare_v9` / `ens_v9` | 126 fitting windows / a 15–20 view for reporting | **the board-like proxy.** Error is governed by AoA and almost nothing else (out-of-fold rel-L2 0.052 / 0.053 / 0.086 / 0.106 / 0.121 at AoA 0…20), and this slice reads 0.1082 against the board's 0.1179 where the full split reads 0.0807 |
 | full split | no `--aoa` | 336 windows | the level, not the board's regime |
-| Re extrapolation | `Track_1/re_split.py` (`excluded()` derives **26** trajectories) | contiguous Re bands | **retired as a decision instrument**: R14's gate fired on zero hidden windows, so the public hidden set is interior in Re |
+| Re extrapolation | `Track_1/re_split.py` (`excluded()` derives **26** trajectories) | contiguous Re bands | **retired as a decision instrument**: R14's gate fired on zero hidden windows, so the public hidden set is interior in Re. *2026-09-28: back in use for the PRIVATE set, whose Re is novel: its sets `relo` (9), `rehi` (7), `rein` (10) are the RE regime of §3b, read on ensembles* |
 | interior Re k-fold | `Track_1/kfold.py --split re --bands 1 2 3 --paired` | all 82 trajectories, out-of-fold | **the confirmation step.** Overstates `rel_l2` by ~1 %; the signs of `tke` and `sps` are right |
-| **AoA holdout** | `Track_1/aoa_holdout_eval.py --holdout-aoa {0,5,10,15,20}` | one angle removed from training *and* from the band's fit split | **the only OOD instrument we have**, and the one that speaks to the PRIVATE test set (novel AoA and Re). `--fit-set val_traj` (8 traj, the 09-14 screen protocol) or `re_excluded` (26) chooses the in-distribution list the arm also excluded; the band is fitted there |
+| **AoA holdout** | `Track_1/aoa_holdout_eval.py --holdout-aoa {0,5,10,15,20}` | one angle removed from training *and* from the band's fit split | a single-checkpoint OOD instrument that speaks to the PRIVATE test set (novel AoA and Re); *2026-09-28: no longer the only one, see §3b for ensembles and the Re regimes*. `--fit-set val_traj` (8 traj, the 09-14 screen protocol) or `re_excluded` (26) chooses the in-distribution list the arm also excluded; the band is fitted there |
 
 `aoa_holdout_eval.py --inflate-sweep A B C` refits the band at each stretch and reads `sps` on
 **both** splits, so the width that is right for a novel angle arrives with its in-distribution
@@ -153,9 +163,77 @@ Rounds 7, 8 and 10 were each misled by a number computed from a model that had t
 split it was scored on. Evidence comes from the held-out twins, and so does the band's error
 field — a band fitted on memorized errors scored `sps` 36.94 in round 6.
 
+*2026-09-28: "held-out" names the twins (held out of `VAL_TRAJ`), not the windows the band is fitted on. The static
+band's error field is the twins' error on the three AoA 15 – 20 trajectories of `val_seen` (10125_20, 12675_20,
+22875_15; 126 windows), which the twins trained on, times 1.39: `fit_band.py`'s default `--fit-on seen`, which
+`build_round13.sh` uses. The SIGBLEND κ and q are fitted out of sample, on the eight `val_unseen` trajectories. Fitted
+out of sample instead, the static band moves the composite by 0.002 – 0.012 (`ROADMAP.md` §1.47).*
+
 **A held-out list is derived, never typed** (`re_split.excluded()`, `kfold.py --folds`): the
 (Re, AoA) grid is incomplete, so a hand-written `--exclude` silently trains on a held-out
 trajectory.
+
+### 3b. The out-of-distribution stream instrument (2026-09-28)
+
+`experiments/decision_20260928/ood/`; the commands, options and output layout are in its `README.md`. It turns an
+ensemble trained without a whole regime into a package with its own band and streams the held-out regime through the
+real package code. It is the instrument the Decision-phase campaign decided by (`ROADMAP.md` §1.42 – §1.48).
+
+**One run** (one Ascend job, `bash ood_submit.sh NAME REGIME LAYOUT`):
+
+1. **Members** from the layout; the run refuses a member whose training set holds an evaluation or fit-split
+   trajectory, an all-data model, and sim co-training without `--sim-exclude-held`.
+2. **Band**, refitted to the ensemble on `model.VAL_TRAJ` minus the regime: the static fit (`fit_band.py --fit-on
+   unseen --fit-aoa <the AoA 15 – 20 trajectories left in the split>`), then SIGBLEND (`dump_twins.py`,
+   `make_k0_band.py`), every script unchanged.
+3. **Build** with `build_final.sh` in a source tree of its own (a `git archive` of the pinned commit); it must end
+   `BUILD_FINAL OK`, and the run checks the `sed`-edited files before and after and the Track-2 gate's load line.
+4. **Variants**: copies of the extracted archive with constants rewritten by the build's own patterns: `frozen` (every
+   stream knob off, Track 1's case), `base` (asymmetric R1 only), `control` (the record + `PREV_SPACE "target"`),
+   `prev_input` (the record as built), `statsmask`, `famw`, one-constant `c_*` variants, and synthetic re-blanks.
+5. **Stream** each variant through `Track_2/stream_eval.run` with the revealed target normalised with the TARGET
+   statistics; `--causal-check` on `control`.
+6. **Report**: rel, tke, mvpe, `sps`, C and the composite (`W0` without `time`), pooled and per trajectory, over full
+   streams and the first 3 and 14 windows, deltas to `control` and `base` with the number of trajectories positive.
+   Subset scores are exact: the pooled result is checked against the kit's `aggregate_sps` (largest difference 1e-8).
+
+**Regimes**, derived in code (`ood_lib.py regime`), never typed. Every regime model also excludes `VAL_TRAJ`, and sim
+at a held-out condition:
+
+| regime | held out of training | evaluated on | stands for |
+|---|---|---|---|
+| `A20` | every real and sim trajectory at AoA 20 | 16 real at AoA 20 | a novel angle, extrapolated |
+| `A10` | every real and sim trajectory at AoA 10 | 18 real at AoA 10 | a novel angle, interpolated |
+| `RE` | `re_split.excluded()` (26 real, six Re) and sim at those Re | `relo` 9, `rehi` 7, `rein` 10 | below, above and inside the training Re |
+| `ID` | `VAL_TRAJ` (the twins) | the 8 trajectories and their AoA 15 – 20 slice | the floor |
+
+"OOD mean" is the mean of A20, A10, relo and rehi.
+
+**Layouts** (`ood_lib.py`): `mirror` (four F-FNO + sim s1 – 4, ViT-P s1, ViT-C + sim s3: the shape of the packages of
+record), `six`, `vitc2`, `ffno4`, `ffno6`, `six_vitc2`, the arms' layouts (`t3`, `t4`, `t4v`, `t4b`), the twins' layouts
+(`twins`, `twins_t4`, ...), or any list through `OOD_MEMBERS`. FAMW needs exactly two fused groups; a third family
+switches it off, and the json records which corrections were live.
+
+**Cost.** The regime ensembles are the expensive part: 24 trainings at the recipe of record, 60.3 A100 GPU-h (an F-FNO
++ sim or ViT-C member 2.3 – 2.8 h, a ViT-P 1.2 – 1.5 h). A run is 3 – 7 minutes for the base variants; a `mirror` run
+with every variant, re-blanks and constant sweeps about 30 minutes at A20 and A10 and 45 at RE. The campaign's 99
+instrument jobs used 10.2 GPU-h.
+
+**Validation.** In distribution it reproduces `experiments/audit_20260927/refactor_pkg.md` to the printed digits
+(stream stack against asymmetric R1 +0.0757, 8/8; `PREV_SPACE` target +0.0064, 8/8; `STATS_MASK` −0.0012). On the
+sprint's stand-ins it reads the stream stack at +0.453 (AoA 20) and +0.567 (AoA 10) against the sprint's +0.446 and
++0.553. Knob-off variants are bit-identical to `frozen` on every trajectory's first window (except FAMW, whose mix
+equals the mean only algebraically); the causal check reads 0 in every run.
+
+**Limits.**
+* One ensemble per arm per regime. The reseeding spread (§4) was measured at RE and in distribution, not at A20 or A10.
+* A20's static band rests on one fit trajectory (21600_15); A10 and RE on three.
+* The regime band is fitted out of sample for the regime ensemble, the shipped band in sample (§3): the regime band is
+  a little wider than an organizer's rebuild would be (measured 0.002 – 0.012).
+* The RE regime's in-distribution split (`VAL_TRAJ` minus RE) is in sample for its band; the twins' read is the clean
+  in-distribution read.
+* Re-blank masks are synthetic and overstate natural blanking (`ROADMAP.md` §1.46).
+* Local ms per step comes from shared nodes and is not latency evidence.
 
 ---
 
@@ -165,9 +243,23 @@ Every local number is a **sign, not a size**. The proxy over-reads error CUTS by
 member REMOVAL is charged in full (T2R15); across model FAMILIES the proxy predicts neither size
 nor sign (R16, R26) while a *board* read of a family transfers at 0.85× (R28).
 
+**How large a local delta must be: the reseeding spreads** (2026-09-28, `experiments/decision_20260928/STATE.md`).
+A difference inside these is not a difference.
+
+| what varies | spread |
+|---|---|
+| one F-FNO + sim member, 6 seeds, sd of `wfinal` | 0.03 fit split · A20 0.08 · A10 0.08 · relo 0.07 · rehi 0.04 · rein 0.02 |
+| four-member ensembles drawn from 6 control seeds (+ the same two ViTs), largest pairwise difference in composite, stream | relo 0.034 · rehi 0.011 · rein 0.010 · in distribution 0.012 |
+| the same, frozen (Track 1's case) | relo 0.076 · rehi 0.030 · rein 0.013 · in distribution 0.010 |
+| a from-scratch retrain of the five twins, same hardware and stack | 0.0003 |
+| the same archive on a V100 instead of an A100, and every forced fallback | at most 0.0006 |
+
+An organizer's retrain on other hardware is expected at the reseeding scale, not at the retrain's 0.0003. The
+12 – 58× out-of-distribution seed ratio of `ROADMAP.md` §1.12 was the unseeded FNO of August.
+
 **The operating point of the packages of record** is ALPHA 0.80 with JOINT_GAIN, the interval
 centred on the alpha-0 field, and the SIGBLEND band on top of a static band fitted with
-`--band-p 0.45 --inflate 1.39 --fill-unscored`. `Track_1/opoint.py` holds it, and
+`--band-p 0.45 --inflate 1.39 --fill-unscored` on the twins' in-sample `val_seen` AoA 15 – 20 errors (§3). `Track_1/opoint.py` holds it, and
 `Track_1/submit_fno/build_final.sh` is the authority for what is baked.
 `Track_1/submit_fno/fit_band.py` keeps its own older defaults (`--alpha 0.75 --band-p 0.5`), because
 the build passes what it needs explicitly.
@@ -198,7 +290,7 @@ the build passes what it needs explicitly.
 | `Track_1/screen_sets.py` | a screen arm's member sets by token (`FNO3`, `VIT2`, …). `--arm <arm> --set "S1=BASE" "S2=BASE,ckpt"` | delegates to `screen_eval.run_main("ens_v9", …)` | inherits `ens_v9`'s |
 | `Track_1/screen_eval.py` | a screen arm end to end: accuracy, latency, projected `final`. `--arm <arm> --ckpt … --wave N --lat LAT.json` | upserts `leaderboard/screen.jsonl` under a lock; JSON in `Track_1/plan/` | projects with **gains halved, losses in full, board ms floored** (the 09-14 calibration) |
 | `Track_1/kfold.py` | out-of-fold over all 82 trajectories, with error bars. `--score --split re --bands 1 2 3 --paired` | JSON in `--out-dir` (scratch) | overstates `rel_l2` ~1 % |
-| `Track_1/aoa_holdout_eval.py` | a novel ANGLE, with the shipped band machinery. `--ckpt … --holdout-aoa 20 --fit-set val_traj` | `--json` | one angle is one draw; the OOD seed σ is 0.71 `wfinal`, so replicate |
+| `Track_1/aoa_holdout_eval.py` | a novel ANGLE, with the shipped band machinery. `--ckpt … --holdout-aoa 20 --fit-set val_traj` | `--json` | one angle is one draw; the OOD seed σ was 0.71 `wfinal` on the unseeded FNO, 0.08 on seeded F-FNO + sim (09-28); replicate. For ensembles and the stream use §3b |
 | `Track_1/proxy_calib.py` | board/proxy ratios per round, and the proxy's resolution (GPU, once per round) | stdout | it is the thing that measures the bias |
 | `Track_1/predict_board.py` | the five board subscores **before** upload. `--ckpt <all-data> --err-ckpt <twins> --invocations N --local-ms M --anchor <round> --anchor-err-ckpt …` | stdout → the staging README | predicts a LEVEL to ±0.15; cannot resolve a change below ~2 % of error |
 | `Track_1/make_val.py` · `Track_1/closed/exchange_v9.py` · `Track_1/sub_value.py` · `Track_1/alpha_board.py` · `Track_1/calib_band13.py` · `Track_1/quant8.py --score BAND.npz` | the val caches every instrument reads · the exchange rate · a slot's information value · ALPHA at the board's error scale · the board's error tail · the **scored** cost of a packing scheme | stdout (`make_val` writes `Track_1/val_*.npz`, untracked, ~1 GB) | each is a single-purpose calibration script; see §5 for the constants three of them produce |
@@ -219,7 +311,7 @@ the build passes what it needs explicitly.
 | `Track_1/submit_fno/validate_strict.py --band <band.npz> [--fp16 …]` | the Track-1 contract under the harshest load path, through the kit scorer — **and the package's local ms**. Run by `build_round13.sh`; GPU; must not run while an `rp_*`/`pz_*` job is alive |
 | `Track_2/validate_t2.py [--adaptive] --zip submission_t2.zip` | the Track-2 contract: isolation, no aliasing, whole-run bound consistency, and for a frozen package statelessness. **A package that adapts is gated with `--adaptive`** |
 | `Track_2/stream_eval.py --submission <extracted dir> --causal-check` | causality of an adaptive package: every window after a cut is replaced by noise and every step before it must stay bit-identical |
-| `Track_1/submit_fno/build_final.sh OUTDIR` with `RPDE_REF_T1` / `RPDE_REF_T2` | the two packages of record rebuild, pass all three gates, and match the uploads file by file |
+| `Track_1/submit_fno/build_final.sh OUTDIR` with `RPDE_REF_T1` / `RPDE_REF_T2` | the two packages of record rebuild, pass all three gates, and match the uploads file by file. Since 09-28 it also refuses a second build in the same tree (a lock file) and reads every baked constant and the band's md5 back out of both archives (`Track_1/verify/baked_constants.py`, 41 checks); a mismatch fails the build |
 | `Track_2/stream_eval.py --submission <extracted twin package> --split unseen [--aoa 15 20]` | honest Track-2 numbers: real trajectories through the streaming protocol, official scoring. Only a package built from the held-out twins is honest here |
 | `Track_2/verify_space.py --submission <T2 dir> --t1 <T1 dir>` | the normalized-space path of a FROZEN Track-2 package reproduces Track 1's `predict()` (4e-6 physical) |
 | `Track_1/verify/pkg_identity.py --track t1 --a <old> --b <new>` | two BUILT archives return the same arrays. Hand it the archive **actually uploaded** (`../sub_candidates/final/`) |
@@ -325,7 +417,7 @@ expected to score worse.
 | **the board's latency LEVEL** | the eval machine drifts by date and the two local timers disagree by 5× (R28: +0.797 kernel-level, +0.164 package-level, board +0.404). Anchor on a recent round of the **same shape** and quote both reads as the bracket. Never time while an `rp_*`/`pz_*` job is alive; only interleaved arms count |
 | **a cross-FAMILY delta** | the proxy predicts neither size nor sign across families (R16's U-FNO, R26's Swin). Spend a slot: a *board* read of a family transfers to the other track at 0.85× (R28) |
 | **anything decided at load time** (`AMP`, `GRAPH`, `FFNO_PATH`) | the constant is baked but the runtime path can still fall back. Ship a fingerprint round whose error subscores must come back bit-identical — R29 did exactly that for the tiled `_fno.py`. A fingerprint is a MAGNITUDE test, not a direction test (R27) |
-| **how the private set behaves** | it is out of distribution in AoA and Re by construction. The AoA holdout is the only instrument that speaks to it, the twins exclude no Re cell, and the development board turned out to sit between the in-distribution and the held-out reads (T2R24). Read every change in three regimes (`evaluate-change` skill) |
+| **how the private set behaves** | it is out of distribution in AoA and Re by construction. The development board turned out to sit between the in-distribution and the held-out reads (T2R24). Since 09-28 the instrument of §3b reads ensembles with a whole AoA or Re band held out (A20, A10, relo, rehi, rein) on the real package path; it cannot say which of those regimes the private set is. Read every change in these regimes (`evaluate-change` skill) |
 | **a feature no local window exercises** (the gated mean-blend) | `validate_strict.py` passes such a package as if the feature were absent. It needs a dedicated verifier: `verify/blend_path.py`, `verify/aug_mask_check.py`, `verify/simmap_modes.py` |
 
 The design consequence is the standing rule: **one controlled lever per slot**. A slot built so

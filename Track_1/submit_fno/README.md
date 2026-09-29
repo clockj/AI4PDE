@@ -66,7 +66,9 @@ python Track_1/submit_fno/fit_band.py --ckpt $A --err-ckpt $M --alpha 0.80 --ban
 * **Refit whenever the member set or `ALPHA` changes.**
 * `base` is the exact per-element optimum (`../sps9.py:optimal_band`) of the twins' errors on the AoA 15–20 trajectories
   of the fitting split (`--fit-aoa`), stretched by 1.39 (`--inflate`), box-smoothed (`--band-smooth 3`), with elements the
-  fitting split never scored filled from their neighbours (`--fill-unscored`).
+  fitting split never scored filled from their neighbours (`--fill-unscored`). The fitting split defaults to
+  `--fit-on seen`, `val_seen`, whose three AoA 15–20 trajectories the twins trained on: the field is in sample
+  (measured 0.002 – 0.012 composite against an out-of-sample fit; `../../ROADMAP.md` §1.47).
 * `fit_band.py`'s own defaults (`--alpha 0.75 --band-p 0.5`) are older than the operating point; the build passes what it
   needs.
 * Once a package scores, its band is versioned in `../bands/` (see `MANIFEST.md`), and `RPDE_BAND=` reuses it byte for

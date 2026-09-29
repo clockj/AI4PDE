@@ -96,7 +96,7 @@ a size.
 | `ens_v9.py` | member sets on the AoA 15–20 proxy — the screen at the size that ships |
 | `eval_v9.py` | the shared `infer()` every scorer above calls |
 | `kfold.py` | out-of-fold over all 82 trajectories; `--split re --bands 1 2 3` is the confirmation step, `--paired` the A/B |
-| `aoa_holdout_eval.py` | a novel ANGLE with the shipped band machinery — the only OOD instrument, and the one that speaks to the private test set (`--inflate-sweep` prices the band width there) |
+| `aoa_holdout_eval.py` | a novel ANGLE with the shipped band machinery, one checkpoint at a time — it speaks to the private test set (`--inflate-sweep` prices the band width there). Since 09-28 ensembles and held-out Re bands are read by `../experiments/decision_20260928/ood/` (`../EVALUATION.md` §3b) |
 | `mean_blend_re.py` | the gated mean-blend out of distribution (`BLEND_BETA`; closed for the public set, re-opened by the pivot) |
 | `alpha_board.py` | ALPHA against the board's error scale — refit it whenever the member set changes |
 | `quant8.py` | the scored cost of a packing scheme (`--score BAND.npz`) |

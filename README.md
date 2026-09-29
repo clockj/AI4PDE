@@ -9,8 +9,9 @@ element. CFD simulations of the same airfoil are available for training, never a
 | [1 — Sim2Real](https://www.codabench.org/competitions/17363/) | batched calls over the test windows, raw physical units | `predict(input_array, metadata)` | **81.671** |
 | [2 — LTTTA](https://www.codabench.org/competitions/17385/) | streaming at batch 1, normalized units, the previous window's target revealed at every step | `get_ttt_model(dir, device)` → `ttt_step(...)` | **82.056** |
 
-Main Development closed on 2026-09-27. The state is in [`STATUS.md`](STATUS.md); every scored round is in
-`Track_1/board_rounds.py`.
+Main Development closed on 2026-09-27; the release of that day is the tag `final-20260927`. Track 2 finished #8 and is
+in the Decision phase (to 2026-10-25); Track 1 finished #20. The state is in [`STATUS.md`](STATUS.md); every scored
+round is in `Track_1/board_rounds.py`.
 
 ## The method
 
@@ -25,7 +26,8 @@ reveals; they train nothing.
 * **Prediction.** The mean of the six fields, with the amplitude of its fluctuation pulled toward σ (one gain for
   `u` and `v`).
 * **Interval.** Centred on the mean before that adjustment and widened to contain the prediction. The half-width is a
-  per-element base, solved exactly on the errors of held-out twins of the members, scaled per window by σ.
+  per-element base, solved exactly on the errors of the members' twins (trained without eight validation trajectories)
+  on three trajectories they trained on, at angles of attack 15 – 20, scaled per window by σ.
 * **Track 2, online.** From the revealed targets of the current trajectory, strictly causally: the interval's lower
   and upper width are recalibrated per pixel; the time-mean bias of the prediction is removed; the fluctuation
   amplitude is recalibrated. On held-out angles of attack these corrections are worth ten times what they are worth in
@@ -42,7 +44,13 @@ are in `ROADMAP.md` and `ROUNDS.md`.
 conda env create -f environment.yml && conda activate realpde     # Python 3.10, torch 2.2.2+cu121, numpy 1.26.4
 RPDE_REPRODUCE_GO=1 RPDE_REPRO_OUT=<dir> bash reproduce.sh final   # 5 twins + 6 members + band + both archives, ~37 A100-hours
 bash Track_1/submit_fno/build_final.sh <outdir>                    # the two archives from existing checkpoints
+RPDE_REPRODUCE_GO=1 RPDE_REPRO_OUT=<dir> bash reproduce.sh decision # the Decision-phase candidate (REPRODUCE.md §14)
 ```
+
+The Decision-phase candidate is the same method with every network also trained on real windows resampled in time and
+scaled in amplitude by a common factor (`--aug-resim 0.25`, to first order the recording at a neighbouring Reynolds
+number), and with Track 2 reading the revealed target in the normalisation the official runner uses. It is built and
+reproduced from scratch; it has not been uploaded.
 
 The data is the competition release (`AI4Science-WestlakeU/RealPDE-Competition-Data` on Hugging Face); the official
 starting kits with the scoring program come from the Codabench pages. Paths default to our cluster: set `RPDE` for

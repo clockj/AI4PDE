@@ -15,6 +15,11 @@ closed there, say what new evidence reopens it.
 
 * **Training change:** train held-out twins with `--seed` matched to a control, at least 3 seeds. One run at 2–3σ has
   regressed on replication four times. An arm that does not move its own training loss cannot move the held-out metric.
+* **Training change, out of distribution:** screen single members with at least 4 seeds matched to the control, in the
+  regimes the criterion names; an arm that does not move its single-member read by more than the control's seed spread
+  is closed there. Decide at ensemble level: the arm's members with the control's other members, band refitted, on the
+  full stream stack (`EVALUATION.md` §3b). Arm T4 (`--aug-resim`) passed this way; T3 moved single members at A20 by two
+  seed spreads and was null at ensemble level.
 * **Inference change:** build the package from the five twins (`build-package` skill) and read it on `val_unseen`.
 * **Read at the size that ships.** Error an arm removes per member can vanish in the six-member mean. Swap the arm's
   twin into the five-twin set and read the set.
@@ -24,12 +29,20 @@ closed there, say what new evidence reopens it.
 
 | regime | instrument | what it stands for |
 |---|---|---|
-| in distribution, all 8 held-out trajectories | `ens_v9.py`, `Track_2/stream_eval.py` | the floor |
+| in distribution, all 8 held-out trajectories | `ens_v9.py`, `Track_2/stream_eval.py`; the `ID` regime of the instrument below | the floor |
 | in distribution, AoA 15–20 | the same with `--aoa 15 20` | the development board's error level |
-| a whole AoA held out of training | `aoa_holdout_eval.py` (AoA 10 = interpolation, AoA 20 = extrapolation) | the private set |
+| a whole AoA held out of training | `experiments/decision_20260928/ood/` regimes `A20`, `A10` (ensembles); `aoa_holdout_eval.py` for one checkpoint | the private set: a novel angle, extrapolated (20) or interpolated (10) |
+| a band of Re held out of training | the same instrument, regime `RE`: `relo` 9, `rehi` 7, `rein` 10 trajectories (`re_split.excluded()`) | the private set: Re below, above or inside the training range |
 
-The development board behaved like the held-out regimes on 09-27 (board-likeness 0.6–0.8 between the in-distribution
-read and the held-out one). The private set is held-out by construction.
+Report the OOD mean (A20, A10, relo, rehi) and each regime with its trajectories positive; `rein` goes with the
+in-distribution reads. The development board behaved like the held-out regimes on 09-27 (board-likeness 0.6–0.8
+between the in-distribution read and the held-out one). The private set is held-out by construction, and no local
+read says which regime it is.
+
+**The yardstick for a delta is the reseeding spread** (`EVALUATION.md` §4): four-member control ensembles differ by up
+to 0.034 at relo, 0.011 at rehi, 0.010 at rein and 0.012 in distribution (stream composite); a single F-FNO + sim
+member's seed sd is 0.02 – 0.08 `wfinal`. A jackknife over the arm's seeds (leave one out, each ensemble with its own
+band) separates a lucky seed set from the arm.
 
 ## 4. Correct the local number
 

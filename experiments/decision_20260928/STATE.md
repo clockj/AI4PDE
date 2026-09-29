@@ -2,6 +2,10 @@
 
 Plan and criteria: `PLAN.md`. Update this file at every wave; keep job ids, paths and the GPU-hour ledger here.
 
+**Closed 2026-09-29.** The owner's decisions and the closing steps are at the end of this file. Scratch paths below
+(`R/…`) are as they were when each section was written; after the cleanup of 09-29 what remains is listed in
+`/fs/scratch/PAS1187/qwu/tmp/realpde/README.md`, and what was deleted in `CLEANUP_20260929.md` beside it.
+
 ## Ledger
 
 | date | wave | GPU-h used (sacct) | cumulative | of 300 |
@@ -14,6 +18,7 @@ Plan and criteria: `PLAN.md`. Update this file at every wave; keep job ids, path
 | 2026-09-28 18:02 | every training of wave 3 finished (24 jobs COMPLETED); instrument chunk 5 | sacct, 170 GPU jobs | **171.6** | 57 % |
 | 2026-09-28 22:38 | the from-scratch run of the candidate (41.8) and the last instrument reads | sacct, 185 GPU jobs | **213.7** | 71 % |
 | 2026-09-28 23:03 | the closing gates (R1, R1b, the second candidate, R2) | sacct, 199 GPU jobs | **214.4** | 71 % |
+| 2026-09-29 00:45 | the identity rebuilds from the committed bands; campaign closed | sacct, 201 GPU jobs | **214.5** | 72 % |
 
 Estimates made at 05:15 (A100): wave 1 about 60, arms T3 + T4(RE) about 31; both held. Read the ledger with
 `sacct -M ascend,pitzer -X -n -S 2026-09-28 -o jobname%26,elapsed,state,alloctres%40 | grep -E 'rp_dp_|pz_dp_'`.
@@ -344,7 +349,8 @@ control of the same regime; each ensemble with its own refitted band; real packa
   over T4 is at relo. A20, A10 and the twins are training.
 * **What is left after the stream is not reachable by a per-trajectory correction.** Share of the squared error,
   control, frozen → stream: the mean error that persists over a trajectory falls 6.9 → 0.7 % (rehi), 28.3 → 1.2 % (relo),
-  12.4 → 1.0 % (A20); what remains is 72 – 76 % fluctuation and 23 – 34 % mean error that changes from window to window.
+  12.4 → 1.0 % (A20); what remains is 65 – 76 % fluctuation (relo 65, A20 72, rehi 76) and 23 – 34 % mean error that changes from
+  window to window.
   rehi gains least from everything because it had little persistent error to begin with.
 
 ### Chunk 5, second part: the decision table (0.25 GPU-h; `results/ood_chunk5.md`, `ood/ood_decision.py`)
@@ -474,3 +480,36 @@ with its `MANIFEST.md` entry, the registered predictions.
   is not evidence that Ascend is busy: it printed a start 24 h away while real jobs started in seconds. Probe with one
   real job instead.
 * **2026-09-28, owner:** the working branch is `qwu/dev`; commit when a piece of work is done, at most 10 a day.
+
+## The owner's decisions (2026-09-29)
+
+| question | decision |
+|---|---|
+| the recipe of the candidate | **"T4 all"**: all six members and five twins with `--aug-resim 0.25`, plus `PREV_SPACE = "target"`. `reproduce.sh decision` with its defaults, tag `dp_resim_all` |
+| zero propagation (I7) as insurance | **not added** |
+| the documents that state what the campaign overturned | **to be updated** (`results/docs_update.md`; the two reports in `../artifacts/`) |
+| the release of 09-27 | **tagged** `final-20260927` on `4e5ed37` (main after pull request #3; annotated; local, the owner pushes it) |
+| upload | **not decided.** Nothing is staged; no registered prediction is written into `../sub_candidates/` |
+
+## Closing steps (2026-09-29, 00:45 – 01:00 EDT)
+
+* **Tag** `final-20260927` → `4e5ed37`. `fdac00b` (the tree that rebuilds the uploads byte for byte, code included) is
+  an ancestor of it.
+* **Promotion.** The candidate's eleven checkpoints were copied from `R/cand/repro/ckpt/` into `Track_1/unet/`, md5
+  checked, no name clash (261 MB, 11 files; list with md5 in `R/cand/repro/ckpt/PROMOTED_20260929.md5`). The scratch
+  copies stay as the second copy.
+* **The candidate's archives** are kept in `R/candidate/` (`track1_dp_resim_all.zip` sha256 `53291df1…790e96`,
+  `track2_dp_resim_all.zip` sha256 `bd0a3fb4…68028f`). Their contents equal the from-scratch run's archives file by
+  file (md5 of all nine files, both tracks); the sha256 of the zip differs because the archive was rebuilt under its
+  new tag.
+* **Worktrees.** Nine detached worktrees under `R/` removed with `git worktree remove` after checking that each one's
+  changes are in the repository (`wt_t4` = `patches/t4_aug_resim.patch`, `wt_cand` = `patches/candidate_release.patch`,
+  `wt_cand2` = commit `6ad14ea` file by file; `wt_base` and `ood/wt_ood` were clean). `git worktree list` shows the
+  working tree only.
+* **Scratch.** `R/` went from 84 GB to 2.1 GB: 77.2 GB and 48 956 entries in 392 paths deleted by
+  `R/jobs/cleanup_20260929.py` (dry run first), every path with its size and reason in
+  `/fs/scratch/PAS1187/qwu/tmp/realpde/CLEANUP_20260929.md`. Kept: every final checkpoint, training log, json and eval
+  text, the instrument's reports and json, every band, job scripts, Slurm logs. Nothing outside `R/` was touched.
+* **Not done, because it was not asked:** the scratch areas of the sprint and the wrap-up of 09-27 (`final0927` 50 GB,
+  `trick0927` 38 GB, `wrap0927` 5.4 GB), which the handoff of 09-27 calls disposable, and `distill` (28 GB).
+

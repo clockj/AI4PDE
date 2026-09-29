@@ -13,7 +13,12 @@ The header of 2026-09-05 and the plans of 08-31 … 09-20 are kept verbatim at t
 * Decision phase to 2026-10-25: organizers retrain shortlisted methods from scratch and score a private
   set at novel AoA / Re; **one submission per track for the whole phase.**
 
-**How to read it.** §1.31 – §1.41 are the week of 09-21 … 09-27, and they supersede earlier sections
+**2026-09-29, after the Decision-phase campaign of 09-28.** §1.42 – §1.48 and the last table of Part 2 hold what it
+measured; Part 3 is rewritten, and the Part 3 of 09-27 is kept verbatim near the end of the file. The owner chose a
+candidate ("T4 all", `STATUS.md`); nothing is uploaded or staged.
+
+**How to read it.** §1.42 – §1.48 are the campaign of 09-28 and supersede earlier sections where they conflict.
+§1.31 – §1.41 are the week of 09-21 … 09-27, and they supersede earlier sections
 where the two conflict. Each conflicting older section carries a dated note; its text is left as it was.
 Check Part 2 before proposing an experiment. Round-by-round detail is in `ROUNDS.md`, indexed at the top;
 the current status is in `STATUS.md`; every board number is in `Track_1/board_rounds.py`; the fitted
@@ -299,6 +304,12 @@ across member counts even though the accuracy gains were nil.
 **Consequence for every future arm: one run is not a measurement out of distribution.**
 `--dropout 0.15` is the first arm to beat both controls on all three sets (`relo` rel-L2
 **0.1067** against 0.1147/0.1404) and it still needs replicates.
+
+*2026-09-28: the 12 – 58× was measured on the unseeded FNO w24 of August. The shipped recipe, F-FNO w40 L8 + sim,
+seeded, has a single-member seed spread (sd over 6 seeds, `wfinal`) of 0.03 on the fit split and 0.04 – 0.08 out of
+distribution: A20 0.08, A10 0.08, relo 0.07, rehi 0.04, rein 0.02. Ensembles of four drawn from the six seeds differ
+by at most 0.034 composite at relo and 0.012 in distribution (§1.43). Replicates are still needed; the scale is
+different (`experiments/decision_20260928/STATE.md`, "Single-member reads").*
 
 ### 1.10 A submission's value is the ambiguity it RESOLVES, not the score it earns
 
@@ -1152,6 +1163,9 @@ The week before closed covmap A / B, fnll and pixel-weighted training (09-24 …
 with §1.37, **the models are converged for this data**. What moved the board on 09-21 … 09-27 was
 inference-side: the centre, ALPHA, JOINT_GAIN, SIGBLEND and the Track-2 stream stack.
 
+*2026-09-28: qualified. "Converged" held for losses, architectures and capacity. It did not hold for the data: the
+Re-similarity augmentation paid in every held-out regime and in distribution (§1.43).*
+
 ### 1.40 The `final` rule is not exactly linear
 
 The closing refit on **48 rounds** (`final_v9.W0`, commit fdac00b) is rel 0.4819 · tke 0.0981 · mvpe
@@ -1173,11 +1187,157 @@ Against it:
   84.3051 against 84.3029 (edb7c71).
 * **Not bit for bit.** The same seed, code and card give F-FNO weights about 0.5 % apart and ViT weights
   about 10 % apart, which supersedes "bit-identical at epoch 399".
+  *2026-09-28: the candidate's from-scratch run retrained its two ViT twins bit-identically on Ascend A100, and its
+  F-FNO twins 0.42 – 0.49 % apart in weight norm (§1.48). What separates this from the 10 % is not measured.*
 * **The two packages of record** rebuild byte for byte, file by file, from `build_final.sh` on the
   shipped checkpoints (jobs 7569053, 7569179).
 * **The band is the part that does not rebuild exactly.** The SIGBLEND constants re-derived from a
   fresh twin dump moved by 0.4 % (job 7569179). A reproduction reuses the committed band
   (`.claude/rules/bands.md`).
+
+*§1.42 – §1.48 are the Decision-phase campaign of 2026-09-28 (300 GPU-h granted, 214.5 used; `ROUNDS.md`,
+"Decision-phase campaign"). Its criteria were written before their reads (`experiments/decision_20260928/PLAN.md`);
+every table is in `STATE.md` next to it. No board read exists for any of it. "Composite" is the fitted `final` without
+`time` (`W0`), read on the real package path with each ensemble's own refitted band and the revealed target normalised
+as the official runner does. The held-out regimes are ensembles trained without every real and sim trajectory of
+AoA 20 (`A20`, 16 trajectories), of AoA 10 (`A10`, 18), or of the six Re of `re_split.excluded()` (`RE`: `relo` 9
+trajectories below the training range, `rehi` 7 above it, `rein` 10 inside). "OOD mean" is the mean of A20, A10, relo
+and rehi. The instrument is `experiments/decision_20260928/ood/` (`EVALUATION.md` §3b).*
+
+### 1.42 The stream stack holds at the member count that ships, in five held-out regimes
+
+Gate G0. Mirror ensembles, one per regime: four F-FNO + sim (seeds 1 – 4), ViT-P s1, ViT-C + sim s3, the recipe of
+the packages of record. The shipped stream stack against asymmetric R1 alone:
+
+| regime | stream stack − asymmetric R1 (trajectories positive) |
+|---|---|
+| A20 | **+0.692** (16/16) |
+| A10 | **+0.539** (18/18) |
+| relo | **+1.146** (9/9) |
+| rehi | +0.292 (6/7) |
+| rein | +0.079 (9/10) |
+| in distribution, the five twins of record, 8 trajectories | +0.0757 (8/8) |
+
+* G0's bar was +0.15 on A20 and A10 with 80 % of trajectories positive; both read 3.6 – 4.6× it. The 3 – 4-member
+  stand-ins of 09-27 had under-read A20 (+0.453 on the same instrument, +0.446 in the sprint).
+* §1.38 stands at full size. At A20, A10 and relo the stack is worth 7 – 15× its in-distribution read, at rehi about
+  4×, and inside the Re range (rein) about the same as in distribution.
+
+### 1.43 A training-side augmentation pays in every regime: `--aug-resim 0.25`
+
+Arm T4. A real training window is replaced, with probability 0.5, by the same trajectory resampled in time by a factor
+s from the window's start, every velocity multiplied by s, s log-uniform in [0.8, 1.25]: to first order the recording
+at Re·s. Every sample traces back to a released trajectory. `--aug-scale`, which scales the amplitude without the time,
+was null in distribution and never gave a consistent neighbour in Re (`REPRODUCE.md` §14; `results/t4_impl.md`).
+
+* **Single members, seed-matched, 4 seeds:** at RE, rein +0.120, relo +0.523, rehi +0.208, 4 of 4 each, against a
+  control seed spread of 0.02 / 0.08 / 0.03. At A20 +0.152, at A10 +0.259. The interior control moved, which no
+  training-side arm since sim co-training had done.
+* **Ensemble, four augmented F-FNO with the control's ViTs ("T4 F-FNO only"), stream:** A20 +0.052 (16/16), A10 +0.040
+  (17/18), relo +0.334 (9/9), rehi +0.046 (6/7), rein +0.025 (9/10); **OOD mean +0.118**, frozen (Track 1's case)
+  +0.225. In distribution, three augmented twins with the ViT twins of record: **+0.033 (8/8)**, +0.046 (3/3) on AoA
+  15 – 20.
+* **Not a seed effect.** Leave one seed out at RE (eleven ensembles, each with its own band): relo +0.309 [+0.301,
+  +0.315], rehi +0.045 [+0.039, +0.055], rein +0.024, in distribution +0.036. Four reseeded control ensembles differ from
+  each other by at most 0.034 / 0.011 / 0.010 / 0.012. The four members share one recipe and one commit, so this rules
+  out a lucky seed set, not a lucky configuration.
+* **The two ViTs augmented too ("T4 all", arm T4v):** a single augmented ViT gains +4.5 … +6.7 at relo, where its rel
+  error falls from 0.146 – 0.192 to 0.080 – 0.086. In the ensemble: **OOD mean +0.206**, in distribution +0.0315 (7/8).
+  "T4 all" − "T4 F-FNO only": relo **+0.376 (9/9)** and rehi **−0.021 (2/7)**, both outside the reseeding spread; A20
+  +0.001, A10 −0.003, rein −0.005, twins −0.002, all inside it. The augmented ViTs lose at rehi through tke (−0.12) and
+  mvpe (−0.03) and cost mvpe in distribution (−0.020). The choice between the two is a bet on the private set's Re.
+* **The dose.** `--aug-resim 0.5` (s in [0.67, 1.5], arm T4b) against 0.25 on single members: relo +0.095 (4/4), rehi
+  −0.043 (3 of 4 negative), mean +0.026 against a +0.05 bar. 0.25 stands.
+* **Expected on a board-like set** (the project's correction rules, not a board read): +0.013 … +0.019 composite for
+  either recipe, brackets [+0.006, +0.051].
+* **Owner, 2026-09-29: the candidate is "T4 all"** (`STATUS.md`). It is not uploaded.
+
+### 1.44 The ViT family is weak out of distribution, and the composition stays
+
+* **Single members.** A ViT is 0.2 – 0.4 `wfinal` behind an F-FNO in distribution, 0.7 – 0.9 at A10, 0.4 – 0.9 at rehi,
+  **1.4 – 2.8 at A20 and 4.4 – 7.1 at relo** (rel error 0.146 – 0.192 against 0.086). Sim co-training is worth +1.2 …
+  +2.7 to a ViT at A20 and relo; the ViT-P that ships without sim is the worst member in every held-out regime.
+* **In the ensemble the stream stack repairs most of it.** Dropping both ViTs (four F-FNO only), stream: A20 −0.176,
+  A10 −0.061, relo +0.187, rehi −0.097, in distribution −0.110 (0/18); on the twins of record −0.140 (0/8), which is
+  T2R15's −0.155 again. Frozen (Track 1's case) dropping them is worth +1.12 at relo and about nothing elsewhere.
+* **No fixed composition beats the mirror everywhere.** Six F-FNO + two ViTs (arm T1): OOD mean +0.042 against a +0.05
+  bar, +0.357 ms per step. Both ViTs with sim (arm T2): +0.015. Six F-FNO + two ViT-C: +0.050, every regime positive,
+  for two more members' latency. FAMW moves the ViT weight from the prior 0.333 to 0.20 at relo and 0.26 at A20, too
+  slowly to pay (+0.007).
+* The augmentation of §1.43 removes the ViTs' low-Re weakness (a single augmented ViT at relo is where an F-FNO is),
+  which is the part of the problem a composition change could not reach.
+
+### 1.45 After the stream stack, what is left is fluctuation and window-to-window mean error
+
+The error E = P − Y per window splits exactly into the time-mean error that persists over the whole trajectory (per
+pixel: what D1c can learn), the time-mean error that changes from window to window, and the fluctuation error. Shares of
+the squared error, mirror control (`results/ood_chunk5.md`, Part 3):
+
+| regime | frozen: persistent / window-varying / fluctuation | stream: persistent / window-varying / fluctuation |
+|---|---|---|
+| A20 | 12.4 / 23.0 / 64.6 % | 1.0 / 27.5 / 71.5 % |
+| relo | 28.3 / 22.7 / 49.0 % | 1.2 / 34.1 / 64.7 % |
+| rehi | 6.9 / 21.4 / 71.7 % | 0.7 / 23.1 / 76.2 % |
+| rein | — | 0.6 / 25.5 / 73.9 % |
+
+* D1c has learned the persistent part: 0.6 – 1.2 % after the stream in every regime.
+* What remains is a better forecast of the fluctuations and of each window's own mean. Neither is reachable by a
+  per-trajectory correction; **the inference side is exhausted.**
+* rehi gains least from every lever because it had the least persistent error to begin with (6.9 %). T4 does not change
+  its split (76.0 % against 76.2 % fluctuation).
+
+### 1.46 The scorer counts zero targets: `STATS_MASK` stays off, zero propagation is not added
+
+* **What the scorer does** (`scoring.py`: `rel_l2_per_sample`, `aggregate_sps`). `rel`, `tke`, `mvpe` and the accuracy
+  factor of `sps` are norms over the whole field, zero-target elements included. Only the interval average and the
+  coverage leave out elements whose target is exactly 0. The documents said such elements "are not scored".
+* **The zero set is not static.** 1.2 – 6 % of pixels are zero in every frame, 3.2 – 16 % (mean 8.5 %) in some frames
+  only; 63 % of all zero elements sit at such transient pixels.
+* **`STATS_MASK` (arm I2) loses.** On our recordings it is null (−0.0012 / −0.0006 / −0.0001 in distribution, A20,
+  A10). Under a synthetic re-blank (a border band, the zero set dilated, a near-wake rectangle) it loses on every
+  trajectory: in distribution −4.77 / −0.10 / −2.40, A20 −0.85 / −0.02 / −0.60, A10 −1.12 / −0.11 / −2.34, all of it in
+  rel, tke and mvpe. Unmasked, D1c and VARCAL learn the current recording's blank from its revealed targets and pull
+  the prediction to zero there; the mask switches that off. The audit's recommendation (M2) is reversed.
+* **Zero propagation (arm I7).** Predicting the physical zero where the input is zero in all 20 frames reads +0.0001 …
+  +0.0003 on our recordings (bar +0.03): the members already predict 0.0001 – 0.0004 m/s there, and target-zero
+  elements carry 0.01 – 0.06 % of the squared error. Under the synthetic re-blanks it gains +0.008 … +0.85.
+* **Natural blanking is a property of the angle** (the airfoil's shadow). 6 – 7 pixels are zero in all 82 recordings;
+  the union is 232 (u) / 311 (v). A held-out AoA-20 recording carries 5 – 10 static-zero pixels no training recording
+  has, and the members predict 0.0005 m/s there. The synthetic masks overstate the exposure.
+* **Owner, 2026-09-29:** zero propagation is not added, neither as a score lever nor as insurance.
+
+### 1.47 The shipped static band is fitted in sample, and refitting it does not matter
+
+* `build_round13.sh` calls `fit_band.py` without `--fit-on`, whose default is `seen` with `--fit-aoa 15 20`. The
+  static error field is therefore the twins' error on the three AoA 15 – 20 trajectories of `val_seen` (10125_20,
+  12675_20, 22875_15; 126 windows), **which the twins trained on**, times 1.39. The SIGBLEND κ and q are fitted out of
+  sample (the eight `val_unseen` trajectories, 336 windows).
+* On the stand-ins a band fitted this way and one fitted out of sample differ by 0.002 – 0.012 composite: a fact to
+  state correctly, not a lever. The candidate keeps the construction.
+* A band refitted on pooled held-out-condition errors (arm I6) fails: ΔC×100 −0.018 OOD mean (1 of 4 regimes
+  positive, bar +0.30), in-distribution `sps` −0.103 (0/8). The band follows the source regimes' error level, and R1
+  takes back most of the difference in the stream.
+* Three refits of the candidate's band from different twins agree to 1e-4 composite. The band of record, 2.4 % wider,
+  reads +0.002 (stream) and +0.020 (frozen) on the candidate's twins.
+
+### 1.48 The candidate reproduces from a clean clone, and runs the same on a second card
+
+* **R1.** `reproduce.sh decision` from a clean clone of `467769d`, eleven trainings (41.8 A100 GPU-h). Its twins against
+  the campaign's: composite **77.2817 against 77.2821** (−0.0003, bar 0.005), every trajectory within ±0.0012, frozen
+  −0.0017. The two ViT twins retrained bit-identically (0 of 14.7 M parameters differ); the three F-FNO twins differ by
+  0.42 – 0.49 % of weight norm and by at most 2.2e-5 in rel / tke / mvpe. This does not reproduce §1.41's "ViT weights
+  about 10 % apart"; what separates the two runs is not measured.
+* The candidate's gain, read a second time on the from-scratch twins against the twins of record: **+0.0311** (7 of 8;
+  26700_0 −0.022), +0.0508 on AoA 15 – 20.
+* **R1b.** The band: see §1.47. An organizer's own refit changes nothing measurable.
+* **R2.** On a V100S the three archives (both candidates and the uploaded package) make the same load-time choices as on
+  the A100 (fp16 accepted, graph captured, arena on); V100 − A100 is at most 2.4e-3 relative L2 per window, forced fp32
+  2.9e-3 (the package's bar is 2e-2), forced eager and no arena bit-identical; the composite moves by at most 0.0006.
+  The uploaded Track-2 package returns a non-finite prediction on a NaN input (it predates the guards); the candidates
+  do not.
+* **Not verified:** the organizers' 8× A800 and their stack; the scale to expect there is the reseeding spread (0.012
+  in distribution, 0.034 at relo), not −0.0003. The six all-data members were trained once. Each recipe is one ensemble
+  per regime, and "T4 all" rests on one seed per augmented ViT.
 
 ## Part 2 — Closed. Do not re-propose without new evidence.
 
@@ -1188,7 +1348,7 @@ new session does not spend a week re-deriving a negative.
 
 | direction | evidence |
 |---|---|
-| More ensemble members | R12 (11 memb) ≈ R11 (8 memb) ≈ R10 (7 memb) at constant latency, §1.3 |
+| More ensemble members | R12 (11 memb) ≈ R11 (8 memb) ≈ R10 (7 memb) at constant latency, §1.3. *2026-09-28, out of distribution too: six F-FNO + two ViTs (arm T1) read +0.042 OOD mean against a +0.05 bar, +0.004 in distribution, for +0.357 ms per step (§1.44).* |
 | A second architecture family (U-Net) | gate M measured +0.091 proxy; board delivered ~+0.09 `tke_score` ≈ +0.015 final |
 | Extra invocations | R12 paid 0.973 `time_score` for its 4th group and got it back nowhere |
 | MVPE as an objective | weight ≈ 0.000, §1.4 |
@@ -1200,7 +1360,7 @@ new session does not spend a week re-deriving a negative.
 | **Distillation of the shipping ensemble** | Four configurations (09-18, `plan_20260917.md` §10–10.2). The teacher's **mean** transfers and its **variance does not**, so the student cannot reproduce the σ head the band is fitted to: **−0.5 at K1** against the 82.3198 ceiling, far outside the −0.06 ship rule. The largest lever we had identified, and it is gone. |
 | **A third family in one package (F-FNO + FNO + ViT)** | **+0.001 of accuracy for −0.21 of `time`** (09-18). The invocation and the FLOPs are never repaid; two families plus the ViT pair is the ceiling. |
 | **Sim at the exact held-out cell** | The matched AoA-holdout read (arm S2in, `plan_20260917.md` §11.4): keeping sim at the held-out cell is **a wash, −0.004**, so the gain is sim's *general* mean-field teaching and not leakage of the held-out condition. Arm dropped. |
-| **Band width for a novel angle** | `--inflate-sweep` over the AoA-holdout reads (§11.2): **1.39 is already the held-out optimum**, so the shipped stretch needs no OOD correction. |
+| **Band width for a novel angle** | `--inflate-sweep` over the AoA-holdout reads (§11.2): **1.39 is already the held-out optimum**, so the shipped stretch needs no OOD correction. *2026-09-28: confirmed again at full size. A band refitted on pooled held-out-condition errors (arm I6) read ΔC×100 −0.018 OOD mean and `sps` −0.103 in distribution (§1.47).* |
 | **Gating the blend on angle** | **No scalar window feature separates a novel angle** (§11.2) — there is nothing to gate on, so an angle-gated blend cannot be built, let alone tuned. |
 | **The ungated mean blend for the sim method** | Closed again for `r34` specifically (§11.3, `cddecd9`): F-FNO+sim passes all three pre-registered criteria and the ungated blend does not. `BLEND_BETA` stays 0. |
 
@@ -1228,6 +1388,8 @@ in T2R24 (§1.38). No model-side TKE arm was run.*
   pooling the fitting split buys 0.000 sps (round 11, `band_cv_v9.py`).
   *2026-09-27: holds for the static band's width and shape only. The centre (§1.31), SIGBLEND's σ
   dependence (§1.33) and online per-pixel calibration on Track 2 (§1.35) paid on the board.*
+  *2026-09-28: confirmed again out of distribution (arm I6, §1.47). The static band's error field is fitted in
+  sample (§1.47); that costs 0.002 – 0.012 composite and is kept.*
 * **The sigma head.** Readout shape/inputs (`--var-hidden`, `--var-deep`, `--var-in-std`) cannot
   move the training `var`; loss weights move `var` but not held-out TKE, and `--lam-v 0.3` is
   the optimum of the one family that moves it. Information floor *and* generalization ceiling,
@@ -1340,6 +1502,11 @@ information paid on the board: the centre, ALPHA 0.80, JOINT_GAIN, SIGBLEND and 
 (§1.31 – §1.33, §1.36). The one lever that is new information, Track 2's revealed targets, paid most
 (§1.35, §1.38). On the model side the statement held (§1.39).*
 
+*2026-09-28: qualified on the model side too. A training-side augmentation that manufactures neighbours in Re from
+the released trajectories (`--aug-resim 0.25`, §1.43) paid in every regime: +0.118 … +0.206 OOD mean, +0.03 in
+distribution. The other training arms of that campaign (six members, both ViTs with sim, sim dose 1.0, dose 0.5)
+closed.*
+
 **Closed, re-opened or qualified 2026-09-21 … 09-27** (the agent-team week and the final-day sprint;
 detail in `ROUNDS.md` "Round 31 / T2R18" … "Round 37 / T2R24", in `experiments/sprint_20260927/README.md`
 and in `../artifacts/20260927_progress_report.md` "PR"). Entries above that these change carry a dated
@@ -1354,7 +1521,7 @@ note.
 | **The interval centre** | **SHIPPED** (`CENTRE_ALPHA 0`) | +0.72 / +0.73 `sps`, errors bit-identical (R31 / T2R18). §1.31 |
 | **σ dependence of the band (SIGBLEND, λ 0.5)** | **SHIPPED** | ΔC×100 +0.48 (7/8) leave-one-out; R37 containment +0.080 `sps`. §1.33 |
 | **JOINT_GAIN** (one compose gain for u and v) | **SHIPPED** | rel error −0.462 % (8/8), tke and mvpe unchanged; R37 rel +0.014 |
-| **Static band width, p, smoothing, inflate** | closed (fifth time) | at their out-of-sample optimum (9cc28d3); k refit k* ≈ 1.0; per-window / per-frame / per-quantile width +0.035 … +0.100 C×100 at most (PR §5.2) |
+| **Static band width, p, smoothing, inflate** | closed (fifth time) | at their out-of-sample optimum (9cc28d3); k refit k* ≈ 1.0; per-window / per-frame / per-quantile width +0.035 … +0.100 C×100 at most (PR §5.2). *2026-09-28: confirmed again, I6 (§1.47)* |
 | **Band widening** | closed on the board | R32 (stretch 1.55): −0.0579, ΔC −0.0033 |
 | **Cross-fitted band base** (~30 out-of-fold trajectories) | closed | ΔC×100 +0.180 with 1/3 trajectories against +0.20 with 3/3 (design B); more fitting trajectories −0.83 C×100 (PR §5.2) |
 | **Band centred on P; smoothed oracle scale fields; family-region bands** | closed | −1.5 … −1.8; −0.30 … −1.52; no gain (PR §5.2) |
@@ -1372,75 +1539,84 @@ note.
 | **Same-family 4 → 8 members; ConvNeXt recheck; A1 `ffno_t`** | closed | net negative; replacing the ViTs −0.020, a third group −0.085 / −0.058 in latency; correlation 0.9134 against a 0.748 gate (PR §6.6, 附二.1.6) |
 | **Track-1 stacking / tree gating of members** | closed | hindsight ceiling −0.67 % rel error; leave-one-out −0.06 … −0.11 % |
 | **Warm-start polish** (AoA 15/20 specialists, over-sampling, dropout off) | closed | best +0.0125 against +0.04; specialists −0.22 … −0.42 on the full split (K3) |
-| **FAMW** (online family weights) **in distribution** | off in the packages; **open for the private set** | −0.004 on AoA 15–20 and +0.12 ms/step (design C), but +0.158 / +0.151 at AoA-20 (PR §4.6) |
+| **FAMW** (online family weights) **in distribution** | off in the packages; **open for the private set** | −0.004 on AoA 15–20 and +0.12 ms/step (design C), but +0.158 / +0.151 at AoA-20 (PR §4.6). *2026-09-28: CLOSED for the private set too. On the full stream stack at full size it reads +0.007 OOD mean (bar +0.05), −0.001 in distribution; its +0.15 was read on symmetric R1 without D1c (arm I3)* |
 | **SIGEMA** (ALPHA's σ from a causal EMA of revealed variance, 55f0e88) | do not ship as committed | −0.553 in distribution, tke −2.0 (design C §8.1) |
 | **Spatial smoothing of the D1c bias; multiplicative mean gain; per-pixel-per-frame bias** | closed | the bias is sharp: OOD +0.26 → +0.08 at 5×5 (design C2) |
 | **A background thread keeping the GPU clock up** | rejected on the rules | it changes the platform's measurement, not the method (PR §4.3) |
 | **The Track-1 batch-1 CUDA graph (SMALL_GRAPH)** | off in R37 | EBAND needs the GPU band path at every N; the evaluator's N is 14 – 99, where the graph never fires |
 
+**Closed, passed or qualified 2026-09-28 (Decision-phase campaign)**. Every arm against a criterion written before its
+read (`experiments/decision_20260928/PLAN.md` §5), read at ensemble level on the real package path with the full stream
+stack unless noted; composite deltas against the mirror control (the package of record's recipe with `PREV_SPACE =
+"target"`), trajectories positive in brackets. Tables: `experiments/decision_20260928/STATE.md`. Entries above that
+these change carry a dated note.
+
+| arm | direction | status | evidence |
+|---|---|---|---|
+| G0 | the shipped stream stack at full member count | **passed** | against asymmetric R1: A20 +0.692 (16/16), A10 +0.539 (18/18), relo +1.146, rehi +0.292, rein +0.079. §1.42 |
+| I1 | `PREV_SPACE = "target"` | **passed; in the candidate** | A20 +0.0020, A10 +0.0066, relo +0.0071, rehi +0.0040, rein +0.0086, in distribution +0.0064 (8/8); never worse on a trajectory, re-blanked streams included |
+| I2 | `STATS_MASK` (online statistics skip zero targets) | **closed; stays off** | null on our data (−0.0012 / −0.0006 / −0.0001); loses on every trajectory of every synthetic re-blank (in distribution down to −4.77). §1.46 |
+| I3 | FAMW on the full stack | **closed** | OOD mean +0.007 (A20 +0.020, A10 −0.003, relo +0.011, rehi −0.001) against +0.05; in distribution −0.001; breaks the first-window identity in floating point |
+| I4 | early-window interval prior (windows 1 – 3) | not built; open, low | hindsight bound of the whole early deficit: A20 +0.039, A10 +0.032, relo +0.053, rehi +0.013 (mean +0.034); an interval prior reaches only part of it |
+| I5 | the stream constants, chosen leave one regime out | **closed** | left-out regime A20 +0.017, A10 +0.004, relo +0.035, rehi −0.020 (1/7) against +0.03 in all four; in distribution −0.007 … −0.027. Every constant sits on a plateau within ±0.01 except `VC_N0` |
+| I6 | band base and SIGBLEND κ, q from pooled held-out-condition errors | **closed** | ΔC×100 A20 +0.151, A10 −0.068, relo −0.152, rehi −0.003 (mean −0.018 against +0.30); in-distribution `sps` −0.103 (0/8). §1.47 |
+| I7 | zero propagation (zero where the input is zero in all 20 frames) | **closed as a lever; not added as insurance (owner, 09-29)** | +0.0001 … +0.0003 on our recordings against +0.03; +0.008 … +0.85 under synthetic re-blanks, which overstate natural blanking. §1.46 |
+| T1 | six F-FNO members instead of four | **closed, narrowly** | OOD mean +0.042 against +0.05; in distribution +0.004; +0.357 ms per step (A100, interleaved) |
+| T2 | both ViTs co-trained with sim | **closed** | OOD mean +0.015 (A20 −0.019); in distribution +0.008 |
+| T3 | sim dose `--lam-sim` 1.0 (shipped 0.3) | **closed** | single members A20 +0.171 (4/4), but the ensemble A20 +0.013 (9/16), relo −0.082 (0/9), rehi −0.050 (0/7) |
+| T4 | `--aug-resim 0.25` on the F-FNO members | **passed** | OOD mean +0.118, frozen +0.225; in distribution +0.033 (8/8); jackknife outside the reseeding spread. §1.43 |
+| T4v | the same on the two ViTs as well ("T4 all") | **passed; the candidate (owner, 09-29)** | OOD mean +0.206, +0.088 over T4, all of it at relo (+0.376; rehi −0.021); in distribution +0.0315 (7/8). §1.43 |
+| T4b | `--aug-resim 0.5` | **closed** | single members, 0 of 4 seeds clear: mean of relo and rehi +0.026 against +0.05 (relo +0.095, rehi −0.043) |
+| — | fixed compositions: no ViT, six F-FNO, six F-FNO + two ViT-C | **closed; the composition stays** | no ViT: A20 −0.176, in distribution −0.140 on the twins (0/8); six + two ViT-C: +0.050 OOD mean for two members' latency. §1.44 |
+
 ---
 
-## Part 3 — The Decision phase (2026-09-28 → 10-25)
+## Part 3 — The Decision phase (2026-09-28 → 10-25), after the campaign
 
-*Written 2026-09-27 at the close of Main Development. The plans of 08-31 … 09-20 are at the end of this
-file, verbatim.* The organizers retrain each shortlisted method from scratch on 8× A800 and score a
-private set at **novel AoA / Re**. There is **one submission per track for the whole phase**
-(commit fb0cb6d), so nothing is uploaded without the owner's explicit go. **Track 2 finished #8 and is
-shortlisted; Track 1 finished #20 and is not** (owner's read, 09-28; the 21:39Z cut had read T1 81.885 /
-T2 81.988 against our 81.671 / 82.056). The plan below is therefore a Track-2 plan; Track 1 shares the
-members and the band and needs no work of its own. The method to
-defend is the one in `STATUS.md`, and the package that goes up must be re-creatable by `reproduce.sh`.
+*Rewritten 2026-09-29. The Part 3 written on 09-27 is at the end of this file, verbatim, before the older plans.*
+Track 2 is shortlisted (#8); Track 1 is not (#20). The organizers retrain each shortlisted method from scratch on 8×
+A800 and score a private set at novel AoA / Re, once. The owner granted 300 GPU-hours on 09-28 for a campaign against
+held-out regimes (`experiments/decision_20260928/`; 214.5 used). Its findings are §1.42 – §1.48 and the last table of
+Part 2. **The owner chose the candidate on 09-29: "T4 all"** (`STATUS.md`). **No upload is decided; nothing is staged.**
 
-**Priorities, in order.**
+**The six priorities of 09-27, and what was done.**
 
-1. **Fix the two Track-2 input defects before anything else is measured.**
-   * *Revealed-target normalisation.* The official runner normalises `prev_target` with the TARGET
-     statistics, while R1's unscored-element test and `stream_eval.py` assume the input statistics.
-     Masked zeros therefore sit 6e-5 (u) and 2e-4 (v) away from the test value and count as scored,
-     about −0.0015 `final` on our data (`experiments/sprint_20260927/f_sprint/qa/qa_normcheck.py`;
-     `STATUS.md` item 1). Fix the test, make `stream_eval.py` feed the runner's normalisation, and re-read
-     every stream number on the corrected instrument.
-   * *Masked pixels in the online statistics.* D1c's pooled variance and VARCAL's sums include elements
-     that are never scored. A private recording blanks a different region, so these sums must be masked.
-     Each fix is a knob that is bit-identical when off; gate it with `validate_t2.py --adaptive` and
-     `stream_eval.py --causal-check`.
-2. **The online corrections first (§1.38).** They are the only lever that grows out of distribution. On
-   the corrected instrument, re-read R1, D1c, VARCAL and B2 in all three regimes (in distribution, the
-   AoA-20 holdout, the AoA-10 holdout) with the held-out ensembles at the shipped member count. Retrain
-   the AoA-holdout ensembles if the 3 – 4-member stand-ins are all there is: the current OOD reads come
-   from weaker ensembles with an un-refitted band, which flatters any online correction
-   (`ood_aoa10.md`). Pre-register the rule that picks each knob (N0, shrink, clip) before reading it.
-3. **A band fitted for the private set's AoA / Re mix.** The static band and SIGBLEND's κ, q were fitted
-   on eight in-distribution trajectories at a stretch of 1.29 – 1.39. First estimate how far C falls
-   at high Re and high AoA with a *correct* model, so that a lower C is not read as a model regression.
-   Then refit the base and the SIGBLEND constants on held-out-condition errors, and price it on the AoA
-   holdout with leave-one-trajectory-out. Keep `--fill-unscored`: its dev-board price was −0.0016, and
-   its exposure on a differently blanked recording is up to −0.62 (§ Part 2, T2R16).
-4. **Re-read FAMW and the gated blends on the AoA holdout.** FAMW (online family weights) is off in
-   T2R24 because it lost −0.004 on AoA 15–20, but it reads +0.158 / +0.151 at AoA-20. Stacked with
-   D1c, it must accumulate the residual *after* the family reweighting, or the correction is counted
-   twice. The gated mean blend (`BLEND_BETA`) was closed for the public set only and wins out of
-   distribution (§1.29). Both are decided on the holdout reads, not on the dev board.
-5. **A reproducibility run from scratch of whatever will be submitted.** Use `reproduce.sh` (default
-   target `final`) from a clean checkout on the evaluators' stack (torch 2.2.2) and on the build stack.
-   Accept on package `final` ±0.005 and band rel-L2 (`REPRODUCE.md` §12). The final-day code, bands and
-   `build_final.sh` were committed in fdac00b; every later change must be committed the same way before it
-   is measured, because a method that exists only on scratch is not reproducible.
-6. **Only then build, gate and register.** One package per track, with `build_final.sh` plus one
-   `RPDE_SHIP_*` change per lever. Register all five subscores with brackets for *both* regimes
-   (dev-board-like and held-out-AoA-like) before asking the owner to upload.
+| # | priority of 09-27 | done |
+|---|---|---|
+| 1 | fix the two Track-2 input defects | *Normalisation:* `PREV_SPACE = "target"` exists as a knob, `stream_eval.py` feeds the runner's normalisation, and every stream number of the campaign is read on it. It passes in every regime (arm I1) and the candidate is built with it. *Masked statistics:* measured and reversed. `STATS_MASK` loses on every re-blanked recording because the scorer counts zero targets in rel, tke and mvpe; it stays off (§1.46) |
+| 2 | the online corrections first, at the member count that ships | 24 regime trainings made mirror ensembles at A20, A10 and RE. Gate G0 passes: +0.54 … +1.15 at A20, A10 and relo (§1.42). Constants picked leave one regime out do not beat the shipped ones (arm I5); they stay |
+| 3 | a band for the private set's AoA / Re mix | refitting on pooled held-out-condition errors fails (arm I6). The shipped static field is fitted in sample, which is now stated (§1.47). `--fill-unscored` is kept |
+| 4 | re-read FAMW and the gated blends on the holdout | FAMW closed at full size (+0.007, arm I3). The gated mean blend (`BLEND_BETA`) was not re-read |
+| 5 | a reproducibility run from scratch of what will be submitted | done for "T4 all" from a clean clone of `467769d`: 0.0003 against a 0.005 bar (R1); the band's refit moves 1e-4 (R1b); a second card and every forced fallback agree (R2). Everything measured was committed first (`467769d`, `6ad14ea`) (§1.48) |
+| 6 | only then build, gate and register | both recipes built by `reproduce.sh decision`, `BUILD_FINAL OK`, 41 of 41 baked constants; bands committed with `MANIFEST.md` entries. **Registration is not done**: it is part of staging, which waits for the owner |
 
-**What not to do.**
+**The "what not to do" list of 09-27.**
 
-* No training campaign. The model side is converged at this data scale (§1.37, §1.39): hybrid backbones,
-  error-head losses, pixel weighting, polish, capacity and member count are all closed.
-* No dev-board-only levers: latency tuning, `time` draws, a band tuned to the public set's 1.29 stretch.
-  The private set is timed on different hardware, and the public board is no longer the objective.
-* No statistic pooled across windows on Track 1, and nothing on Track 2 that reads beyond the revealed
-  targets of the current trajectory. The stream stack must pass the causal check at every change.
-* No knob whose "off" setting is not bit-identical to the package of record, and no band that is not
-  committed with its sidecar.
-* No upload for information. There is one slot per track, and HOLD is a valid decision.
+* *No training campaign.* **Overridden** by the owner's grant of 09-28. The result: one training-side lever passed in
+  every regime (`--aug-resim`, §1.43); three training arms (T1, T2, T3) and the dose (T4b) closed.
+* *No dev-board-only levers.* Held. Nothing was tuned to the public board; its expectations are rule-based translations.
+* *No pooled statistic on Track 1; nothing on Track 2 beyond the revealed targets.* Held; every build passed the causal
+  check.
+* *No knob whose "off" is not bit-identical; no band without its sidecar.* Held. The candidate code rebuilds the
+  packages of record, data byte for byte and outputs bit for bit (job 7575926); both candidate bands are committed
+  with their json.
+* *No upload for information.* Held; nothing was uploaded.
+
+**What remains for the Decision phase.**
+
+1. **The owner's decision to upload** Track 2 (and whether to spend Track 1's slot). HOLD is valid.
+2. **Before any upload** (`CLAUDE.md` rules 1, 2): the five subscores with brackets, for a board-like set and for a
+   held-out set, in `../sub_candidates/<date>/README.md` and a PENDING row of `leaderboard/board.jsonl`. The inputs
+   exist: the expectation table in `experiments/decision_20260928/results/ood_chunk6.md` and the decision table in
+   `STATE.md`. The archives to stage are in `/fs/scratch/PAS1187/qwu/tmp/realpde/dec0928/candidate/` with their sha256.
+3. **Open, and low:** the early-window interval prior (arm I4, hindsight bound +0.034 OOD mean); the guards' latency on
+   Track 2 (+0.08 ms per step, on the graph's critical path).
+4. **Not verifiable here:** the organizers' hardware and stack (expect the reseeding spread, about 0.012 in distribution);
+   the all-data members were trained once; each recipe is one ensemble per regime; "T4 all" rests on one seed per
+   augmented ViT.
+
+The rules that held stand: one lever at a time, the criterion before the read, a knob that is bit-identical when off,
+nothing staged without the owner's go.
 
 ## Part 4 — Where things are
 
@@ -1573,6 +1749,7 @@ torch 2.2.2. Job templates: the `osc-jobs` skill.*
 8. **Replicates belong in the FIRST job, not the follow-up.** §1.11b: four single-run 2–3σ
    results regressed on replication in one round. Out of distribution the seed σ is 0.71
    `wfinal`, 58× the interior control's, so a one-run OOD number is unreadable by construction.
+   *(2026-09-28: that σ is the unseeded FNO of August; the shipped F-FNO + sim recipe reads 0.04 – 0.08, §1.12.)*
 9. **A build job that bakes constants into the working tree must RESTORE the tree itself.**
    Round 23: a `git checkout` while a build sat at step 3/5 put `FUSE = True` into the Track-1
    zip while Track 2, built at 4/5, was correct. Only the job's own read-back-from-zip check
@@ -1597,6 +1774,84 @@ torch 2.2.2. Job templates: the `osc-jobs` skill.*
 14. **(2026-09-27) Write the kill criterion before the result, and do not move it.** The final day's
    designs A, B and K3 were killed on their own thresholds. B2 was shipped over its own latency rule;
    the board then drew Track 2's slowest `time` on record, though no measurement ties the two.
+15. **(2026-09-28) One build per tree.** Two jobs on different nodes built in one scratch worktree behind a `flock`,
+   which does not serialise across nodes there; one Track-2 archive carried the tree's defaults and the build still
+   ended `BUILD_FINAL OK`. `build_final.sh` now takes a lock file and reads the constants back out of the archives
+   (`Track_1/verify/baked_constants.py`); each build runs in a tree of its own.
+16. **(2026-09-28) Probe the queue with one real job.** `sbatch --test-only` printed a start 24 h away while real
+   `nextgen` jobs started in seconds; a wave sent to Pitzer on that estimate was cancelled after 3 min 47 s.
+17. **(2026-09-28) A running job's script is not editable, and a second worktree lacks the first one's untracked
+   files.** Editing `ood_run.sh` under two running jobs killed them (bash reads a script as it runs); the first T4
+   reads failed because `val_{relo,rehi,rein}.npz` existed only in the other worktree. Read clock times from
+   `git log`, `sacct` and file stamps: two written from memory were 12 – 25 minutes off.
+
+---
+
+## Part 3 of 2026-09-27 (the Decision-phase plan before the campaign), verbatim
+
+*Moved here from Part 3 on 2026-09-29, text unchanged. Its heading read "Part 3 — The Decision phase (2026-09-28 →
+10-25)". What was done against each of its priorities, and where the campaign of 09-28 overrode it (its first
+"what not to do"), is in the current Part 3.*
+
+*Written 2026-09-27 at the close of Main Development. The plans of 08-31 … 09-20 are at the end of this
+file, verbatim.* The organizers retrain each shortlisted method from scratch on 8× A800 and score a
+private set at **novel AoA / Re**. There is **one submission per track for the whole phase**
+(commit fb0cb6d), so nothing is uploaded without the owner's explicit go. **Track 2 finished #8 and is
+shortlisted; Track 1 finished #20 and is not** (owner's read, 09-28; the 21:39Z cut had read T1 81.885 /
+T2 81.988 against our 81.671 / 82.056). The plan below is therefore a Track-2 plan; Track 1 shares the
+members and the band and needs no work of its own. The method to
+defend is the one in `STATUS.md`, and the package that goes up must be re-creatable by `reproduce.sh`.
+
+**Priorities, in order.**
+
+1. **Fix the two Track-2 input defects before anything else is measured.**
+   * *Revealed-target normalisation.* The official runner normalises `prev_target` with the TARGET
+     statistics, while R1's unscored-element test and `stream_eval.py` assume the input statistics.
+     Masked zeros therefore sit 6e-5 (u) and 2e-4 (v) away from the test value and count as scored,
+     about −0.0015 `final` on our data (`experiments/sprint_20260927/f_sprint/qa/qa_normcheck.py`;
+     `STATUS.md` item 1). Fix the test, make `stream_eval.py` feed the runner's normalisation, and re-read
+     every stream number on the corrected instrument.
+   * *Masked pixels in the online statistics.* D1c's pooled variance and VARCAL's sums include elements
+     that are never scored. A private recording blanks a different region, so these sums must be masked.
+     Each fix is a knob that is bit-identical when off; gate it with `validate_t2.py --adaptive` and
+     `stream_eval.py --causal-check`.
+2. **The online corrections first (§1.38).** They are the only lever that grows out of distribution. On
+   the corrected instrument, re-read R1, D1c, VARCAL and B2 in all three regimes (in distribution, the
+   AoA-20 holdout, the AoA-10 holdout) with the held-out ensembles at the shipped member count. Retrain
+   the AoA-holdout ensembles if the 3 – 4-member stand-ins are all there is: the current OOD reads come
+   from weaker ensembles with an un-refitted band, which flatters any online correction
+   (`ood_aoa10.md`). Pre-register the rule that picks each knob (N0, shrink, clip) before reading it.
+3. **A band fitted for the private set's AoA / Re mix.** The static band and SIGBLEND's κ, q were fitted
+   on eight in-distribution trajectories at a stretch of 1.29 – 1.39. First estimate how far C falls
+   at high Re and high AoA with a *correct* model, so that a lower C is not read as a model regression.
+   Then refit the base and the SIGBLEND constants on held-out-condition errors, and price it on the AoA
+   holdout with leave-one-trajectory-out. Keep `--fill-unscored`: its dev-board price was −0.0016, and
+   its exposure on a differently blanked recording is up to −0.62 (§ Part 2, T2R16).
+4. **Re-read FAMW and the gated blends on the AoA holdout.** FAMW (online family weights) is off in
+   T2R24 because it lost −0.004 on AoA 15–20, but it reads +0.158 / +0.151 at AoA-20. Stacked with
+   D1c, it must accumulate the residual *after* the family reweighting, or the correction is counted
+   twice. The gated mean blend (`BLEND_BETA`) was closed for the public set only and wins out of
+   distribution (§1.29). Both are decided on the holdout reads, not on the dev board.
+5. **A reproducibility run from scratch of whatever will be submitted.** Use `reproduce.sh` (default
+   target `final`) from a clean checkout on the evaluators' stack (torch 2.2.2) and on the build stack.
+   Accept on package `final` ±0.005 and band rel-L2 (`REPRODUCE.md` §12). The final-day code, bands and
+   `build_final.sh` were committed in fdac00b; every later change must be committed the same way before it
+   is measured, because a method that exists only on scratch is not reproducible.
+6. **Only then build, gate and register.** One package per track, with `build_final.sh` plus one
+   `RPDE_SHIP_*` change per lever. Register all five subscores with brackets for *both* regimes
+   (dev-board-like and held-out-AoA-like) before asking the owner to upload.
+
+**What not to do.**
+
+* No training campaign. The model side is converged at this data scale (§1.37, §1.39): hybrid backbones,
+  error-head losses, pixel weighting, polish, capacity and member count are all closed.
+* No dev-board-only levers: latency tuning, `time` draws, a band tuned to the public set's 1.29 stretch.
+  The private set is timed on different hardware, and the public board is no longer the objective.
+* No statistic pooled across windows on Track 1, and nothing on Track 2 that reads beyond the revealed
+  targets of the current trajectory. The stream stack must pass the causal check at every change.
+* No knob whose "off" setting is not bit-identical to the package of record, and no band that is not
+  committed with its sidecar.
+* No upload for information. There is one slot per track, and HOLD is a valid decision.
 
 ---
 

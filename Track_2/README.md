@@ -68,6 +68,9 @@ Designs, criteria and job scripts: `../experiments/sprint_20260927/`.
   `stream_eval.py --prev-space` and `validate_t2.py --prev-space` select which one the harness feeds.
 * **Masked elements.** About 9 % of the targets are exactly 0 and are not scored. Which pixels are
   masked depends on the recording, so a statistic that includes them learns the mask of this recording.
+  *2026-09-28: corrected. Only the interval average and the coverage of `sps` leave them out; rel, tke, mvpe and the
+  accuracy factor of `sps` count them. Learning this recording's mask is therefore what pays, and `STATS_MASK` stays
+  off (`../ROADMAP.md` §1.46).*
 
 ## What stays closed, with the file that closed it
 
@@ -77,7 +80,7 @@ Designs, criteria and job scripts: `../experiments/sprint_20260927/`.
 | **Closed-form readout refit** (09-14) | an exact ridge solve of the heads' last 1×1 conv per trajectory: ≤ ~1 % of any error for 1.07 ms per member | `closed/readout_refit_check.py` |
 | **Trajectory history as an input** | legitimate here, and worth nothing: the model already carries what a longer context would add | `closed/ttt_offline.py` |
 | **A GLOBAL residual correction or band rescale** (09-01) | lag-1 residual correlation +0.051; the best global band rescale is 1.00. **The per-pixel, per-trajectory forms above are different estimators and ship** | `closed/ttt_offline.py`, `closed/ttt_band.py` |
-| **Family weights online (FAMW)** | −0.004 on AoA 15–20, +0.15 at a held-out AoA 20, +0.12 ms per step: off in the package, open for the private set | `../experiments/sprint_20260927/f_sprint/notes/design_c.md` |
+| **Family weights online (FAMW)** | −0.004 on AoA 15–20, +0.15 at a held-out AoA 20, +0.12 ms per step: off in the package, open for the private set. *2026-09-28: closed; on the full stack at full size +0.007 out of distribution (arm I3)* | `../experiments/sprint_20260927/f_sprint/notes/design_c.md`, `../experiments/decision_20260928/STATE.md` |
 
 ## The package
 

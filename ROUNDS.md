@@ -102,6 +102,7 @@ package for them is recorded. A write-up named in *italics* is a heading in `ROA
 | T2R23 | 09-26 | A + R1 at ALPHA 0.90 | 81.740 | Round 36 / T2R23 (2026-09-26) |
 | R37 | 09-27 | k27fin: SIGBLEND band, JOINT_GAIN, host latency knobs — **package of record** | **81.671** | Round 37 / T2R24 (2026-09-27) |
 | T2R24 | 09-27 | MRGP2: R37's levers + the causal stream stack — **package of record** | **82.056** | Round 37 / T2R24 (2026-09-27) |
+| — | 09-28 | no upload: the Decision-phase campaign against held-out regimes; candidate "T4 all" chosen 09-29 | — | Decision-phase campaign (2026-09-28) |
 
 ## CLAUDE.md detail moved here on 2026-09-15 (verbatim)
 
@@ -3410,3 +3411,104 @@ family (the ViT pair) stays, since dropping one lost on 09-23 and dropping both 
 −0.20 against +0.09; training-side levers at this data scale are exhausted, and the final day's hybrid
 backbone, cross-fitted band and polish all failed their gates; reproducibility holds to +0.0006
 (7ea07fb).
+
+---
+
+### Decision-phase campaign (2026-09-28) — no upload; the Re-similarity augmentation passes, the candidate is "T4 all"
+
+**What was asked.** Track 2 was shortlisted (#8) and Track 1 was not (#20). The organizers retrain the method from
+scratch and score a private set at novel AoA / Re, once. The objective became the Track-2 composite (the fitted
+`final` without `time`) on conditions the models never saw; the development board stopped being a target. The owner
+granted **300 GPU-hours and at most 20 jobs at a time** on 09-28. The plan (`experiments/decision_20260928/PLAN.md`,
+commit 38bb9d4, 04:54 EDT) wrote every criterion before any job had finished; the state, tables and ledger are in
+`STATE.md` next to it, the executors' notes in `results/`. The main session planned; Opus executors ran the waves.
+Every job ran from a worktree pinned to a commit on scratch, and nothing was uploaded or pushed.
+
+**Why anything was reopened.** `ROADMAP.md` Part 2 had closed the training side and most of the band in distribution.
+Out of distribution the two levers read before (sim co-training, the stream stack) had paid 5 – 10× their
+in-distribution value, but on 3 – 4-member stand-ins with an un-refitted band and no ensemble for extrapolation in Re.
+
+**The waves.** Held-out regimes: A20 and A10 (every real and sim trajectory at that AoA out of training) and RE (the
+six Re of `re_split.excluded()`, read as `relo` below the training range, `rehi` above it, `rein` inside); all also
+exclude `model.VAL_TRAJ`, and sim at a held-out condition is excluded too.
+
+| wave | what | GPU-h (sacct) |
+|---|---|---|
+| 1, the instrument | 24 regime trainings at the recipe of record (F-FNO + sim seeds 1 – 6, ViT-P s1, ViT-C s3 and s1 per regime; three earlier checkpoints reused after a config check) | 60.3 |
+| 2 | arm T3 (sim dose 1.0, A20 and RE, seeds 1 – 4) and arm T4 (`--aug-resim 0.25`, RE, seeds 1 – 4) | 20.9 + 10.6 |
+| instrument | the out-of-distribution stream instrument (`ood/`), validated on the stand-ins, then every ensemble read; 99 Ascend jobs over six chunks | 10.2 |
+| 3 (11:04) | T4 at A20 and A10, three T4 twins, T4v (the ViTs augmented) at RE, T4b (dose 0.5); at 13:45 T4v's second stage (four ViTs at A20 / A10, two ViT twins) | to 171.6 cumulative at 18:02 |
+| the candidate | `reproduce.sh decision` from a clean clone of `467769d`, eleven trainings and the build (18:12 → 22:38) | 41.8 |
+| closing gates | R1, R1b, the second candidate's build, R2 on a V100 (22:40 → 23:00) | 0.71 |
+| identity | both candidates rebuilt from the committed bands (jobs 7580924, 7580925) | to 214.5 cumulative |
+| **total** | sacct over `rp_dp_*` / `pz_dp_*`, 201 GPU jobs | **214.5 of 300** |
+
+**What passed.**
+* **Gate G0**, the shipped stream stack against asymmetric R1 alone at the member count that ships: A20 +0.692 (16/16),
+  A10 +0.539 (18/18), relo +1.146 (9/9), rehi +0.292 (6/7), rein +0.079 (9/10). The stand-ins had under-read A20.
+* **I1, `PREV_SPACE = "target"`**: +0.002 … +0.009 in every regime, +0.0064 (8/8) in distribution, never worse on a
+  trajectory.
+* **T4, the Re-similarity augmentation** (a real window resampled in time by s and scaled by s, s log-uniform in [0.8,
+  1.25]). Single members at RE, 4 of 4 seeds: rein +0.120, relo +0.523, rehi +0.208. Ensemble with the control's ViTs:
+  A20 +0.052, A10 +0.040, relo +0.334, rehi +0.046; OOD mean +0.118 (frozen +0.225); in distribution +0.033 (8/8).
+  Leave one seed out, eleven ensembles: relo +0.309 [+0.301, +0.315] against a reseeding spread of at most 0.034.
+* **T4v, all six members augmented ("T4 all")**: OOD mean +0.206, in distribution +0.0315 (7/8). Against "T4 F-FNO
+  only" it gains relo +0.376 (9/9) and loses rehi −0.021 (2/7); elsewhere the two are inside the reseeding spread.
+* **R1**: the from-scratch twins read 77.2817 against the campaign's 77.2821 (bar 0.005); the two ViT twins retrained
+  bit-identically. **R1b**: three band refits agree to 1e-4. **R2**: a V100S and every forced fallback agree within
+  2.9e-3 relative L2 per window, composite within 0.0006. The candidate's gain on the from-scratch twins against the
+  twins of record: +0.0311 (7/8), +0.0508 on AoA 15 – 20.
+
+**What closed, by its own criterion.** I2 `STATS_MASK` (loses on every trajectory of every synthetic re-blank, down to
+−4.77 in distribution: the scorer takes rel, tke and mvpe over the whole field, zero targets included). I3 FAMW on the
+full stack (+0.007 OOD mean against +0.05). I5 the stream constants chosen leave one regime out (rehi −0.020, 1/7).
+I6 the band from pooled held-out-condition errors (ΔC×100 −0.018 against +0.30). I7 zero propagation as a score lever
+(+0.0001 … +0.0003 against +0.03). T1 six F-FNO members (+0.042 against +0.05, +0.357 ms per step). T2 both ViTs with
+sim (+0.015). T3 sim dose 1.0 (relo −0.082, rehi −0.050). T4b dose 0.5 (+0.026 against +0.05, 0 of 4 seeds). I4 (an
+early-window interval prior) was not built; its hindsight bound is +0.034.
+
+**What the campaign established besides the arms.**
+* The ViT family is the weak member out of distribution (4.4 – 7.1 `wfinal` behind an F-FNO at relo), but no fixed
+  composition beats the mirror everywhere: dropping the ViTs loses at A20 (−0.176) and on the twins (−0.140, 0/8).
+* After the stream stack the trajectory-persistent mean error is 0.6 – 1.2 % of the squared error; the rest is
+  fluctuation (65 – 76 %) and window-to-window mean error (23 – 34 %).
+* The shipped static band is fitted on the twins' **in-sample** errors (`fit_band.py --fit-on seen`), which the
+  documents had not said; measured, it matters by 0.002 – 0.012.
+* Natural blanking is a property of the angle, and the members already predict the physical zero at a held-out angle's
+  novel blanked pixels (0.0005 m/s).
+* The single-member seed spread of the shipped recipe out of distribution is 0.04 – 0.08, not the 12 – 58× of
+  `ROADMAP.md` §1.12, which was measured on the unseeded FNO of August.
+
+**Code that came out of it** (commits 467769d and 6ad14ea): `train2.py --aug-resim` (inert at 0, bit-identical),
+`reproduce.sh decision` with `RPDE_DP_RESIM_FFNO` / `RPDE_DP_RESIM_VIT`, the two candidate bands committed with
+`MANIFEST.md` entries and reused by default, and in `build_final.sh` a lock file and a check of the baked constants
+read back from the archives (`Track_1/verify/baked_constants.py`, 41 checks). The candidate code rebuilds the packages
+of record, data byte for byte and outputs bit for bit (job 7575926).
+
+**Mistakes.**
+* **Wave 1 first went to Pitzer** on an `sbatch --test-only` estimate that Ascend would start the jobs 24 h later.
+  Real `nextgen` jobs started in seconds. The Pitzer jobs were cancelled after 3 min 47 s (about 1.1 V100 GPU-h) and
+  moved to Ascend; their partial logs were deleted so that `--resume` could not pick up a V100 fragment.
+* **The read step of the first four T4 jobs failed**: they ran from a second worktree (`wt_t4`) that lacked the
+  untracked `val_{relo,rehi,rein}.npz` copied into the first. The checkpoints were complete; job 7572732 redid the reads.
+* **The build race.** Two instrument jobs on different nodes built in one scratch worktree behind a `flock`, which does
+  not serialise across nodes there. One Track-2 archive was built from the tree's defaults and the build still ended
+  `BUILD_FINAL OK`; the job's own post-build check caught it. Every build then ran in its own tree, and `build_final.sh`
+  gained the lock and the constant check.
+* **Two I6 jobs were killed** by an edit of `ood_run.sh` while they ran (bash reads a script as it executes). They were
+  re-run, and every instrument job ran from a snapshot of the code afterwards.
+* **Clock times written from memory** were off by 12 – 25 minutes twice; times in `STATE.md` are read from `git log`,
+  `sacct` and file stamps.
+* Smaller: a job generator wrote the read outputs to an empty base name (fixed before submission); a poller tested
+  empty sentinel files with `-s` and waited 9 – 16 minutes; `reproduce.sh decision` named the empty-variable recipe
+  `dp_resim_v` and closed with "no build" after a build (both repaired in 6ad14ea).
+
+**Decisions.** 09-28, by the criteria: `STATS_MASK` stays off; I3, I5, I6, T1, T2, T3, T4b closed; I1, T4 and T4v pass;
+the member composition stays. 09-28, owner: Ascend first whenever it is idle, Pitzer the overflow; the working branch is
+`qwu/dev`, at most 10 commits a day. **09-29, owner:** the candidate's recipe is **"T4 all"** (the method of record with
+all six members and five twins trained with `--aug-resim 0.25`, plus `PREV_SPACE = "target"`; `RPDE_REPRODUCE_GO=1 bash
+reproduce.sh decision`, tag `dp_resim_all`); "T4 F-FNO only" stays reproducible and is not the choice. Zero propagation
+is not added, neither as a lever nor as insurance. **No upload has been decided; nothing is staged.** The release of
+09-27 is tagged `final-20260927` on `4e5ed37` (main after pull request #3). The candidate's eleven checkpoints were
+promoted into `Track_1/unet/` on 09-29 (copied, md5 checked); its two archives are kept on scratch in
+`dec0928/candidate/`, equal file by file to the from-scratch run's.
