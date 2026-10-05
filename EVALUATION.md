@@ -403,9 +403,9 @@ The step-by-step procedures are skills, loaded when they are needed:
 | the method has to be re-created from the release | `.claude/skills/reproduce-from-release/SKILL.md` |
 | anything needs a GPU | `.claude/skills/osc-jobs/SKILL.md` |
 
-Three rules frame all of them. The user uploads, and the Decision phase allows one submission per track
-in total. The prediction is written before the upload. HOLD is a valid decision: never upload a package
-expected to score worse.
+Three rules frame all of them. The user uploads; the Decision phase has no upload at all (2026-10-05: its Codabench
+phase is the organizers' own, and what they take is a training package, `final_package/README.md`). The prediction is
+written before the upload. HOLD is a valid decision: never upload a package expected to score worse.
 
 ---
 

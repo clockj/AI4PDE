@@ -11,7 +11,9 @@ The header of 2026-09-05 and the plans of 08-31 … 09-20 are kept verbatim at t
 * Final ranks (owner's read, 09-28): **Track 1 #20, Track 2 #8**; the top ten are shortlisted. The cut read at
   21:39Z on 09-27 was T1 81.885, T2 81.988.
 * Decision phase to 2026-10-25: organizers retrain shortlisted methods from scratch and score a private
-  set at novel AoA / Re; **one submission per track for the whole phase.**
+  set at novel AoA / Re; **one submission per track for the whole phase.** *(2026-10-05: superseded. The phase takes
+  no upload; the organizers take one training package for Track 2, code only, by 10-09 24:00 UTC, and its
+  development-set result must reproduce the leaderboard row: `final_package/README.md`.)*
 
 **2026-09-29, after the Decision-phase campaign of 09-28.** §1.42 – §1.48 and the last table of Part 2 hold what it
 measured; Part 3 is rewritten, and the Part 3 of 09-27 is kept verbatim near the end of the file. The owner chose a

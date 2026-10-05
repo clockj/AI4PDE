@@ -67,3 +67,13 @@ member takes about 4 h 50 min there.
 
 `RPDE_REPRO_EPOCHS=2 RPDE_REPRO_SEEDS=1 RPDE_REPRO_FITBAND=1` runs every stage in about half a GPU-hour and proves the
 pipeline, not the method. Its archives are not packages.
+
+## The package the organizers retrain (2026-10-05)
+
+`final_package/` is the hand-over for the final evaluation: the files of `fdac00b` that the pipeline reads, one patch,
+and the entry point `run_track2.sh`, assembled by `final_package/make_package.sh` (record: `final_package/README.md`).
+After any change to it, run `final_package/verify/job_verify.sh` (Ascend, 34 minutes): it extracts the package from its
+own archives inside `verify/sandbox.sh`, where the author's home and scratch are empty, and requires `RUN_TRACK2 OK` from
+the released data at 2 epochs, both archives byte-identical to the uploads from the checkpoints of record, and two
+training stages without `train_real/7575_0.h5`. **A "foreign machine" check that can still see `/users/PAS1187/qwu` is
+not one**: that is how a literal data path in `Track_2/t2_common.py` survived until 10-05.

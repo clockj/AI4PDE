@@ -16,6 +16,7 @@ and rules that only matter inside one directory in `.claude/rules/` (loaded when
 | need | read |
 |---|---|
 | re-create the method from the release | `REPRODUCE.md`, `reproduce.sh` (default target `final`; release tag `final-20260927`) |
+| the final submission: Track 2's training package for the organizers | `final_package/README.md` (`make_package.sh`, the manual in `overlay/`, the sandboxed checks in `verify/`) |
 | how local evaluation works and how the board corrects it | `EVALUATION.md` |
 | out-of-distribution reads (whole AoA or Re band held out, real package path) | `experiments/decision_20260928/ood/README.md` |
 | the Decision-phase campaign: criteria, every table, decisions | `experiments/decision_20260928/` (`PLAN.md`, `STATE.md`) |
@@ -28,8 +29,9 @@ and rules that only matter inside one directory in `.claude/rules/` (loaded when
 
 ## Rules
 
-1. **The user uploads; agents never do.** The Decision phase (to 2026-10-25) allows **one submission per track in
-   total**. Never stage an upload without the owner's explicit go.
+1. **The user uploads and sends; agents never do.** The Decision phase has no Codabench upload (its phase is the
+   organizers' own and closed on 09-28); what is sent is one training package per invited track, by e-mail, by
+   2026-10-09 24:00 UTC. Never stage an upload or a package for sending without the owner's explicit go.
 2. **Predict before upload.** All five subscores, each with a bracket, go into `../sub_candidates/<date>/README.md` and a
    PENDING row of `leaderboard/board.jsonl` before the upload. A prediction written afterwards is worthless.
 3. **Evidence comes only from held-out twins.** All-data checkpoints supply weights, never numbers, and never the band's
@@ -136,8 +138,8 @@ from revealed targets. `Track_1/submit_fno/build_final.sh` is the authority for 
 
 ## Dates
 
-Main Development closed 2026-09-27. Decision phase to 2026-10-25. Results 2026-11-10. Workshop 2026-12-06; winners
-open-source two weeks before presenting.
+Main Development closed 2026-09-27. **Training package due 2026-10-09 24:00 UTC.** Decision phase to 2026-10-25.
+Results 2026-11-10. Workshop 2026-12-06; winners open-source two weeks before presenting.
 
 ## Repo map
 
@@ -156,5 +158,6 @@ Track_1/     instruments at top level: predict_board, compare_v9, ens_v9, kfold,
 Track_2/     submit/submission.py, build_t2.py, validate_t2.py, stream_eval.py, t2_common.py, r1_ref/, closed/
 experiments/ cross-track campaigns (sprint_20260927/, audit_20260927/, decision_20260928/ with ood/ the instrument)
 leaderboard/ board.jsonl, runs.jsonl, screen.jsonl, lb.py
+final_package/ the training package sent for the final evaluation: make_package.sh, allowlist.txt, patches/, overlay/, verify/
 outside the repo: ../sub_candidates/ · ../handoffs/ · ../artifacts/
 ```

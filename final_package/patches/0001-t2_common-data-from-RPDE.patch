@@ -1,0 +1,15 @@
+diff --git a/Track_2/t2_common.py b/Track_2/t2_common.py
+index a7ae658..f02364b 100644
+--- a/Track_2/t2_common.py
++++ b/Track_2/t2_common.py
+@@ -21,7 +21,9 @@ SUB_S = 2
+ HORIZON = T_IN + T_OUT
+ H, W, C = 32, 64, 3
+ 
+-DATA = "/users/PAS1187/qwu/RealPDE/train_real/train_real"
++# The released real data, under $RPDE as in reproduce.sh. Until 2026-10-05 this was the literal default below, so on any
++# machine but the author's both Track-2 gates died in build_stream() and no environment variable could reach it.
++DATA = os.path.join(os.environ.get("RPDE", "/users/PAS1187/qwu/RealPDE"), "train_real", "train_real")
+ 
+ # example_data/mean_std_real.pt, read 2026-08-31.  mean_in/std_in are bit-identical to
+ # Track_1/submit_fno/_fno.py's MEAN/STD, so the evaluator's normalized input IS the tensor our

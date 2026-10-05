@@ -1,4 +1,4 @@
-# Status — 2026-09-29, Decision phase
+# Status — 2026-10-05, the final submission
 
 The only file that changes after a board result. Keep it under 40 lines; detail goes to `ROUNDS.md`.
 
@@ -7,33 +7,34 @@ The only file that changes after a board result. Keep it under 40 lines; detail 
 | Track 1 | **81.671149** (R37, 09-27) | `track1_k27fin_a080.zip` | 81.67 [81.58, 81.79] |
 | Track 2 | **82.055553** (T2R24, 09-27) | `T2_MRGP2_track2_MRGP2.zip` | 82.000 [81.885, 82.219] |
 
-* **The packages of record** (method: `CLAUDE.md` "What ships") rebuild by `bash Track_1/submit_fno/build_final.sh
-  OUTDIR`, data byte-identical and outputs identical at tolerance 0; from `fdac00b` the code files too. The release is
-  the annotated tag **`final-20260927`** on `4e5ed37` (main after pull request #3).
-* **Final ranks: Track 1 #20, Track 2 #8.** Track 2 is shortlisted: the organizers retrain from scratch (8× A800) and
-  score a private set at novel AoA / Re. **One submission per track for the phase** (to 2026-10-25).
-* **The candidate (owner, 09-29): "T4 all"**, the method of record with all six members and five twins trained with
-  `--aug-resim 0.25`, plus `PREV_SPACE = "target"`. Built by `RPDE_REPRODUCE_GO=1 bash reproduce.sh decision`
-  (defaults), tag `dp_resim_all`, band `Track_1/bands/dp_resim_all_sigblend_lam0.5.npz` with its sidecar json. Against
-  the control: +0.206 out of distribution (mean of A20, A10, relo, rehi), +0.031 in distribution (twins, 7 of 8).
-  Checkpoints: the eleven `*_resim*` in `Track_1/unet/`. Archives on scratch, `dec0928/candidate/track1_dp_resim_all.zip`
-  (53291df1…) and `track2_dp_resim_all.zip` (bd0a3fb4…). "T4 F-FNO only" (`RPDE_DP_RESIM_VIT=`) stays reproducible
-  and is not the choice. Zero propagation (arm I7) is not added. Record: `experiments/decision_20260928/`.
-* **No upload is decided and nothing is staged** in `../sub_candidates/`. The board shows the packages of record.
+* **Final ranks: Track 1 #20, Track 2 #8.** Track 2 is shortlisted; Track 1 is not, and nothing is sent for it.
+* **What the organizers want is a training package, by 2026-10-09 24:00 UTC** (FAQ of both Codabench pages): code only,
+  no weights, in the format of the "Final Decision Phase" starting kit (`realpde_final_starting_kit_track2.zip`, Files
+  tab, login needed). They retrain it (8× A800), score the development set and a private set; **the development-set
+  result must reproduce the leaderboard row** (clarification of 10-04) or the team may be disqualified.
+* **No Codabench upload exists in this phase** (public API, read 10-05): the "Final Decision Phase" is
+  organizer-controlled and closed on 09-28 09:00 UTC on both tracks. A package can no longer acquire a leaderboard row.
+* **What is sent: the method of record, not the candidate.** `final_package/` assembles the Track 2 training package
+  from `fdac00b` (the commit the uploads rebuild from byte for byte), with one entry point, `run_track2.sh`:
+  `bash final_package/make_package.sh <scratch dir>`. Record and checks: `final_package/README.md`.
+* **The candidate ("T4 all", `reproduce.sh decision`, tag `dp_resim_all`) stays unsent**: it is a different model
+  measured against a number it never produced (+0.0125 expected on the board, +0.206 out of distribution, of which
+  +0.709 at low Re). Record: `experiments/decision_20260928/`. Its checkpoints stay in `Track_1/unet/` (`*_resim*`).
 
-## Open before a Decision-phase upload
+## Open before the package is sent (the owner sends it)
 
-1. **The owner's decision to upload**, per track. HOLD is valid.
-2. **Registration and staging first** (rules 1, 2): five subscores with brackets, in distribution and held out, in
-   `../sub_candidates/<date>/README.md` and a PENDING row of `leaderboard/board.jsonl`. Neither exists.
-3. **The guards cost Track 2 latency**: +0.08 ms per step (+2.4 %), about −0.002 … −0.005 `final`; still on the critical path.
-4. **Not verified:** the organizers' hardware and stack (only A100 and V100, torch 2.2.2; expect the reseeding spread,
-   about 0.012 in distribution, not our retrain's 0.0003); the all-data members were trained once.
+1. **The organizers' template**: fetch the starting kit and the invitation e-mail; rearrange the package to it and run
+   `final_package/verify/job_verify.sh` again.
+2. **`TEAM` and `CONTACT`** for the manual (`make_package.sh` refuses to build a final package without them).
+3. **`train_real/7575_0.h5`** (a copy of `6300_0`, which the data page says not to use) is in the training set of every
+   network of record; the manual discloses it. The owner decides the wording.
+4. **Not verified:** a 400-epoch run of the package itself (run at 2 epochs; the recipes are those of the 09-25
+   retrain, +0.0006), and the organizers' hardware (expect the reseeding spread, about 0.012).
 
-## Settled 09-28
+## Settled
 
-* `PREV_SPACE = "target"`: +0.002 … +0.009 in every regime, never worse on a trajectory. `STATS_MASK` stays off.
-* FAMW (+0.007 out of distribution) and the stream constants (a plateau) are closed; the shipped stack stays.
-* The band: a refit from other twins moves the composite by about 1e-4; its static field is fitted in sample, as shipped.
-* Reports: `../artifacts/20260927_realpde_phase_report.html` (its `STATS_MASK` advice is superseded) and
-  `20260927_realpde_final_method.html`. The newest handoff is `../handoffs/HANDOFF_20260928.md`.
+* 10-05: `Track_2/t2_common.py` read the data from a literal path of this cluster, so both Track-2 gates failed on any
+  other machine; it reads `$RPDE` now (`REPRODUCE.md` §9.1 item 7, found in a sandbox without the author's paths).
+* 09-28: `PREV_SPACE = "target"` is a fix (+0.002 … +0.009) and is **not** in the package of record; under the 10-04
+  rule the −0.0015 defect is cheaper than a change to the development-set numbers. `STATS_MASK` stays off.
+* The newest handoff is `../handoffs/HANDOFF_20261005.md`.

@@ -3512,3 +3512,46 @@ is not added, neither as a lever nor as insurance. **No upload has been decided;
 09-27 is tagged `final-20260927` on `4e5ed37` (main after pull request #3). The candidate's eleven checkpoints were
 promoted into `Track_1/unet/` on 09-29 (copied, md5 checked); its two archives are kept on scratch in
 `dec0928/candidate/`, equal file by file to the from-scratch run's.
+
+## 2026-10-05: the final submission is a training package
+
+No board round. The organizers' clarification of 10-04 (the submitted package is scored on the development set too, and
+that result must reproduce the leaderboard row) was read against the competition's public pages, and the hand-over was
+built and checked. Record: `final_package/README.md`; state: `STATUS.md`.
+
+**What the pages say** (`https://www.codabench.org/api/competitions/17385/`, no login). One training package per invited
+track, code only ("no model weights"), by **2026-10-09 24:00 UTC**, in the format of the "Final Decision Phase" starting
+kit, which needs a login. The Codabench "Final Decision Phase" is the organizers' own and closed on 09-28 09:00 UTC, on
+both tracks: there is no Decision-phase upload, so the candidate cannot acquire a leaderboard row. `STATUS.md` and
+`CLAUDE.md` rule 1 had "one submission per track to 10-25" from the phase list; the FAQ had the rest.
+
+**What is sent: the method of T2R24 (82.055553), cut from `fdac00b`.** Today's tree rebuilds the uploads output for
+output but not byte for byte, and carries the candidate; `fdac00b` rebuilds them byte for byte, code included. The
+package is the 26 files of that commit that a traced run opened, one patch, an entry point (`run_track2.sh`) and a
+manual: 29 files, 257 KB, no checkpoint, no band, no symlink. Its entry point always refits the band, because a band is
+fitted on our twins and the organizers accept no fitted artefact.
+
+**Found.**
+* **`Track_2/t2_common.py` read the real data from a literal path of this cluster**, with no flag and no variable. Both
+  Track-2 gates build their stream through it, so on any other machine the build failed after the eleven trainings.
+  Every "foreign machine" run before (`REPRODUCE.md` §9, §12) was on Pitzer, where the path is mounted. Found by running
+  inside `final_package/verify/sandbox.sh`, where the author's home and scratch are empty. Fixed: `$RPDE`.
+* **`train_real/7575_0.h5` is in the training set of every network of record.** The data page (announced 08-12) and the
+  release's README say not to use it: `u` and `v` equal `6300_0`'s (checked). Nothing here ever excluded it. The manual
+  discloses it; the owner decides the wording.
+* `REPRODUCE.md` §9.1: item 1 (the `PY` default) was already fixed in the code; item 2 is one symlink today and was
+  five at `fdac00b`; item 7 is the path above.
+
+**Checked** (Ascend A100, in the sandbox).
+* Job 7681561, the whole tree of `fdac00b` + the patch: the eleven checkpoints of record and the committed band give
+  both archives with **all 9 files byte-identical to the uploads**, gates 2/2, causality OK; from the released data at 2
+  epochs, `run_track2.sh` ends `RUN_TRACK2 OK` in 31 minutes, its `_fno.py` identical to the upload's and its
+  `submission.py` one line apart (`SIGPOW`, refitted from 2-epoch twins).
+* Job 7681858, the curated package extracted from its own archives: from its `.tar.gz`, `run_track2.sh` from the released
+  data at 2 epochs ends `RUN_TRACK2 OK` (every stage, band refit, gates 2/2, causality OK, 26 minutes); from its `.zip`,
+  with the checkpoints and the band of record, **all 9 files are byte-identical to the uploads on both tracks**; two
+  training stages run on the release without `7575_0.h5`. Job 7682454 repeated
+  the three checks on the draft as it stands (`.tar.gz` `aed17c0e…`): the same results.
+
+**Not done.** A 400-epoch run of the package (the recipes are those of the 09-25 retraining, +0.0006); the organizers'
+template; the team name. Nothing was sent.
