@@ -1,0 +1,5 @@
+host=a0140.ten.osc.edu job=7142610 gpu=NVIDIA A100-PCIE-40GB cpus=12
+=== q2b/vit_d384  --arch vit --width 384 --n-layers 8
+  epoch 395  loss 0.48488  field 0.03698  var 0.30536  tke 0.28516  probe 0.00000  div 0.31352  spec 0.00000  crps 0.00000  svar 0.00000  sim 0.00000  (6471s)
+  epoch 399  loss 0.48494  field 0.03695  var 0.30552  tke 0.28552  probe 0.00000  div 0.31350  spec 0.00000  crps 0.00000  svar 0.00000  sim 0.00000  (6536s)
+saved arch_vit_d384.pth
