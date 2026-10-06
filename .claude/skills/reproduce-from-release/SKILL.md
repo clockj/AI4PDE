@@ -70,10 +70,11 @@ pipeline, not the method. Its archives are not packages.
 
 ## The package the organizers retrain (2026-10-05)
 
-`final_package/` is the hand-over for the final evaluation: the files of `fdac00b` that the pipeline reads, one patch,
-and the entry point `run_track2.sh`, assembled by `final_package/make_package.sh` (record: `final_package/README.md`).
-After any change to it, run `final_package/verify/job_verify.sh` (Ascend, 34 minutes): it extracts the package from its
-own archives inside `verify/sandbox.sh`, where the author's home and scratch are empty, and requires `RUN_TRACK2 OK` from
-the released data at 2 epochs, both archives byte-identical to the uploads from the checkpoints of record, and two
-training stages without `train_real/7575_0.h5`. **A "foreign machine" check that can still see `/users/PAS1187/qwu` is
+The hand-over for the final evaluation is the orphan branch `final-submission` (worktree `../code-finalsub`): `fdac00b`'s
+training, band and build code reorganised, the two shipped files byte-identical, one entry point `run_track2.sh`
+(record: `final_package/README.md`). After any change to it: `final_package/verify/cpu_equiv.sh` (old code vs new,
+bit for bit, on the CPU — the GPU is not deterministic run to run) and `final_package/verify/job_verify_branch.sh`
+(the branch in `verify/sandbox.sh`, where the author's home and scratch are empty: `RUN_TRACK2 OK` from the released
+data at 2 epochs, the archive byte-identical to the upload from the checkpoints and band of record, two training
+stages without `train_real/7575_0.h5`). **A "foreign machine" check that can still see `/users/PAS1187/qwu` is
 not one**: that is how a literal data path in `Track_2/t2_common.py` survived until 10-05.

@@ -1,6 +1,6 @@
-# The final submission: Track 2's training package (2026-10-05)
+# The final submission: Track 2's training package (2026-10-06)
 
-What goes to the organizers for the final evaluation, how it is assembled, and what was checked. The owner sends it;
+What goes to the organizers for the final evaluation, where it lives, and what was checked. The owner sends it;
 agents never do (`CLAUDE.md` rule 1).
 
 ## What the organizers ask for
@@ -17,82 +17,72 @@ Read on 2026-10-05 from the public competition metadata (`https://www.codabench.
   that result must reproduce the leaderboard row, or the team may be disqualified.
 * **The Final Decision Phase on Codabench is the organizers' own**: "Organizer-controlled final verification phase on
   private test data", open 2026-09-28 00:00 – 09:00 UTC, now `Previous`, on both tracks. No phase accepts an upload,
-  so no package can acquire a leaderboard row any more. `STATUS.md` and `CLAUDE.md` rule 1 said "one submission per
-  track to 10-25"; that slot does not exist.
+  so no package can acquire a leaderboard row any more.
 * **The template is not public.** `realpde_final_starting_kit_track2.zip` ("T2 Final Starting Kit v1", 5 649 bytes,
-  uploaded 2026-09-28) needs a Codabench login. **Until the owner fetches it, the layout below is ours, not theirs.**
+  uploaded 2026-09-28) needs a Codabench login; it is not on this machine. **Until the owner fetches it, the layout of
+  the package is ours, not theirs.**
 
 Track 1 finished #20 and is not invited; there is nothing to send for it.
 
-## What is sent
+## What is sent: branch `final-submission`
 
-The method of the leaderboard row: T2R24, `T2_MRGP2_track2_MRGP2.zip`, sha256 `1aa2896f…`, final 82.055553. Not the
-Decision-phase candidate ("T4 all"): it is a different model, the leaderboard number is not its number, and it can no
-longer get one of its own.
+The method of the leaderboard row (T2R24, `T2_MRGP2_track2_MRGP2.zip`, sha256 `1aa2896f…`, final 82.055553), as
+**training code only, reorganised**, on the orphan branch **`final-submission`** (no history in common with `main`),
+checked out as the worktree **`../code-finalsub`**. One commit; 19 files; no checkpoint, no band, no symlink, no
+record of the development.
 
-The package is **training code only**, taken from commit **`fdac00b`**, the commit both uploads rebuild from byte for
-byte, code files included (`REPRODUCE.md` §13.5). A package cut from today's tree would build a `submission.py` that
-differs from the uploaded one in 300 lines (the guards and the removed knobs of the 09-28 refactor) and would carry the
-candidate's recipe and bands next to the record's.
-
-| piece | source |
+| | |
 |---|---|
-| the files of `allowlist.txt` | `fdac00b`, byte for byte: every file the pipeline opened in a traced run from the released data (`verify/job_trace.sh`), and nothing else |
-| `patches/0001-…` | one line of `Track_2/t2_common.py`: the Track-2 gates read the data from `$RPDE` (`REPRODUCE.md` §9.1 item 7) |
-| `overlay/run_track2.sh` | the entry point: three variables, one command; sets every variable of §9.1, creates the one symlink, refits the band |
-| `overlay/README.md` | the manual the organizers read |
+| `run_track2.sh` | the entry point: `RPDE`, `RPDE_KIT`, `WORK`, one command (or one stage per job); the eleven recipes written out |
+| `unet/` | `data.py`, `models_alt.py` (F-FNO, ViT, `build`), `simreal.py`, `train.py`: the training code of `fdac00b`'s `Track_1/unet/` with every closed experiment's flag and branch removed, the comments rewritten |
+| `band/` | `make_val.py`, `fit_band.py`, `dump_twins.py`, `sigma_band.py`, `sps.py`: the band fit, with the shipped settings as constants |
+| `submission/` | `submission.py`, `_fno.py`: **byte-identical to `fdac00b`'s tree files**; the build bakes the constants into copies |
+| `build/` | `build.py` (the 19 constants, the FFNO_PATH block and SIGPOW, the int8 packing, the archive, every constant read back), `validate.py`, `causal_check.py`, `stream.py` |
+| `README.md` | the organizers' manual; `TEAM` and `CONTACT` are placeholders |
 
-It holds no checkpoint, no band and no symlink. `reproduce.sh final` reuses the committed band by default; the package
-has none, and its entry point always refits (`RPDE_REPRO_FITBAND=1`), because a band is fitted on our twins and the
-organizers accept no fitted artefact.
+`unet/` keeps that name and `models_alt.py` its name because the shipped `_fno.py` looks for `../unet/models_alt.py`
+to rebuild an F-FNO through the training definition (the band fit runs that path, the evaluation container the
+vendored copy). The entry point always refits the band (`fit_band.py` → `dump_twins.py` → `sigma_band.py`), because a
+band is fitted on our twins and the organizers accept no fitted artefact; the `SIGPOW` literal of the built
+`submission.py` is therefore the only line that differs from the upload's.
 
-```bash
-TEAM="<team name on Codabench>" CONTACT="<e-mail>" bash final_package/make_package.sh /fs/scratch/PAS1187/qwu/tmp/realpde/final1005/dist
-```
+The earlier route (a curated cut of `fdac00b` assembled by `make_package.sh`, verified 10-05 by jobs 7681561,
+7681858, 7682454) is superseded by the branch and was removed from this directory on 10-06.
 
-writes `realpde_track2_training_package/`, `.tar.gz` and `.zip` (the same bytes on every run) and prints their sha256.
+## What was checked (2026-10-06)
 
-## What was checked
+| check | where | result |
+|---|---|---|
+| the baked `submission.py` and `_fno.py` against the uploaded archive's | login node, `build/build.py:bake` with the SIGPOW of the band of record | **byte-identical** (63 835 and 149 823 bytes) |
+| old training code (`fdac00b`) vs new, deterministic arithmetic | `verify/cpu_equiv.sh`: CPU, 2 epochs, one window per trajectory, same seed, three recipes (F-FNO twin with the CFD term, ViT twin without, ViT member with) | **bit-identical weights** for all three, and the same checkpoint fields |
+| the same on a GPU | job 55454190 (Pitzer V100), 2 epochs on the full data | F-FNO 4e-7, ViT 1e-2 apart — and the OLD code against itself on the same card: F-FNO 1.2e-7 in 75 of 79 tensors (job 55454404), ViT 3.1e-2 in 111 of 112 tensors (job 55454453). GPU kernels are not deterministic run to run; the CPU test is the equivalence test |
+| the CFD map | job 55454190 | old and new caches **bit-identical** (all-data and twin tables) |
+| the band from the eleven checkpoints of record, old vs new | job 55454190 | static band, twin dump, q = (0.48465, 0.49071) and the sigblend npz all **bit-identical** between the two codes (the V100 re-fit differs from the committed A100 band by up to 8e-4 in `base`, for both codes alike) |
+| the archive from the checkpoints and the band of record | job 55454190 (V100) and the sandbox below | **all 9 files byte-identical to the upload** |
+| the gates on that archive | job 55454190 | `SUBMITTABLE`, `CAUSALITY OK` |
+| the branch as `git archive` would send it, in `verify/sandbox.sh` (none of our directories visible) | job 55454191 (Pitzer V100), commit `a716913` | `run_track2.sh` from the released data at 2 epochs to `RUN_TRACK2 OK` in 30 min; 9/9 byte-identical with the checkpoints and band of record; two stages trained without `7575_0.h5` |
+| the final code, commit `a0a36b9` (= `9f3dd58`, the delivered commit, which differs only in `README.md`) | job 55454608 (Pitzer V100) | `RUN_TRACK2 OK` in 29 min, 9/9 byte-identical, two stages without `7575_0.h5` |
 
-All on Ascend (A100, torch 2.2.2), inside `verify/sandbox.sh`: bubblewrap, the author's home and scratch **empty**,
-the environment cleared, the release / the kit / the Python environment bound at neutral paths. A literal path of ours
-fails there as it would on the organizers' cluster; that is how item 7 of `REPRODUCE.md` §9.1 was found.
-
-| job | tree | check | result |
-|---|---|---|---|
-| 7681561 | all of `fdac00b` + the patch | the eleven checkpoints of record + the committed band, against the uploads | gates 2/2, causality OK, **Track 1 and Track 2: all 9 files byte-identical**, `BUILD_FINAL OK` |
-| 7681561 | the same, under `strace` | `run_track2.sh` from the released data, 2 epochs | `RUN_TRACK2 OK` in 31 min; 25 files of the commit opened (`allowlist.txt`); built `_fno.py` = the upload's, `submission.py` one line apart (`SIGPOW`) |
-| 7681858 | the curated package, from its `.tar.gz` | `run_track2.sh` from the released data, 2 epochs | every stage, band refit, gates 2/2, causality OK, `RUN_TRACK2 OK` in 26 min |
-| 7681858 | the curated package, from its `.zip` | the checkpoints and the band of record, against the uploads | **all 9 files byte-identical on both tracks**, `BUILD_FINAL OK` |
-| 7681858 | the curated package, from its `.zip` | two training stages on the release without `train_real/7575_0.h5` | both trained (81 real trajectories) |
-| 7682454 | the draft as it stands (`.tar.gz` `aed17c0e…`, `.zip` `0309a3dc…`; the entry point had gained its scipy check) | the three checks of 7681858 again | `RUN_TRACK2 OK`; **all 9 files byte-identical on both tracks**; both stages trained without `7575_0.h5` |
-
-The two archives extract to the same tree and `MANIFEST.sha256` verifies. Peak host memory 21 GB; `$WORK` 4.2 GB; 0.5 GB
-of intermediates inside the package tree. The archive of record itself: sha256 `1aa2896f…8f54bf` (= the leaderboard
-row's), 9 files, 34.6 MB extracted, constants read back and equal to `REPRODUCE.md` §13.2 – 13.3, no `PREV_SPACE`.
+Peak host memory 21 GB; `$WORK` 4.2 GB.
 
 ## What is not checked, and what the owner decides
 
 1. **The organizers' template.** Fetch `realpde_final_starting_kit_track2.zip` from the Files tab of the Track 2 page,
-   and the invitation e-mail. The package is then renamed and rearranged to their layout and `verify/job_verify.sh` is
-   run again on the result.
-2. **`TEAM` and `CONTACT`** in the manual.
-3. **`train_real/7575_0.h5`.** The data page says not to use it: it is a copy of `6300_0` (checked: `u` and `v`
-   identical). Nothing in this repository ever excluded it, so the eleven networks of record were trained with it, and
-   the manual says so in "Data". A re-training without it runs (checked) and is no longer the submitted method.
-4. **A full 400-epoch run of this exact package.** The recipes and the training code are those of the 09-25
-   re-training (+0.0006, `REPRODUCE.md` §12); the package itself was run at 2 epochs.
-5. **Their hardware.** Expect the reseeding spread, about 0.012 on the composite (`REPRODUCE.md` §7), and a `time` of
-   their own.
+   and the invitation e-mail. The branch is then rearranged to their layout and `verify/job_verify_branch.sh` run again.
+2. **`TEAM` and `CONTACT`** in `README.md`.
+3. **`train_real/7575_0.h5`.** The data page says not to use it (a copy of `6300_0`; checked). Nothing in the repository
+   ever excluded it, so the eleven networks of record were trained with it, and the manual says so under "Data".
+4. **A full 400-epoch run of the branch.** The recipes and the training code are those of the 09-25 re-training
+   (+0.0006); the branch was run at 2 epochs.
+5. **Pushing the branch** (`git push origin final-submission`) and sending the package.
 
 ## Files
 
 ```
 final_package/
-  README.md           this file
-  make_package.sh     assembles the package from fdac00b + allowlist + patches + overlay
-  allowlist.txt       the files of fdac00b that go in
-  patches/            applied on top of the commit
-  overlay/            run_track2.sh, README.md (the organizers' manual)
-  verify/             sandbox.sh (a third party's view of this machine), job_trace.sh, job_verify.sh
+  README.md                      this file
+  verify/sandbox.sh              a third party's view of this machine (bubblewrap)
+  verify/cpu_equiv.sh            old code vs new, bit for bit, on the CPU
+  verify/job_equiv.sh            old vs new on a GPU: training, CFD map, band, archive, gates
+  verify/job_verify_branch.sh    the branch in the sandbox: smoke, identity, without 7575_0
 ```

@@ -4,7 +4,8 @@ Forecast real PIV flow past a NACA4418 airfoil: 20 frames of velocity on a 32×6
 upper bound per element. CFD of the same airfoil is a training-side asset only.
 [Site](https://realpdecompetition.github.io/) · [Track 1 Sim2Real](https://www.codabench.org/competitions/17363/) ·
 [Track 2 LTTTA](https://www.codabench.org/competitions/17385/) · remote `github.com/clockj/AI4PDE` · branches `main`
-(release) and `qwu/dev` (working; merges to `main` go through a pull request).
+(release), `qwu/dev` (working; merges to `main` go through a pull request) and `final-submission` (orphan: the Track 2
+training package sent to the organizers, worktree `../code-finalsub`).
 
 @STATUS.md
 
@@ -16,7 +17,7 @@ and rules that only matter inside one directory in `.claude/rules/` (loaded when
 | need | read |
 |---|---|
 | re-create the method from the release | `REPRODUCE.md`, `reproduce.sh` (default target `final`; release tag `final-20260927`) |
-| the final submission: Track 2's training package for the organizers | `final_package/README.md` (`make_package.sh`, the manual in `overlay/`, the sandboxed checks in `verify/`) |
+| the final submission: Track 2's training package for the organizers | branch `final-submission` (worktree `../code-finalsub`); record and checks in `final_package/README.md`, `final_package/verify/` |
 | how local evaluation works and how the board corrects it | `EVALUATION.md` |
 | out-of-distribution reads (whole AoA or Re band held out, real package path) | `experiments/decision_20260928/ood/README.md` |
 | the Decision-phase campaign: criteria, every table, decisions | `experiments/decision_20260928/` (`PLAN.md`, `STATE.md`) |
@@ -158,6 +159,6 @@ Track_1/     instruments at top level: predict_board, compare_v9, ens_v9, kfold,
 Track_2/     submit/submission.py, build_t2.py, validate_t2.py, stream_eval.py, t2_common.py, r1_ref/, closed/
 experiments/ cross-track campaigns (sprint_20260927/, audit_20260927/, decision_20260928/ with ood/ the instrument)
 leaderboard/ board.jsonl, runs.jsonl, screen.jsonl, lb.py
-final_package/ the training package sent for the final evaluation: make_package.sh, allowlist.txt, patches/, overlay/, verify/
+final_package/ the record of the training package sent for the final evaluation (the package itself is branch final-submission)
 outside the repo: ../sub_candidates/ · ../handoffs/ · ../artifacts/
 ```

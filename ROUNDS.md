@@ -3555,3 +3555,25 @@ fitted on our twins and the organizers accept no fitted artefact.
 
 **Not done.** A 400-epoch run of the package (the recipes are those of the 09-25 retraining, +0.0006); the organizers'
 template; the team name. Nothing was sent.
+
+## 2026-10-06: the training package becomes a branch
+
+The owner asked for the training package as a new branch with no history, the code and comments reorganised, nothing
+of the past work in it, delivered to `workspace/realpde/code-finalsub`. Record: `final_package/README.md`.
+
+**The branch `final-submission`** (orphan, one commit, 19 files): `fdac00b`'s training code with every closed
+experiment's flag and branch removed (`unet/train.py` 255 lines against `train2.py`'s 1 691; the model file holds the
+two families that ship), the band fit with the shipped settings as constants (`band/`), the two shipped files byte for
+byte (`submission/`), a build that bakes the 19 constants into copies and reads them back (`build/build.py`), the
+gates without the board rule, and one entry point (`run_track2.sh`) with the eleven recipes written out.
+
+**Checked.** Old and new training code give bit-identical weights on the CPU for the three recipe families
+(`final_package/verify/cpu_equiv.sh`); on a GPU they differ at the level the old code differs from itself (F-FNO 1e-7,
+ViT 1e-2 … 3e-2 in two epochs: jobs 55454190, 55454404, 55454453). From the eleven checkpoints of record the new band
+code gives the old code's static band, dump, q and sigblend npz bit for bit, and `build.py` the uploaded archive, all
+nine files byte-identical; the gates pass. In the sandbox the branch runs from the released data to `RUN_TRACK2 OK`
+at 2 epochs, rebuilds the upload 9/9 from the checkpoints and band of record, and trains without `7575_0.h5`
+(job 55454191 on `a716913`; job 55454608 on `a0a36b9`, whose code is the delivered commit `9f3dd58`'s). Ascend was full; everything ran on Pitzer.
+
+**Not done.** The organizers' template (behind a login), `TEAM` / `CONTACT`, a 400-epoch run, the push, the sending.
+The tarball route of 10-05 is superseded and removed from `final_package/`.
