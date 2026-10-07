@@ -3607,6 +3607,6 @@ forward/backward), so `solution.py` runs one training per GPU over the GPUs it s
 or 48 h. `solution.train` at 6 epochs ran end to end to `TRAIN OK` (39 min: map, eleven trainings, band, archive,
 gates, nine files in `/output`); from the checkpoints and band of record the container rebuilds the upload **9/9
 byte-identical**; the band refitted on that card differs by ≤ 2.2e-4 in `base`. Three full 400-epoch runs from the
-final image (2 × A100, 1 × A100, 2 × V100) were submitted (jobs 7712238, 7712239, 55497770).
+final image (2 × A100, 1 × A100, 2 × V100) were submitted (jobs 7712670, 7712671, 55498053).
 
 **Not done.** Nothing was pushed or sent; the owner builds and pushes the image, uploads the zip and e-mails.

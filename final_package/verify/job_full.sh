@@ -24,8 +24,10 @@ for i in $(seq 1 90); do [ -f "$SIF" ] && grep -q "SIF_FINAL rc 0" "$S/logs/sif_
 [ -f "$SIF" ] || { echo "no SIF $SIF"; exit 1; }
 echo "node $(hostname)  $(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | tr '\n' ';')  cores $(nproc)  sif $SIF"
 sha256sum "$SIF" | cut -c1-16
-EX="apptainer exec --nv --containall --cleanenv --pwd /workspace -B $S/orgdata:/data:ro"
-nvidia-smi --query-gpu=index,timestamp,memory.used,utilization.gpu --format=csv -l 60 > "$W/gpu.csv" 2>&1 &
+# --cleanenv drops Slurm's CUDA_VISIBLE_DEVICES and --nv binds every GPU of the node: pass the allocation in explicitly.
+echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}"
+EX="apptainer exec --nv --containall --cleanenv --env CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0} --pwd /workspace -B $S/orgdata:/data:ro"
+nvidia-smi -i "${CUDA_VISIBLE_DEVICES:-0}" --query-gpu=index,timestamp,memory.used,utilization.gpu --format=csv -l 60 > "$W/gpu.csv" 2>&1 &
 NVPID=$!
 echo "=== TRAIN  $(date)"
 TV=""; [ -x /usr/bin/time ] && TV="/usr/bin/time -v"

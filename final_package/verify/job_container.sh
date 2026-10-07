@@ -33,8 +33,9 @@ echo "package: $(git -C "$BR" rev-parse --short HEAD) $(git -C "$BR" status --sh
 ls "$S/orgdata/train_real" | wc -l; ls "$S/orgdata/train_sim" | wc -l
 BIND="-B $S/orgdata:/data:ro"
 [ "${CODE:-bind}" = bind ] && BIND="$BIND -B $BR:/workspace:ro"
-EX="apptainer exec --nv --containall --cleanenv --pwd /workspace $BIND"
-nvidia-smi --query-gpu=timestamp,memory.used,utilization.gpu --format=csv -l 30 > "$W/gpu.csv" 2>&1 &
+echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}"
+EX="apptainer exec --nv --containall --cleanenv --env CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0} --pwd /workspace $BIND"
+nvidia-smi -i "${CUDA_VISIBLE_DEVICES:-0}" --query-gpu=timestamp,memory.used,utilization.gpu --format=csv -l 30 > "$W/gpu.csv" 2>&1 &
 NVPID=$!
 
 echo "=== B: solo, 6 epochs, member_ffno_s1 then member_vit_c ===  $(date)"

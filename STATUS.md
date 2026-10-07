@@ -28,7 +28,7 @@ The only file that changes after a board result. Keep it under 40 lines; detail 
 2. **The zip** (`git archive` of the branch) on Google Drive; **the e-mail** (text in the record).
 3. **The 24 h limit on one GPU cannot be met** (measured: ~37 h; concurrency on one card gains nothing). The e-mail
    asks for two GPUs or 48 h; `solution.py` uses every GPU it sees. Three full 400-epoch rehearsals from the final
-   image are running (jobs 7712238 2×A100, 7712239 1×A100, 55497770 2×V100): expected 10-08.
+   image are running (jobs 7712670 2×A100, 7712671 1×A100, 55498053 2×V100): expected 10-08.
 4. **Push** `final-submission` and `qwu/dev`; agents never push.
 
 ## Settled
