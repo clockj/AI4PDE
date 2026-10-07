@@ -650,10 +650,11 @@ end-to-end `20260922-111450-*-ilse-repro-phase3-build`.
 
 ### 9.1 What breaks on any machine but the author's — fix these before handing over
 
-*Status 2026-10-05, checked in the tree and in a sandbox where none of the author's directories exist
-(`final_package/verify/sandbox.sh`, job 7681561): item 1 is fixed in the code, item 2 is narrower than written and is
-removed from the hand-over package, item 7 was found by that sandbox and is fixed. Items 3 – 5 are handled by
-`reproduce.sh` or by one environment variable each, which `final_package/overlay/run_track2.sh` sets.*
+*Status 2026-10-05, checked in the tree and in a sandbox where none of the author's directories exist (job
+7681561): item 1 is fixed in the code, item 2 is narrower than written and is removed from the hand-over package,
+item 7 was found by that sandbox and is fixed. Items 3 – 5 are handled by `reproduce.sh` or by one environment
+variable each. The hand-over itself (branch `final-submission`, 10-07) is a Docker image whose code reads `/data`
+and writes `/output` and nothing else; none of these items applies to it (`final_package/README.md`).*
 
 1. ~~**`reproduce.sh` defaults `PY` to the author's conda env** (`/users/PAS1187/qwu/.conda/envs/realpde/bin/python`,
    line 40). Anywhere else it dies at `PREFLIGHT FAILED: train2.py` before doing anything.~~ **Fixed in the code
@@ -669,8 +670,8 @@ removed from the hand-over package, item 7 was found by that sandbox and is fixe
    dereferences or drops symlinks — `tar -h`, `zip`, a Windows checkout, some file-copy UIs — leaves a real file or
    a text stub, and then **Track 1 builds while Track 2 refuses** with `submit/_fno.py is not Track 1's _fno.py;
    the tracks would diverge`. Recreate it before building: `ln -sfn ../../Track_1/submit_fno/_fno.py
-   Track_2/submit/_fno.py`. The hand-over package (`final_package/`) carries no symlink at all; its entry point
-   creates this one.
+   Track_2/submit/_fno.py`. The hand-over package (branch `final-submission`) carries no symlink at all and does
+   not use these build scripts.
 3. **`validate_strict.py` needs `Track_1/val_unseen.npz` at GATE time**, not only for scoring. Build the
    validation sets *before* `reproduce.sh` with `(cd Track_1 && $PY make_val.py --data "$RPDE/train_real/train_real")`
    (it writes `val_{seen,unseen}.npz` into the current directory), or the Track 1 gate fails with

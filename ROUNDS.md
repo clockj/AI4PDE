@@ -3577,3 +3577,36 @@ at 2 epochs, rebuilds the upload 9/9 from the checkpoints and band of record, an
 
 **Not done.** The organizers' template (behind a login), `TEAM` / `CONTACT`, a 400-epoch run, the push, the sending.
 The tarball route of 10-05 is superseded and removed from `final_package/`.
+
+## 2026-10-07: the organizers' kit, and the package in its shape
+
+The owner downloaded the Final-phase starting kit (`realpde_final_starting_kit_track2.zip`) and showed the invitation
+e-mail of 09-29. They fix what is sent (`FINAL_SUBMISSION.md`): a **Docker image** (linux/amd64, the kit's Dockerfile on
+`w3nhao/realpde-track2@sha256:f07d1d68…`) in a private Docker Hub repository readable by `w3nhao`; a **zip on Google
+Drive** with the Dockerfile, `solution.py`, the code, `README.md`, `METHOD.md` (their templates) and the training logs of
+the Codabench run; an **e-mail** with team, username, track, image + digest, **the submission id the package reproduces**
+and the link, by 2026-10-09 24:00 UTC. The interface is `solution.train(data_dir, output_dir, device)` /
+`solution.get_ttt_model(output_dir, device)`; `/data` is read-only and holds `train_real` **without `7575_0.h5`**;
+one A800 80 GB, 16 cores, 128 GB, **24 hours** (more on request with a reason). The submission id is **948792**
+(public leaderboard API `/api/leaderboards/19282/`, owner `xtgg233`, final 82.0555530033).
+
+**The branch was reshaped** (record: `final_package/README.md`): `solution.py` runs the eleven trainings several at a
+time on the one GPU (in sequence they are ~40 GPU-hours on an A100-PCIe), then the band, the archive, the gates, and
+unpacks the archive into `output_dir`; the kit's Dockerfile verbatim (the base image already holds every package);
+`unet/data.py` accepts the organizers' flat layout and always skips `7575_0`; the organizers' `scoring.py` vendored
+(`RPDE_KIT` gone); README and METHOD from the templates; `logs/` the eleven training logs of record (found by matching
+each checkpoint's `config` and mtime: the F-FNOs on Pitzer V100S-32GB, 4.85 / 4.37 h; the ViTs on Ascend A100-40GB,
+2.00 / 3.81 / 3.43 / 1.82 h; 43.6 GPU-hours; torch 2.2.2+cu121 throughout). `run_track2.sh` and `environment.yml` removed.
+
+**Checked** (`final_package/verify/job_container.sh`: the image built with podman on a0108 from the branch's Dockerfile,
+converted to a SIF, run with apptainer as the organizers run docker — `/data` read-only in their layout, `/output`,
+1 GPU, 16 cores, 128 GB, environment cleared): one training alone takes 33.4 s/epoch (F-FNO) and 33.6 s/epoch (ViT with
+the CFD term) on an A100-PCIE-40GB, i.e. **3.7 h per network and ~37 h for the eleven, over the 24-hour limit**; four
+or six trainings at once on the one GPU gain nothing (133 s/epoch each: the step is GPU-bound, 73 of 84 ms in the
+forward/backward), so `solution.py` runs one training per GPU over the GPUs it sees and the e-mail asks for two GPUs
+or 48 h. `solution.train` at 6 epochs ran end to end to `TRAIN OK` (39 min: map, eleven trainings, band, archive,
+gates, nine files in `/output`); from the checkpoints and band of record the container rebuilds the upload **9/9
+byte-identical**; the band refitted on that card differs by ≤ 2.2e-4 in `base`. Three full 400-epoch runs from the
+final image (2 × A100, 1 × A100, 2 × V100) were submitted (jobs 7712238, 7712239, 55497770).
+
+**Not done.** Nothing was pushed or sent; the owner builds and pushes the image, uploads the zip and e-mails.

@@ -1,88 +1,133 @@
-# The final submission: Track 2's training package (2026-10-06)
+# The final submission: Track 2's training package (2026-10-07)
 
 What goes to the organizers for the final evaluation, where it lives, and what was checked. The owner sends it;
 agents never do (`CLAUDE.md` rule 1).
 
 ## What the organizers ask for
 
-Read on 2026-10-05 from the public competition metadata (`https://www.codabench.org/api/competitions/17385/`, no login):
+The invitation e-mail (2026-09-29, "Dear xtgg233 … invited to the final evaluation … in Track 2") and
+`FINAL_SUBMISSION.md` of the Final-phase starting kit (`../realpde_final_starting_kit_track2.zip`, downloaded 10-07;
+sha256 `f09a888b…`), which also holds the `Dockerfile`, `README_TEMPLATE.md`, `METHOD_TEMPLATE.md` and a toy
+`solution.py`. By **2026-10-09 24:00 UTC**:
 
-* **FAQ, "How and when do finalists submit their training code?"** *"Invited teams receive an email from us. Each
-  invited team sends one training package for each track it is invited to, by **9 October 2026, 24:00 UTC**. The
-  templates and the full specification are in the starting kit of the Final Decision Phase, listed on the Files tab."*
-* **FAQ, on fairness at retraining:** *"organizers hold only the released training data, so we accept training code
-  only: no new simulation data, no code that runs new simulations from scratch, no model weights, and no pretrained
-  models from other sources."*
-* **The organizers' clarification of 2026-10-04:** the submitted package is evaluated on the development set too, and
-  that result must reproduce the leaderboard row, or the team may be disqualified.
-* **The Final Decision Phase on Codabench is the organizers' own**: "Organizer-controlled final verification phase on
-  private test data", open 2026-09-28 00:00 – 09:00 UTC, now `Previous`, on both tracks. No phase accepts an upload,
-  so no package can acquire a leaderboard row any more.
-* **The template is not public.** `realpde_final_starting_kit_track2.zip` ("T2 Final Starting Kit v1", 5 649 bytes,
-  uploaded 2026-09-28) needs a Codabench login; it is not on this machine. **Until the owner fetches it, the layout of
-  the package is ours, not theirs.**
+1. **A Docker image** (linux/amd64) built from the kit's Dockerfile (`FROM w3nhao/realpde-track2@sha256:f07d1d68…`,
+   `WORKDIR /workspace`, `COPY . /workspace`), pushed to a **private Docker Hub repository with read access for the
+   account `w3nhao`**; named with its digest in the e-mail.
+2. **A zip on Google Drive** with the same Dockerfile, `solution.py`, the code, a `README.md` and a `METHOD.md` (their
+   templates); they review the code from it and rebuild the image from it if the pull fails. The README is to be
+   accompanied by the log of the training run behind the Codabench submission.
+3. **An e-mail** to realpde-competition@googlegroups.com: team name, Codabench username, track, image name and
+   digest, **the Codabench submission id the package reproduces**, the Drive link. A request for more resources, with
+   its reason, goes in the same e-mail.
 
-Track 1 finished #20 and is not invited; there is nothing to send for it.
+The interface: `/workspace/solution.py` with `train(data_dir, output_dir, device)` and
+`get_ttt_model(output_dir, device)` (the Codabench contract with `output_dir` in place of the submission directory).
+They run `docker run --rm --network none --gpus '"device=0"' --shm-size 32g -v …:/data:ro -v …:/output IMAGE python
+-c "import solution; solution.train('/data', '/output', 'cuda')"`, then their own script imports `solution` from
+`/workspace`, loads the model from `/output` and runs the private test set, both without network. `/data` holds
+`train_sim/`, **`train_real/` without `7575_0.h5`**, and `mean_std_real.pt`. **One A800 80 GB, 16 cores, 128 GB,
+24 hours** (more on request). The earlier facts (10-05, public API): the submitted package is also scored on the
+development set and must reproduce the leaderboard row.
+
+**The Codabench submission id is 948792** (`https://www.codabench.org/api/leaderboards/19282/`, owner `xtgg233`,
+created 2026-09-27 23:48 UTC, final_score 82.0555530033 = the row of record). The Codabench username is `xtgg233`.
 
 ## What is sent: branch `final-submission`
 
-The method of the leaderboard row (T2R24, `T2_MRGP2_track2_MRGP2.zip`, sha256 `1aa2896f…`, final 82.055553), as
-**training code only, reorganised**, on the orphan branch **`final-submission`** (no history in common with `main`),
-checked out as the worktree **`../code-finalsub`**. One commit; 19 files; no checkpoint, no band, no symlink, no
-record of the development.
+The method of the leaderboard row (T2R24, `T2_MRGP2_track2_MRGP2.zip`, sha256 `1aa2896f…`), as training code in
+the kit's shape, on the orphan branch **`final-submission`** (worktree **`../code-finalsub`**), reorganised from
+`fdac00b`'s code on 10-06 and fitted to the kit on 10-07:
 
 | | |
 |---|---|
-| `run_track2.sh` | the entry point: `RPDE`, `RPDE_KIT`, `WORK`, one command (or one stage per job); the eleven recipes written out |
-| `unet/` | `data.py`, `models_alt.py` (F-FNO, ViT, `build`), `simreal.py`, `train.py`: the training code of `fdac00b`'s `Track_1/unet/` with every closed experiment's flag and branch removed, the comments rewritten |
-| `band/` | `make_val.py`, `fit_band.py`, `dump_twins.py`, `sigma_band.py`, `sps.py`: the band fit, with the shipped settings as constants |
-| `submission/` | `submission.py`, `_fno.py`: **byte-identical to `fdac00b`'s tree files**; the build bakes the constants into copies |
-| `build/` | `build.py` (the 19 constants, the FFNO_PATH block and SIGPOW, the int8 packing, the archive, every constant read back), `validate.py`, `causal_check.py`, `stream.py` |
-| `README.md` | the organizers' manual; `TEAM` and `CONTACT` are placeholders |
+| `Dockerfile` | the kit's, verbatim apart from a comment: the base image already holds torch 2.2.2 / numpy 1.26.4 / h5py 3.16 / scipy, nothing is installed |
+| `solution.py` | `train`: the eleven recipes (`RECIPES`), the CFD map once per table, the trainings **`JOBS` at a time on the one GPU** (longest first, `--ckpt-every 20 --resume`), the band, the archive, the two gates, the archive unpacked into `output_dir`; `get_ttt_model`: the archive's own on that directory |
+| `unet/` | the training code of 10-06; `data.py` now resolves the organizers' flat layout and the archives' nested one (`release_dirs`) and always skips `7575_0` (`DROP`) |
+| `band/` | the band fit; `scoring.py` is the organizers' Track 1 kit v9 file, vendored unchanged (`RPDE_KIT` is gone) |
+| `submission/` | `submission.py`, `_fno.py`: byte-identical to `fdac00b`'s tree files, as before |
+| `build/` | `build.py`, `validate.py`, `causal_check.py`, `stream.py` (`RPDE_REAL`) |
+| `logs/` | the eleven training logs behind submission 948792 (found 10-07; see below) |
+| `README.md`, `METHOD.md` | the kit's templates filled in |
 
-`unet/` keeps that name and `models_alt.py` its name because the shipped `_fno.py` looks for `../unet/models_alt.py`
-to rebuild an F-FNO through the training definition (the band fit runs that path, the evaluation container the
-vendored copy). The entry point always refits the band (`fit_band.py` → `dump_twins.py` → `sigma_band.py`), because a
-band is fitted on our twins and the organizers accept no fitted artefact; the `SIGPOW` literal of the built
-`submission.py` is therefore the only line that differs from the upload's.
+`run_track2.sh` and `environment.yml` are gone (the container is the environment). The branch's `README.md` says
+what differs from the submission: `7575_0` absent (their mount), the `SIGPOW` exponents refitted, everything else a
+literal of `build/build.py`.
 
-The earlier route (a curated cut of `fdac00b` assembled by `make_package.sh`, verified 10-05 by jobs 7681561,
-7681858, 7682454) is superseded by the branch and was removed from this directory on 10-06.
+**The training runs of record** (the checkpoints `Track_1/unet/{ffno_all_w40l8_sim_s1..4, arch_vit_all_s1,
+arch_vit_all_cmb3sim_s3, p2_ffno_l8_sim_s1..3, arch_vit_d384, arch_vit_cmb3sim}.pth`): the seven F-FNOs on Pitzer
+V100S-32GB (jobs 54405441/2, 54408222, 54408272; 54403827/8, 54405127; 4.85 h per member, 4.37 h per twin), the four
+ViTs on Ascend A100-40GB (jobs 7199859, 7252310, 7204136, 7142610; 2.00 / 3.81 / 3.43 / 1.82 h), all with
+`~/.conda/envs/realpde` (torch 2.2.2+cu121); 43.6 GPU-hours. Logs: scratch `members/ffno_sim/*.log`,
+`screen/p2sim/*.log`, `logs/r20/r20d_vit.log`, `logs/r24/r24b_vit_s3.log`, `logs/r21/r21c_vit.log`; `arch_vit_d384`'s
+job piped the training through `tail -3`, so only its last three lines exist (`logs/slurm-7142610.out`). Every
+checkpoint's `config` matches its log's; the recipes are the branch's.
 
-## What was checked (2026-10-06)
+## What was checked
 
-| check | where | result |
+10-06 (branch of that day, `run_track2.sh`): old vs new training code bit-identical on the CPU (`verify/cpu_equiv.sh`,
+still valid: it runs `unet/train.py`); the band outputs and the archive of record 9/9 byte-identical from the
+checkpoints of record (job 55454190); the branch end to end at 2 epochs in a bubblewrap sandbox (jobs 55454191,
+55454608).
+
+10-07 (the kit's shape), `verify/job_container.sh`: the image built with podman from the branch's Dockerfile,
+converted to a SIF, run with apptainer the way the organizers run docker (`--containall --cleanenv`, `/data` read-only
+in their layout without `7575_0`, `/output` writable, 1 GPU, 16 cores, 128 GB):
+
+| check | job | result |
 |---|---|---|
-| the baked `submission.py` and `_fno.py` against the uploaded archive's | login node, `build/build.py:bake` with the SIGPOW of the band of record | **byte-identical** (63 835 and 149 823 bytes) |
-| old training code (`fdac00b`) vs new, deterministic arithmetic | `verify/cpu_equiv.sh`: CPU, 2 epochs, one window per trajectory, same seed, three recipes (F-FNO twin with the CFD term, ViT twin without, ViT member with) | **bit-identical weights** for all three, and the same checkpoint fields |
-| the same on a GPU | job 55454190 (Pitzer V100), 2 epochs on the full data | F-FNO 4e-7, ViT 1e-2 apart — and the OLD code against itself on the same card: F-FNO 1.2e-7 in 75 of 79 tensors (job 55454404), ViT 3.1e-2 in 111 of 112 tensors (job 55454453). GPU kernels are not deterministic run to run; the CPU test is the equivalence test |
-| the CFD map | job 55454190 | old and new caches **bit-identical** (all-data and twin tables) |
-| the band from the eleven checkpoints of record, old vs new | job 55454190 | static band, twin dump, q = (0.48465, 0.49071) and the sigblend npz all **bit-identical** between the two codes (the V100 re-fit differs from the committed A100 band by up to 8e-4 in `base`, for both codes alike) |
-| the archive from the checkpoints and the band of record | job 55454190 (V100) and the sandbox below | **all 9 files byte-identical to the upload** |
-| the gates on that archive | job 55454190 | `SUBMITTABLE`, `CAUSALITY OK` |
-| the branch as `git archive` would send it, in `verify/sandbox.sh` (none of our directories visible) | job 55454191 (Pitzer V100), commit `a716913` | `run_track2.sh` from the released data at 2 epochs to `RUN_TRACK2 OK` in 30 min; 9/9 byte-identical with the checkpoints and band of record; two stages trained without `7575_0.h5` |
-| the final code, commit `a0a36b9` (= `9f3dd58`, the delivered commit, which differs only in `README.md`) | job 55454608 (Pitzer V100) | `RUN_TRACK2 OK` in 29 min, 9/9 byte-identical, two stages without `7575_0.h5` |
+| the image: `podman build` from the branch's Dockerfile on a0108, `python -c "import solution"` inside it | login node | builds; base image holds torch 2.2.2+cu121, numpy 1.26.4, h5py 3.16.0, scipy 1.15.3, Python 3.10.14 |
+| **the time budget**: one training alone, 6 epochs, inside the image on an A100-PCIE-40GB | 7711451 (B) | F-FNO **33.4 s/epoch** (3.7 h at 400), ViT with the CFD term **33.6 s/epoch** (3.7 h); peak GPU memory 2.5 / 2.6 GiB; the first epoch's loss identical on the V100 (Pitzer 55496932: 46 s/epoch) |
+| four trainings at once on the one GPU | 7711451 (A) | 133 s/epoch each = **no throughput gain** (the step is GPU-bound: 73 ms of 84 ms per step is the forward/backward, profiling job 7711527); six at once (7711492) the same. Hence `JOBS = 1` per GPU, the trainings spread over the GPUs seen, and **the e-mail asks for two GPUs or 48 h**: ~37 h on one A100, ~18 h on two |
+| `solution.train('/data', '/output', 'cuda')` end to end at 6 epochs: map, 11 trainings, windows, band, archive, both gates, unpack | 7711451 (A) | **`TRAIN OK`** in 39 min; `/output` holds the nine files + the archive; SUBMITTABLE, CAUSALITY OK; peak host RSS 5.3 GB (the map); 81 real trajectories (no `7575_0`) |
+| the band and the archive from the eleven checkpoints of record, inside the image | 7711451 (D) | **all 9 files byte-identical to the upload** with the band of record; the band refitted in the container differs from the committed one by ≤ 2.2e-4 in `base` (sigma_ref, p, clips bit-identical; SIGPOW 0.2427/0.2455 vs 0.2423/0.2454 — GPU kernels, as on 10-06) |
+| `solution.get_ttt_model('/output', 'cuda')` through the organizers' evaluation loop (`verify/eval_output.py`, the T2 kit's `local_eval` stream + its `scoring.py`) | 7711492 (C) | @@C@@ |
+| the full run, 400 epochs, from the final SIF (commit 952d1e1): 2 × A100 (7712238), 1 × A100 (7712239), 2 × V100 (Pitzer 55497770), then the evaluation step on `/output` and on the archive of record | pending | @@FULL@@ |
 
-Peak host memory 21 GB; `$WORK` 4.2 GB.
+## What the owner does
 
-## What is not checked, and what the owner decides
+1. **Build and push the image** (on a0108, where `docker` is rootless podman with its storage on `/tmp`):
+   ```bash
+   cd ~/workspace/realpde/code-finalsub
+   podman build --format docker --platform linux/amd64 -t docker.io/<dockerhub-user>/realpde-t2:final .
+   podman login docker.io
+   podman push --digestfile /tmp/realpde_t2_digest.txt docker.io/<dockerhub-user>/realpde-t2:final
+   cat /tmp/realpde_t2_digest.txt        # sha256:… — the digest that goes into the e-mail
+   ```
+   On hub.docker.com: make the repository **private** (Settings → Visibility) and add **`w3nhao`** as a collaborator
+   with read access (Collaborators). If the plan does not allow collaborators on a private repository, say so in the
+   e-mail: they rebuild from the zip.
+2. **The zip**: `git -C ~/workspace/realpde/code-finalsub archive --format=zip -o ~/workspace/realpde/artifacts/xtgg233_track2_training_package.zip HEAD`,
+   upload to Google Drive, share "anyone with the link can view".
+3. **The e-mail** (reply to the invitation thread, to realpde-competition@googlegroups.com):
 
-1. **The organizers' template.** Fetch `realpde_final_starting_kit_track2.zip` from the Files tab of the Track 2 page,
-   and the invitation e-mail. The branch is then rearranged to their layout and `verify/job_verify_branch.sh` run again.
-2. **`TEAM` and `CONTACT`** in `README.md`.
-3. **`train_real/7575_0.h5`.** The data page says not to use it (a copy of `6300_0`; checked). Nothing in the repository
-   ever excluded it, so the eleven networks of record were trained with it, and the manual says so under "Data".
-4. **A full 400-epoch run of the branch.** The recipes and the training code are those of the 09-25 re-training
-   (+0.0006); the branch was run at 2 epochs.
-5. **Pushing the branch** (`git push origin final-submission`) and sending the package.
+   > Subject: RealPDE final evaluation — training package of team xtgg233 (Track 2)
+   >
+   > Team name: xtgg233. Codabench username: xtgg233. Track: 2 (LTTTA).
+   > Image: `<dockerhub-user>/realpde-t2@sha256:<digest>` (private; `w3nhao` has read access).
+   > Codabench submission id this package reproduces: 948792 (final_score 82.0555530033, 2026-09-27).
+   > Google Drive: `<link>` — the Dockerfile, solution.py, the code, README.md, METHOD.md, and under `logs/` the
+   > eleven training logs of the run behind submission 948792.
+   >
+   > Resources: we ask for **two GPUs, or 48 hours on one**. The package trains eleven networks (six members and
+   > five twins for the interval band); they take about 37 GPU-hours on an A100 (3.7 h each for nine of them,
+   > measured inside this image), and the training step is GPU-bound, so they cannot share one card. `train()`
+   > spreads them over every GPU the container sees: with `--gpus '"device=0,1"'` it finishes in about 18 – 19
+   > hours; on one GPU it needs about 37 – 38 hours. 16 cores and 128 GB are enough either way (peak host memory
+   > 5.3 GB per process, 3.5 GB of GPU memory per training).
+   > One difference from the submitted run is unavoidable and is stated in the README: our networks had been trained
+   > with `train_real/7575_0.h5` present (the duplicate of `6300_0`), which your mount does not contain.
+   >
+   > Contact: zclock33@outlook.com (xtgg233).
+
+4. **Push** `final-submission` and `qwu/dev`; agents never push.
 
 ## Files
 
 ```
 final_package/
   README.md                      this file
-  verify/sandbox.sh              a third party's view of this machine (bubblewrap)
+  verify/job_container.sh        the organizers' run (apptainer from the podman-built image): timing, pipeline, evaluation, identity
+  verify/eval_output.py          the organizers' evaluation step: solution.get_ttt_model('/output') through the kit's local_eval loop
   verify/cpu_equiv.sh            old code vs new, bit for bit, on the CPU
-  verify/job_equiv.sh            old vs new on a GPU: training, CFD map, band, archive, gates
-  verify/job_verify_branch.sh    the branch in the sandbox: smoke, identity, without 7575_0
+  verify/job_equiv.sh            old vs new on a GPU: training, CFD map, band, archive, gates (10-06)
 ```
