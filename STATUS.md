@@ -23,9 +23,10 @@ The only file that changes after a board result. Keep it under 40 lines; detail 
 
 ## Open before the package is sent (the owner sends it)
 
-1. **Build and push the image** (podman on a0108, commands in `final_package/README.md`), private repo, `w3nhao`
-   read access, the digest.
-2. **The zip** (`git archive` of the branch) on Google Drive; **the e-mail** (text in the record).
+1. ~~Build and push the image~~ **done 10-08 05:51 UTC**: `williamqwu/realpde-t2@sha256:f5319731…` (public, not
+   private; the manifest's layers verified identical to the image of 952d1e1 that the rehearsals run).
+2. **The zip** (`git archive` of the branch) on Google Drive; **the e-mail** (text in the record, image and digest
+   filled in; the Drive link remains).
 3. **The 24 h limit on one GPU cannot be met** (measured: ~37 h; concurrency on one card gains nothing). The e-mail
    asks for two GPUs or 48 h; `solution.py` uses every GPU it sees. Three full 400-epoch rehearsals from the final
    image are running (jobs 7712670 2×A100, 7712671 1×A100, 55498053 2×V100): expected 10-08.

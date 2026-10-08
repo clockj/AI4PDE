@@ -85,17 +85,16 @@ in their layout without `7575_0`, `/output` writable, 1 GPU, 16 cores, 128 GB):
 
 ## What the owner does
 
-1. **Build and push the image** (on a0108, where `docker` is rootless podman with its storage on `/tmp`):
-   ```bash
-   cd ~/workspace/realpde/code-finalsub
-   podman build --format docker --platform linux/amd64 -t docker.io/<dockerhub-user>/realpde-t2:final .
-   podman login docker.io
-   podman push --digestfile /tmp/realpde_t2_digest.txt docker.io/<dockerhub-user>/realpde-t2:final
-   cat /tmp/realpde_t2_digest.txt        # sha256:… — the digest that goes into the e-mail
-   ```
-   On hub.docker.com: make the repository **private** (Settings → Visibility) and add **`w3nhao`** as a collaborator
-   with read access (Collaborators). If the plan does not allow collaborators on a private repository, say so in the
-   e-mail: they rebuild from the zip.
+1. **Build and push the image** — **done 2026-10-08 05:51 UTC**: the image built on 10-07 from commit 952d1e1
+   (`localhost/xtgg233/realpde-t2:final`, id `37b3c54ea3e5`, the one the SIF of the rehearsals was converted from) was
+   tagged and pushed as **`docker.io/williamqwu/realpde-t2:final`**, digest
+   **`sha256:f5319731c4bf043f56a7e3a5dff2577bf439e26553ec16ff23f1580d5e83e758`** (`/tmp/realpde_t2_digest.txt`).
+   Verified from the registry anonymously (`registry-1.docker.io/v2/williamqwu/realpde-t2/manifests/<digest>`): a
+   docker v2 manifest, linux/amd64, 7 layers, 4.05 GB, config = image id `37b3c54ea3e5`, the seven `diff_ids`
+   identical to the local image's. The owner made the repository **public** rather than private with `w3nhao` as a
+   collaborator; `hub.docker.com/v2/repositories/williamqwu/realpde-t2/` reports `is_private: false`. (How it was done,
+   on a0108 where `docker` is rootless podman: `podman build --format docker --platform linux/amd64`, `podman login
+   docker.io`, `podman tag`, `podman push --digestfile …`.)
 2. **The zip**: `git -C ~/workspace/realpde/code-finalsub archive --format=zip -o ~/workspace/realpde/artifacts/xtgg233_track2_training_package.zip HEAD`,
    upload to Google Drive, share "anyone with the link can view".
 3. **The e-mail** (reply to the invitation thread, to realpde-competition@googlegroups.com):
@@ -103,7 +102,8 @@ in their layout without `7575_0`, `/output` writable, 1 GPU, 16 cores, 128 GB):
    > Subject: RealPDE final evaluation — training package of team xtgg233 (Track 2)
    >
    > Team name: xtgg233. Codabench username: xtgg233. Track: 2 (LTTTA).
-   > Image: `<dockerhub-user>/realpde-t2@sha256:<digest>` (private; `w3nhao` has read access).
+   > Image: `williamqwu/realpde-t2@sha256:f5319731c4bf043f56a7e3a5dff2577bf439e26553ec16ff23f1580d5e83e758`
+   > (tag `williamqwu/realpde-t2:final`; linux/amd64; the repository is public, so no collaborator is needed).
    > Codabench submission id this package reproduces: 948792 (final_score 82.0555530033, 2026-09-27).
    > Google Drive: `<link>` — the Dockerfile, solution.py, the code, README.md, METHOD.md, and under `logs/` the
    > eleven training logs of the run behind submission 948792.
