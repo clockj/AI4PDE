@@ -3610,3 +3610,25 @@ byte-identical**; the band refitted on that card differs by ≤ 2.2e-4 in `base`
 final image (2 × A100, 1 × A100, 2 × V100) were submitted (jobs 7712670, 7712671, 55498053).
 
 **Not done.** Nothing was pushed or sent; the owner builds and pushes the image, uploads the zip and e-mails.
+
+## 2026-10-08: the full rehearsal passes; the image is on Docker Hub
+
+The owner tagged and pushed the image built on 10-07 from commit 952d1e1: **`williamqwu/realpde-t2@sha256:f5319731c4bf…`**
+(10-08 05:51 UTC, linux/amd64, 4.05 GB, the repository public rather than private). The registry's manifest was read
+anonymously: its config is the local image id `37b3c54ea3e5` and its seven `diff_ids` are the local image's — the same
+bytes the rehearsals run (`img/t2_final.sif` was converted from that image).
+
+**The full run on 2 × A100-PCIE-40GB (job 7712670, `final_package/verify/job_full.sh`): `TRAIN OK` in 18.50 h** (10-07
+08:51 → 10-08 03:21 EDT) — the CFD map in 3 min, the eleven trainings one per GPU (F-FNO members 3.74–3.79 h, twins
+3.37–3.42 h, ViT-c 3.76 / 3.36 h, ViT-p 1.96 / 1.76 h), the windows, the band (q = [0.4804, 0.4906]; SIGPOW 0.2402 / 0.2453
+against 0.2423 / 0.2454 of record), the archive, SUBMITTABLE, CAUSALITY OK; 3551 MiB per card at 89 % utilisation, host
+RSS 5.25 GB, 2.3 GB left under `/output`. Every final loss equals the log of record to +0.3–0.5 % (81 real trajectories
+instead of 82), and the same recipe ends at the same loss to 1e-5 on A100 ×2, A100 ×1 and V100 ×2. **The organizers'
+evaluation step on the rebuilt `/output` and on the archive of record, same eight held-out trajectories, same loop:
+rel 97.029 / 97.031, tke 86.538 / 86.574, mvpe 97.684 / 97.681, sps 59.967 / 59.985, coverage 0.917 / 0.918, 3.75 / 3.69
+ms per step.** The statements of the README and the e-mail (18–19 h on two GPUs, 3.5 GB of GPU memory, 5.3 GB of host
+memory) hold as written; nothing in the branch changes. The 1 × A100 (7712671) and 2 × V100 (55498053) copies finish
+later on 10-08.
+
+The pushes of `final-submission` (a force push over the 10-06 commit `9f3dd58`) and of `qwu/dev` (not yet on the remote)
+are the owner's: the session's permission policy refused both.

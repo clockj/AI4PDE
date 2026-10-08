@@ -28,8 +28,10 @@ The only file that changes after a board result. Keep it under 40 lines; detail 
 2. **The zip** (`git archive` of the branch) on Google Drive; **the e-mail** (text in the record, image and digest
    filled in; the Drive link remains).
 3. **The 24 h limit on one GPU cannot be met** (measured: ~37 h; concurrency on one card gains nothing). The e-mail
-   asks for two GPUs or 48 h; `solution.py` uses every GPU it sees. Three full 400-epoch rehearsals from the final
-   image are running (jobs 7712670 2×A100, 7712671 1×A100, 55498053 2×V100): expected 10-08.
+   asks for two GPUs or 48 h; `solution.py` uses every GPU it sees. **The full rehearsal from the pushed image on
+   2 × A100 (7712670) passed 10-08 03:21 EDT: `TRAIN OK` in 18.50 h, and the organizers' evaluation step on the rebuilt
+   output gives rel 97.03 / tke 86.54 / mvpe 97.68 / sps 59.97 vs 97.03 / 86.57 / 97.68 / 59.99 for the archive of
+   record on the same held-out trajectories.** The 1 × A100 (7712671) and 2 × V100 (55498053) copies finish 10-08.
 4. **Push** `final-submission` and `qwu/dev`; agents never push.
 
 ## Settled
