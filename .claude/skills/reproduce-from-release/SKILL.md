@@ -67,3 +67,20 @@ member takes about 4 h 50 min there.
 
 `RPDE_REPRO_EPOCHS=2 RPDE_REPRO_SEEDS=1 RPDE_REPRO_FITBAND=1` runs every stage in about half a GPU-hour and proves the
 pipeline, not the method. Its archives are not packages.
+
+## The package the organizers retrain (2026-10-07)
+
+The hand-over for the final evaluation is the orphan branch `final-submission` (worktree `../code-finalsub`) in the
+shape of the Final-phase starting kit: the kit's `Dockerfile` on the organizers' Track 2 image, `solution.py` with
+`train(data_dir, output_dir, device)` (the eleven recipes, several trainings at a time on the one GPU, the band, the
+archive, the gates, the archive unpacked into `output_dir`) and `get_ttt_model(output_dir, device)`; `fdac00b`'s
+training, band and build code reorganised under `unet/`, `band/`, `build/`; the two shipped files byte-identical;
+`README.md` and `METHOD.md` from the kit's templates; `logs/` the training logs of record (record:
+`final_package/README.md`). After any change to it: `final_package/verify/cpu_equiv.sh` (old code vs new, bit for
+bit, on the CPU — the GPU is not deterministic run to run) and `final_package/verify/job_container.sh` (the image
+built with podman from the branch, converted to a SIF, run with apptainer the way the organizers run docker:
+`--containall --cleanenv`, `/data` read-only in their layout without `7575_0.h5`, `/output` writable, 1 GPU, 16
+cores, 128 GB; the pipeline at 6 epochs, the solo and concurrent epoch times, `eval_output.py` on `/output`, the
+archive byte-identical to the upload from the checkpoints and band of record). **A "foreign machine" check that can
+still see `/users/PAS1187/qwu` is not one**: that is how a literal data path in `Track_2/t2_common.py` survived until
+10-05; the container sees `/data`, `/output` and `/workspace` only.

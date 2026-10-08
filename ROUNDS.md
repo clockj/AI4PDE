@@ -3512,3 +3512,101 @@ is not added, neither as a lever nor as insurance. **No upload has been decided;
 09-27 is tagged `final-20260927` on `4e5ed37` (main after pull request #3). The candidate's eleven checkpoints were
 promoted into `Track_1/unet/` on 09-29 (copied, md5 checked); its two archives are kept on scratch in
 `dec0928/candidate/`, equal file by file to the from-scratch run's.
+
+## 2026-10-05: the final submission is a training package
+
+No board round. The organizers' clarification of 10-04 (the submitted package is scored on the development set too, and
+that result must reproduce the leaderboard row) was read against the competition's public pages, and the hand-over was
+built and checked. Record: `final_package/README.md`; state: `STATUS.md`.
+
+**What the pages say** (`https://www.codabench.org/api/competitions/17385/`, no login). One training package per invited
+track, code only ("no model weights"), by **2026-10-09 24:00 UTC**, in the format of the "Final Decision Phase" starting
+kit, which needs a login. The Codabench "Final Decision Phase" is the organizers' own and closed on 09-28 09:00 UTC, on
+both tracks: there is no Decision-phase upload, so the candidate cannot acquire a leaderboard row. `STATUS.md` and
+`CLAUDE.md` rule 1 had "one submission per track to 10-25" from the phase list; the FAQ had the rest.
+
+**What is sent: the method of T2R24 (82.055553), cut from `fdac00b`.** Today's tree rebuilds the uploads output for
+output but not byte for byte, and carries the candidate; `fdac00b` rebuilds them byte for byte, code included. The
+package is the 26 files of that commit that a traced run opened, one patch, an entry point (`run_track2.sh`) and a
+manual: 29 files, 257 KB, no checkpoint, no band, no symlink. Its entry point always refits the band, because a band is
+fitted on our twins and the organizers accept no fitted artefact.
+
+**Found.**
+* **`Track_2/t2_common.py` read the real data from a literal path of this cluster**, with no flag and no variable. Both
+  Track-2 gates build their stream through it, so on any other machine the build failed after the eleven trainings.
+  Every "foreign machine" run before (`REPRODUCE.md` §9, §12) was on Pitzer, where the path is mounted. Found by running
+  inside `final_package/verify/sandbox.sh`, where the author's home and scratch are empty. Fixed: `$RPDE`.
+* **`train_real/7575_0.h5` is in the training set of every network of record.** The data page (announced 08-12) and the
+  release's README say not to use it: `u` and `v` equal `6300_0`'s (checked). Nothing here ever excluded it. The manual
+  discloses it; the owner decides the wording.
+* `REPRODUCE.md` §9.1: item 1 (the `PY` default) was already fixed in the code; item 2 is one symlink today and was
+  five at `fdac00b`; item 7 is the path above.
+
+**Checked** (Ascend A100, in the sandbox).
+* Job 7681561, the whole tree of `fdac00b` + the patch: the eleven checkpoints of record and the committed band give
+  both archives with **all 9 files byte-identical to the uploads**, gates 2/2, causality OK; from the released data at 2
+  epochs, `run_track2.sh` ends `RUN_TRACK2 OK` in 31 minutes, its `_fno.py` identical to the upload's and its
+  `submission.py` one line apart (`SIGPOW`, refitted from 2-epoch twins).
+* Job 7681858, the curated package extracted from its own archives: from its `.tar.gz`, `run_track2.sh` from the released
+  data at 2 epochs ends `RUN_TRACK2 OK` (every stage, band refit, gates 2/2, causality OK, 26 minutes); from its `.zip`,
+  with the checkpoints and the band of record, **all 9 files are byte-identical to the uploads on both tracks**; two
+  training stages run on the release without `7575_0.h5`. Job 7682454 repeated
+  the three checks on the draft as it stands (`.tar.gz` `aed17c0e…`): the same results.
+
+**Not done.** A 400-epoch run of the package (the recipes are those of the 09-25 retraining, +0.0006); the organizers'
+template; the team name. Nothing was sent.
+
+## 2026-10-06: the training package becomes a branch
+
+The owner asked for the training package as a new branch with no history, the code and comments reorganised, nothing
+of the past work in it, delivered to `workspace/realpde/code-finalsub`. Record: `final_package/README.md`.
+
+**The branch `final-submission`** (orphan, one commit, 19 files): `fdac00b`'s training code with every closed
+experiment's flag and branch removed (`unet/train.py` 255 lines against `train2.py`'s 1 691; the model file holds the
+two families that ship), the band fit with the shipped settings as constants (`band/`), the two shipped files byte for
+byte (`submission/`), a build that bakes the 19 constants into copies and reads them back (`build/build.py`), the
+gates without the board rule, and one entry point (`run_track2.sh`) with the eleven recipes written out.
+
+**Checked.** Old and new training code give bit-identical weights on the CPU for the three recipe families
+(`final_package/verify/cpu_equiv.sh`); on a GPU they differ at the level the old code differs from itself (F-FNO 1e-7,
+ViT 1e-2 … 3e-2 in two epochs: jobs 55454190, 55454404, 55454453). From the eleven checkpoints of record the new band
+code gives the old code's static band, dump, q and sigblend npz bit for bit, and `build.py` the uploaded archive, all
+nine files byte-identical; the gates pass. In the sandbox the branch runs from the released data to `RUN_TRACK2 OK`
+at 2 epochs, rebuilds the upload 9/9 from the checkpoints and band of record, and trains without `7575_0.h5`
+(job 55454191 on `a716913`; job 55454608 on `a0a36b9`, whose code is the delivered commit `9f3dd58`'s). Ascend was full; everything ran on Pitzer.
+
+**Not done.** The organizers' template (behind a login), `TEAM` / `CONTACT`, a 400-epoch run, the push, the sending.
+The tarball route of 10-05 is superseded and removed from `final_package/`.
+
+## 2026-10-07: the organizers' kit, and the package in its shape
+
+The owner downloaded the Final-phase starting kit (`realpde_final_starting_kit_track2.zip`) and showed the invitation
+e-mail of 09-29. They fix what is sent (`FINAL_SUBMISSION.md`): a **Docker image** (linux/amd64, the kit's Dockerfile on
+`w3nhao/realpde-track2@sha256:f07d1d68…`) in a private Docker Hub repository readable by `w3nhao`; a **zip on Google
+Drive** with the Dockerfile, `solution.py`, the code, `README.md`, `METHOD.md` (their templates) and the training logs of
+the Codabench run; an **e-mail** with team, username, track, image + digest, **the submission id the package reproduces**
+and the link, by 2026-10-09 24:00 UTC. The interface is `solution.train(data_dir, output_dir, device)` /
+`solution.get_ttt_model(output_dir, device)`; `/data` is read-only and holds `train_real` **without `7575_0.h5`**;
+one A800 80 GB, 16 cores, 128 GB, **24 hours** (more on request with a reason). The submission id is **948792**
+(public leaderboard API `/api/leaderboards/19282/`, owner `xtgg233`, final 82.0555530033).
+
+**The branch was reshaped** (record: `final_package/README.md`): `solution.py` runs the eleven trainings several at a
+time on the one GPU (in sequence they are ~40 GPU-hours on an A100-PCIe), then the band, the archive, the gates, and
+unpacks the archive into `output_dir`; the kit's Dockerfile verbatim (the base image already holds every package);
+`unet/data.py` accepts the organizers' flat layout and always skips `7575_0`; the organizers' `scoring.py` vendored
+(`RPDE_KIT` gone); README and METHOD from the templates; `logs/` the eleven training logs of record (found by matching
+each checkpoint's `config` and mtime: the F-FNOs on Pitzer V100S-32GB, 4.85 / 4.37 h; the ViTs on Ascend A100-40GB,
+2.00 / 3.81 / 3.43 / 1.82 h; 43.6 GPU-hours; torch 2.2.2+cu121 throughout). `run_track2.sh` and `environment.yml` removed.
+
+**Checked** (`final_package/verify/job_container.sh`: the image built with podman on a0108 from the branch's Dockerfile,
+converted to a SIF, run with apptainer as the organizers run docker — `/data` read-only in their layout, `/output`,
+1 GPU, 16 cores, 128 GB, environment cleared): one training alone takes 33.4 s/epoch (F-FNO) and 33.6 s/epoch (ViT with
+the CFD term) on an A100-PCIE-40GB, i.e. **3.7 h per network and ~37 h for the eleven, over the 24-hour limit**; four
+or six trainings at once on the one GPU gain nothing (133 s/epoch each: the step is GPU-bound, 73 of 84 ms in the
+forward/backward), so `solution.py` runs one training per GPU over the GPUs it sees and the e-mail asks for two GPUs
+or 48 h. `solution.train` at 6 epochs ran end to end to `TRAIN OK` (39 min: map, eleven trainings, band, archive,
+gates, nine files in `/output`); from the checkpoints and band of record the container rebuilds the upload **9/9
+byte-identical**; the band refitted on that card differs by ≤ 2.2e-4 in `base`. Three full 400-epoch runs from the
+final image (2 × A100, 1 × A100, 2 × V100) were submitted (jobs 7712670, 7712671, 55498053).
+
+**Not done.** Nothing was pushed or sent; the owner builds and pushes the image, uploads the zip and e-mails.

@@ -1,39 +1,41 @@
-# Status — 2026-09-29, Decision phase
+# Status — 2026-10-07, the final submission in the organizers' shape
 
 The only file that changes after a board result. Keep it under 40 lines; detail goes to `ROUNDS.md`.
 
 | | board `final` | package (in `../sub_candidates/final/`) | registered before upload |
 |---|---|---|---|
 | Track 1 | **81.671149** (R37, 09-27) | `track1_k27fin_a080.zip` | 81.67 [81.58, 81.79] |
-| Track 2 | **82.055553** (T2R24, 09-27) | `T2_MRGP2_track2_MRGP2.zip` | 82.000 [81.885, 82.219] |
+| Track 2 | **82.055553** (T2R24, 09-27; **Codabench submission 948792**) | `T2_MRGP2_track2_MRGP2.zip` | 82.000 [81.885, 82.219] |
 
-* **The packages of record** (method: `CLAUDE.md` "What ships") rebuild by `bash Track_1/submit_fno/build_final.sh
-  OUTDIR`, data byte-identical and outputs identical at tolerance 0; from `fdac00b` the code files too. The release is
-  the annotated tag **`final-20260927`** on `4e5ed37` (main after pull request #3).
-* **Final ranks: Track 1 #20, Track 2 #8.** Track 2 is shortlisted: the organizers retrain from scratch (8× A800) and
-  score a private set at novel AoA / Re. **One submission per track for the phase** (to 2026-10-25).
-* **The candidate (owner, 09-29): "T4 all"**, the method of record with all six members and five twins trained with
-  `--aug-resim 0.25`, plus `PREV_SPACE = "target"`. Built by `RPDE_REPRODUCE_GO=1 bash reproduce.sh decision`
-  (defaults), tag `dp_resim_all`, band `Track_1/bands/dp_resim_all_sigblend_lam0.5.npz` with its sidecar json. Against
-  the control: +0.206 out of distribution (mean of A20, A10, relo, rehi), +0.031 in distribution (twins, 7 of 8).
-  Checkpoints: the eleven `*_resim*` in `Track_1/unet/`. Archives on scratch, `dec0928/candidate/track1_dp_resim_all.zip`
-  (53291df1…) and `track2_dp_resim_all.zip` (bd0a3fb4…). "T4 F-FNO only" (`RPDE_DP_RESIM_VIT=`) stays reproducible
-  and is not the choice. Zero propagation (arm I7) is not added. Record: `experiments/decision_20260928/`.
-* **No upload is decided and nothing is staged** in `../sub_candidates/`. The board shows the packages of record.
+* **Final ranks: Track 1 #20, Track 2 #8.** Track 2 is shortlisted; Track 1 is not, and nothing is sent for it.
+* **What the organizers want, by 2026-10-09 24:00 UTC** (invitation e-mail of 09-29 + `FINAL_SUBMISSION.md` of the
+  Final-phase kit, `../realpde_final_starting_kit_track2.zip`): a **Docker image** on their Track 2 base image in a
+  private Docker Hub repo readable by `w3nhao`; a **zip on Google Drive** (Dockerfile, `solution.py`, code, README,
+  METHOD, the training logs); an **e-mail** with team, username, track, image + digest, **submission id 948792**, the
+  link. They run `solution.train('/data', '/output', 'cuda')` on one A800 80 GB, 16 cores, 128 GB, **within 24 h**,
+  no network, `train_real` **without `7575_0.h5`**; then `solution.get_ttt_model('/output', 'cuda')` on the private
+  set and on the development set, which must reproduce the row.
+* **What is sent: branch `final-submission`** (worktree `../code-finalsub`, orphan): the method of record as training
+  code in the kit's shape — `solution.py` (the eleven recipes, several trainings at a time on the one GPU, band,
+  archive, gates), the kit's Dockerfile, `unet/ band/ build/ submission/`, `README.md` + `METHOD.md` from the
+  templates, `logs/` of the runs of record. Record and checks: `final_package/README.md`.
+* **The candidate ("T4 all", `reproduce.sh decision`) stays unsent** (`experiments/decision_20260928/`).
 
-## Open before a Decision-phase upload
+## Open before the package is sent (the owner sends it)
 
-1. **The owner's decision to upload**, per track. HOLD is valid.
-2. **Registration and staging first** (rules 1, 2): five subscores with brackets, in distribution and held out, in
-   `../sub_candidates/<date>/README.md` and a PENDING row of `leaderboard/board.jsonl`. Neither exists.
-3. **The guards cost Track 2 latency**: +0.08 ms per step (+2.4 %), about −0.002 … −0.005 `final`; still on the critical path.
-4. **Not verified:** the organizers' hardware and stack (only A100 and V100, torch 2.2.2; expect the reseeding spread,
-   about 0.012 in distribution, not our retrain's 0.0003); the all-data members were trained once.
+1. ~~Build and push the image~~ **done 10-08 05:51 UTC**: `williamqwu/realpde-t2@sha256:f5319731…` (public, not
+   private; the manifest's layers verified identical to the image of 952d1e1 that the rehearsals run).
+2. **The zip** (`git archive` of the branch) on Google Drive; **the e-mail** (text in the record, image and digest
+   filled in; the Drive link remains).
+3. **The 24 h limit on one GPU cannot be met** (measured: ~37 h; concurrency on one card gains nothing). The e-mail
+   asks for two GPUs or 48 h; `solution.py` uses every GPU it sees. Three full 400-epoch rehearsals from the final
+   image are running (jobs 7712670 2×A100, 7712671 1×A100, 55498053 2×V100): expected 10-08.
+4. **Push** `final-submission` and `qwu/dev`; agents never push.
 
-## Settled 09-28
+## Settled
 
-* `PREV_SPACE = "target"`: +0.002 … +0.009 in every regime, never worse on a trajectory. `STATS_MASK` stays off.
-* FAMW (+0.007 out of distribution) and the stream constants (a plateau) are closed; the shipped stack stays.
-* The band: a refit from other twins moves the composite by about 1e-4; its static field is fitted in sample, as shipped.
-* Reports: `../artifacts/20260927_realpde_phase_report.html` (its `STATS_MASK` advice is superseded) and
-  `20260927_realpde_final_method.html`. The newest handoff is `../handoffs/HANDOFF_20260928.md`.
+* 10-07: the training logs of the eleven runs of record were found and are in the branch (`logs/`); every checkpoint's
+  `config` matches its log; torch 2.2.2+cu121 throughout; 43.6 GPU-hours (F-FNOs on V100S, ViTs on A100-40GB).
+* 10-07: `train_real/7575_0.h5` is absent from the organizers' mount; the code skips it always; the README states that
+  the networks of record were trained with it present.
+* The newest handoff is `../handoffs/HANDOFF_20261007.md`.

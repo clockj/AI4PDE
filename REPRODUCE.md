@@ -648,16 +648,30 @@ rebuilt from the retrained weights alone.
 Run ids: `20260921-1712..1720xx-*-ilse-repro-<stage>`, `20260921-0624/0625-*-ilse-repro-vit-*`,
 end-to-end `20260922-111450-*-ilse-repro-phase3-build`.
 
-### 9.1 Three things that break on any machine but the author's — fix these before handing over
+### 9.1 What breaks on any machine but the author's — fix these before handing over
 
-1. **`reproduce.sh` defaults `PY` to the author's conda env** (`/users/PAS1187/qwu/.conda/envs/realpde/bin/python`,
-   line 40). Anywhere else it dies at `PREFLIGHT FAILED: train2.py` before doing anything. Pass `PY=…` explicitly,
-   or make the default fall back to `python3`.
-2. **`Track_2/submit*/{_fno.py,submission.py}` are symlinks into `Track_1/submit_fno/`.** `build_round13.sh`
-   bakes constants into Track 1's `_fno.py` and then checks Track 2's copy against it. Any transport that
-   dereferences symlinks — `tar -h`, `zip`, a payload size limit, some file-copy UIs — turns them into real
-   files, and then **Track 1 builds while Track 2 refuses** with `submit/_fno.py is not Track 1's _fno.py;
-   the tracks would diverge`. Ship the tree with symlinks intact, or recreate them before building.
+*Status 2026-10-05, checked in the tree and in a sandbox where none of the author's directories exist (job
+7681561): item 1 is fixed in the code, item 2 is narrower than written and is removed from the hand-over package,
+item 7 was found by that sandbox and is fixed. Items 3 – 5 are handled by `reproduce.sh` or by one environment
+variable each. The hand-over itself (branch `final-submission`, 10-07) is a Docker image whose code reads `/data`
+and writes `/output` and nothing else; none of these items applies to it (`final_package/README.md`).*
+
+1. ~~**`reproduce.sh` defaults `PY` to the author's conda env** (`/users/PAS1187/qwu/.conda/envs/realpde/bin/python`,
+   line 40). Anywhere else it dies at `PREFLIGHT FAILED: train2.py` before doing anything.~~ **Fixed in the code
+   (and already so at `fdac00b`).** `reproduce.sh` and `build_final.sh` use the author's env only where it exists and
+   otherwise the `python3` on `PATH`; both export `PY`, so `build_round13.sh`'s own default is never reached. A
+   `PREFLIGHT FAILED` now means the interpreter that was found cannot import the stack, and the message says which
+   interpreter that was. Passing `PY=…` explicitly is still the way to pin one.
+2. **`Track_2/submit/_fno.py` is a symlink to `Track_1/submit_fno/_fno.py`.** It is the only one since the
+   reorganisation of 09-28 (`git ls-files -s` shows one mode-120000 entry besides `AGENTS.md`); `submission.py` is a
+   regular file and there is one `submit` directory. At `fdac00b` there were five links, in `submit`, `submit_ho` and
+   `submit_ho5`, which is what this item described. The hazard is unchanged: `build_round13.sh` bakes constants into
+   Track 1's `_fno.py`, and `build_t2.py` refuses a Track-2 copy that is not that very file. Any transport that
+   dereferences or drops symlinks — `tar -h`, `zip`, a Windows checkout, some file-copy UIs — leaves a real file or
+   a text stub, and then **Track 1 builds while Track 2 refuses** with `submit/_fno.py is not Track 1's _fno.py;
+   the tracks would diverge`. Recreate it before building: `ln -sfn ../../Track_1/submit_fno/_fno.py
+   Track_2/submit/_fno.py`. The hand-over package (branch `final-submission`) carries no symlink at all and does
+   not use these build scripts.
 3. **`validate_strict.py` needs `Track_1/val_unseen.npz` at GATE time**, not only for scoring. Build the
    validation sets *before* `reproduce.sh` with `(cd Track_1 && $PY make_val.py --data "$RPDE/train_real/train_real")`
    (it writes `val_{seen,unseen}.npz` into the current directory), or the Track 1 gate fails with
@@ -676,8 +690,15 @@ end-to-end `20260922-111450-*-ilse-repro-phase3-build`.
    The static packages pass trivially; any online-calibrated band (R1) must pass it before it ships. Checked 09-25 on CPU: the
    09-25 T2 package passes (max |diff| 0.0), and a wrapper that peeks one window ahead is caught.
 
-None of the five affects the shipped archives; all five stop a from-scratch reproduction on a fresh machine,
-which is exactly what the organizers will attempt.
+7. **`Track_2/t2_common.py` read the real data from a literal path of the author's cluster** (found 2026-10-05).
+   `validate_t2.py` and `stream_eval.py --causal-check` build their stream through it and take no `--data`, so on
+   any other machine both Track-2 gates died in `build_stream()` after eleven trainings, and no variable could
+   reach it. It was never met because every earlier "foreign" run (§9, §12) was on Pitzer, where that path is
+   mounted. Now `DATA` is `$RPDE/train_real/train_real`, with the old literal as the default when `RPDE` is unset;
+   `RPDE` must be **exported** (an environment assignment in front of `reproduce.sh` is).
+
+None of these affects the shipped archives; each stops a from-scratch reproduction on a fresh machine, which is
+exactly what the organizers will attempt.
 
 **On the Pitzer cluster specifically** (measured 2026-09-23, IcanFly run `20260923-062751`, plus my own
 check of the same paths). Item 1 above says "pass `PY=…`" without saying *which*, so a reader still has to
